@@ -1,0 +1,4 @@
+# The PRoot rootfs assets are Linux files. With core.autocrlf=true (this
+# checkout) Git would rewrite them to CRLF, which breaks /bin/sh scripts
+# such as /usr/local/bin/minis-mcp-cli, minis-open and xdg-open.
+src/android/app/src/main/assets/default_mount/** text eol=lf
