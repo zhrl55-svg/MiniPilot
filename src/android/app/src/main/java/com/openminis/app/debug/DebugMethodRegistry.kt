@@ -739,6 +739,49 @@ object DebugMethodRegistry {
             example = JSONObject(),
         ),
 
+        // --- Agent skills / guard audit ---
+        MethodSpec(
+            name = "agent.skills.list",
+            description = "[T-skill-store] Successful task trajectories recorded by the skill store, newest first. Summaries only (no step text).",
+            params = listOf(
+                ParamSpec("limit", "int", required = false, default = 20, description = "Max records (1..200)."),
+            ),
+            returns = "[{id, goal, appPackage, successCount, lastUsedAt, stepCount, toolChain:[...]}]",
+            example = ex("limit" to 20),
+        ),
+        MethodSpec(
+            name = "agent.skills.clear",
+            description = "[T-skill-store] Delete every recorded trajectory.",
+            params = emptyList(),
+            returns = "{cleared:int}",
+            example = JSONObject(),
+        ),
+        MethodSpec(
+            name = "agent.audit.tail",
+            description = "[T-guard] The most recent guard audit lines, oldest first, exactly as written to audit.jsonl.",
+            params = listOf(
+                ParamSpec("limit", "int", required = false, default = 20, description = "Max lines (1..1000)."),
+            ),
+            returns = "[{ts, iso, sessionId, tool, risk, rule, evidence, decision}]",
+            example = ex("limit" to 20),
+        ),
+        MethodSpec(
+            name = "agent.guard.setEnforce",
+            description = "[T-guard] Turn high-risk confirmation on/off. Default false: audit only, nothing is blocked.",
+            params = listOf(
+                ParamSpec("value", "bool", required = true, description = "true = ask before EXTERNAL and above."),
+            ),
+            returns = "{enforce:bool}",
+            example = ex("value" to false),
+        ),
+        MethodSpec(
+            name = "agent.guard.status",
+            description = "[T-guard] Enforcement switch, on-disk paths for the audit log and skill store, and current sizes.",
+            params = emptyList(),
+            returns = "{enforce, auditPath, skillsPath, auditLines, skillCount}",
+            example = JSONObject(),
+        ),
+
         // --- Provider mutate ---
         MethodSpec(
             name = "provider.instances.create",

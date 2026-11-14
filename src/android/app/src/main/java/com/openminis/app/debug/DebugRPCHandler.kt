@@ -166,6 +166,14 @@ class DebugRPCHandler(private val context: Context) {
             "chat.messages.list" -> ChatDebugMethods.messagesList(context, params)
             "chat.models.list" -> ChatDebugMethods.modelsList(context, params)
 
+            // Agent skills / guard audit (acceptance surface for the skill
+            // store and the risk audit).
+            "agent.skills.list" -> AgentDebugMethods.skillsList(context, params)
+            "agent.skills.clear" -> AgentDebugMethods.skillsClear(context, params)
+            "agent.audit.tail" -> AgentDebugMethods.auditTail(context, params)
+            "agent.guard.setEnforce" -> AgentDebugMethods.guardSetEnforce(context, params)
+            "agent.guard.status" -> AgentDebugMethods.guardStatus(context)
+
             // Chat (mutate)
             "chat.prompt" -> ChatMutationMethods.prompt(context, params)
             "chat.uiPrompt" -> ChatMutationMethods.uiPrompt(context, params)

@@ -924,6 +924,14 @@ class ChatViewModel(
     @Volatile private var userAskAskedThisRun = false
 
     /**
+     * [T-guard] Whether this run has a person in front of it who can answer a
+     * confirmation card. False for sub agents, scheduled fires, CLI/RPC and
+     * other headless submits, and runs started with the app in the background
+     * — those must never block on a card (see Guard).
+     */
+    @Volatile private var guardInteractiveThisRun = false
+
+    /**
      * [T-port-user-ask-recovery] The current tool batch's assistant row (parts
      * JSON, as persistAssistantTurn will write it) and its tool_use ids. A
      * user_ask record keeps a copy, because that row is only stored with the
@@ -983,13 +991,18 @@ class ChatViewModel(
      * queue holding no prompt from the user.
      */
     private fun decideUserAskExposureForRun(interactive: Boolean, userAskAnswer: Boolean = false) {
+        // [T-guard] Same two signals decide whether a high-risk confirmation
+        // card can be answered at all: a person behind an interactive turn,
+        // in the foreground. Stored per run so executeTool never has to guess.
+        val foreground = appInForeground()
+        guardInteractiveThisRun = interactive && !isHelper && foreground
         // [T-user-ask-deferred] Only the switch and sub agents remove the tool;
         // a run nobody can answer gets it in deferred mode (iOS 7a818b8c0).
         val d = com.openminis.app.agent.userask.UserAskExposure.decision(
             enabled = com.openminis.app.agent.userask.UserAskSettings.isEnabled(context),
             isHelper = isHelper,
             interactive = interactive,
-            foreground = appInForeground(),
+            foreground = foreground,
             userAskAnswer = userAskAnswer,
         )
         userAskExposedThisRun = d.exposed
@@ -11701,15 +11714,117 @@ class ChatViewModel(
         }
     }
 
+    /**
+     * [T-skill-store] The goal text of this run: the last USER entry the user
+     * actually wrote, as judged by [RequestContextBuilder.isRealUserText].
+     *
+     * A plain `lastOrNull { role == USER }` is WRONG mid-loop. Tool results are
+     * persisted as user-role messages with `content = ""` and only
+     * [AgentContentPart.ToolResult] parts (see [ToolResultWrap.historyMessage]),
+     * so after the first tool turn the last USER entry is that wrapper — the
+     * goal read as an empty string and [com.openminis.app.agent.skill.SkillStore.maybeRecord]
+     * silently dropped every successful trajectory. This was the live
+     * 2026-11-14 field case: two allowed shell calls, clean answer, no record.
+     *
+     * Walks backwards and returns the first real user message, from
+     * [LLMMessage.content] or, when the body lives only in parts, from its
+     * [AgentContentPart.Text] parts (attachment-only queued turns).
+     *
+     * [T-skill-store-reminder-skip] App-injected runtime notes also arrive as
+     * USER rows carrying REAL text — BashismReminder, UserAskRecovery's
+     * `ANSWER_REMINDER` / `INTERRUPTED_RESULT`, HelperRunner's closing nudge,
+     * SubAgentTermination's cancel marker, ContextOffload's pruned-argument
+     * notice — and sub-agent completions arrive as `<agent_callback …>`.
+     * Taking one as the goal silently poisons skills.json with a permanently
+     * stored non-goal, and makes `promptHintFor` match an unrelated trajectory
+     * whose Jaccard score happens to pass the threshold. The filter is NOT
+     * duplicated here: [RequestContextBuilder.isRealUserText] is the app's one
+     * definition of "a message the user actually wrote" (it also rejects
+     * tool-result rows), so any envelope added to
+     * [com.openminis.app.data.repository.InternalTags] is covered by fixing
+     * that single function.
+     *
+     * [T-skill-store-scheduled-goal] A scheduled fire is the user's own task
+     * text, but it reaches history wrapped in `<scheduled_task …>…</scheduled_task>`
+     * ([com.openminis.app.scheduled.ScheduledTaskMarker]); store the inner
+     * prompt, not the envelope, or the skill's goal is unreadable XML.
+     */
+    private fun lastUserGoalText(history: List<LLMMessage>): String? {
+        var skippedReminders = 0
+        for (m in history.asReversed()) {
+            if (m.role != LLMMessage.Role.USER) continue
+            if (!RequestContextBuilder.isRealUserText(m)) {
+                // Counts every USER row the shared filter rejects: tool-result
+                // wrappers, runtime notes and sub-agent callbacks alike.
+                skippedReminders++
+                continue
+            }
+            val text = m.content.ifBlank {
+                m.contentParts
+                    .filterIsInstance<AgentContentPart.Text>()
+                    .joinToString("\n") { it.text }
+            }.trim()
+            // parse() also strips the prefill / insertion notes inside the
+            // envelope, leaving the task's prompt text.
+            val goal = com.openminis.app.scheduled.ScheduledTaskMarker.parse(text)?.prompt ?: text
+            AppLogger.info(
+                com.openminis.app.agent.skill.SkillStore.TAG,
+                "[Skill] goal=\"${goal.take(60)}\" skippedReminders=$skippedReminders",
+            )
+            return goal
+        }
+        AppLogger.info(
+            com.openminis.app.agent.skill.SkillStore.TAG,
+            "[Skill] goal=<none> skippedReminders=$skippedReminders",
+        )
+        return null
+    }
+
     private suspend fun runAgentLoopBody(
         provider: LLMProvider,
-        systemPrompt: String?,
+        baseSystemPrompt: String?,
         fallbackProviders: List<FallbackCandidate>,
         fallbackStrategy: com.openminis.app.data.model.FallbackStrategy,
         prefill: List<com.openminis.app.scheduled.PrefilledToolCall>,
         turnGen: Long,
     ) {
         AppLogger.info(TAG_STREAM, "runAgentLoop ENTER provider=${provider.javaClass.simpleName} historySize=${agentHistory.size}")
+        // [T-skill-store] A matching success trace from an earlier run is
+        // appended to the system prompt as a HINT only — never executed. No
+        // match leaves the prompt byte-identical (an extra character would
+        // invalidate the provider's prompt cache).
+        val skillGoal = runCatching { lastUserGoalText(agentHistory) }.getOrNull()
+        val skillHintRun = runCatching {
+            com.openminis.app.agent.skill.SkillStore.promptHintFor(
+                context,
+                goal = skillGoal,
+                appPackage = com.openminis.app.agent.skill.SkillStore.foregroundPackage(context),
+            )
+        }
+        val skillHint = skillHintRun.getOrNull()
+        // [Skill] hint probe — a miss must be distinguishable from this call
+        // site never running: lastUserGoalText also logs at record time, so a
+        // "[Skill] goal=" line alone does not prove the hint path executed.
+        AppLogger.info(
+            TAG_STREAM,
+            "[Skill] hint probe sid=${activeSessionId.take(8)} hit=${!skillHint.isNullOrBlank()} " +
+                "goalLen=${skillGoal?.length ?: 0} " +
+                "err=${skillHintRun.exceptionOrNull()?.javaClass?.simpleName ?: "-"}",
+        )
+        val systemPrompt: String? = when {
+            skillHint.isNullOrBlank() -> baseSystemPrompt
+            baseSystemPrompt.isNullOrBlank() -> skillHint
+            else -> baseSystemPrompt + "\n\n" + skillHint
+        }
+        // [T-skill-store] Per-run trace. Steps are collected only from calls
+        // that succeeded; [skillAnyFailure] covers blocked / failed calls too.
+        // maybeRecord below writes nothing unless the WHOLE run was clean.
+        val skillSteps = mutableListOf<com.openminis.app.agent.skill.SkillStep>()
+        val skillToolChain = mutableListOf<String>()
+        var skillAnyFailure = false
+        val skillAppPackage = runCatching {
+            com.openminis.app.agent.skill.SkillStore.foregroundPackage(context)
+        }.getOrNull()
         // [T-android-mem-probe-trust] Send-path context shape. The existing
         // `messages-shape` probe only runs on session LOAD, so the 2026-08-15
         // log described the session as it was opened, never as it was sent —
@@ -14098,6 +14213,21 @@ class ChatViewModel(
                 }
                 // Auto-title after first exchange
                 if (turn == 0) generateSessionTitleIfNeeded()
+                // [T-skill-store] Normal completion only — never on stop,
+                // cancellation, turn cap or an error path (those leave through
+                // the other exits, and the record's own gate rejects a run
+                // with any failed call or a failure marker in the answer).
+                runCatching {
+                    com.openminis.app.agent.skill.SkillStore.maybeRecord(
+                        context = context,
+                        goal = lastUserGoalText(agentHistory),
+                        appPackage = skillAppPackage,
+                        steps = skillSteps,
+                        toolChain = skillToolChain,
+                        allSucceeded = !skillAnyFailure && skillSteps.size == skillToolChain.size,
+                        finalAssistantText = accumulatedText,
+                    )
+                }
                 stopDiagExit = if (isEmptyTurn) "empty-turn" else "no-tool-calls"
                 loopExitedNormally = true
                 break
@@ -14557,6 +14687,25 @@ class ChatViewModel(
             // Flatten in tool_use order, never completion order.
             for (parts in slotResults) parts?.let { resultParts.addAll(it) }
 
+            // [T-skill-store] Fold this batch into the run trace. The result
+            // parts are the authority on success: a call blocked by the loop
+            // detector or preflight never reaches executeTool but still gets
+            // an isError result here, so it correctly marks the run unclean.
+            runCatching {
+                val resultsById = resultParts
+                    .filterIsInstance<AgentContentPart.ToolResult>()
+                    .associateBy { it.id }
+                for ((callId, callName, callArgs) in toolCalls) {
+                    skillToolChain += callName
+                    val callResult = resultsById[callId]
+                    if (callResult == null || callResult.isError) {
+                        skillAnyFailure = true
+                    } else {
+                        skillSteps += com.openminis.app.agent.skill.SkillStore.stepFor(callName, callArgs)
+                    }
+                }
+            }.onFailure { skillAnyFailure = true }
+
             // Update UI with tool statuses. Mark as awaiting the next model
             // response so "Minis is thinking" shows during the network gap
             // between tool results being sent and the next turn's first chunk.
@@ -14856,6 +15005,49 @@ class ChatViewModel(
         assistantId: String,
         currentText: String,
     ): ToolExecutionResult {
+        // [T-guard] Classify and audit BEFORE any branch runs. `guard_enforce`
+        // defaults to false, so this is observation only and every existing
+        // workflow behaves exactly as before. With it on, a call at EXTERNAL
+        // or above asks the person first — but only in an interactive,
+        // foreground run; headless / scheduled runs are audited as denied and
+        // allowed through so they can never block on a card nobody answers.
+        val guardVerdict = com.openminis.app.agent.guard.Guard.classify(name, argsJson)
+        val guardEnforced = guardVerdict.level.atLeast(com.openminis.app.agent.guard.RiskLevel.EXTERNAL) &&
+            com.openminis.app.agent.guard.Guard.enforceEnabled(context)
+        when {
+            !guardEnforced -> com.openminis.app.agent.guard.Guard.record(
+                context, guardVerdict, sessionId = activeSessionId, toolName = name, decision = "allowed",
+            )
+            !guardInteractiveThisRun -> com.openminis.app.agent.guard.Guard.record(
+                context, guardVerdict, sessionId = activeSessionId, toolName = name, decision = "denied",
+            )
+            else -> {
+                val guardDecision = try {
+                    com.openminis.app.agent.guard.Guard.requestApproval(
+                        context, guardVerdict, sessionId = activeSessionId, toolCallId = toolId,
+                    )
+                } catch (ce: kotlinx.coroutines.CancellationException) {
+                    // Stop / run teardown while the card waited: audit it and
+                    // let the cancellation propagate as everywhere else.
+                    com.openminis.app.agent.guard.Guard.record(
+                        context, guardVerdict, sessionId = activeSessionId, toolName = name,
+                        decision = "asked_denied",
+                    )
+                    throw ce
+                }
+                com.openminis.app.agent.guard.Guard.record(
+                    context, guardVerdict, sessionId = activeSessionId, toolName = name,
+                    decision = guardDecision,
+                )
+                if (guardDecision != "asked_approved") {
+                    return ToolExecutionResult(
+                        "用户未批准高风险操作：${guardVerdict.rule}",
+                        false,
+                        toolTitle = "",
+                    )
+                }
+            }
+        }
         // T330: tri-state permission gating moved into the offload IPC
         // handler (OffloadGate). The CLIs land there whether the LLM
         // emitted a named tool call or a raw shell command, so the gate
