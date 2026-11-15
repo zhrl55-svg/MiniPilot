@@ -789,6 +789,13 @@ class MinisApp : Application(), ImageLoaderFactory {
             "minis-config",
             com.openminis.app.sandbox.offload.ConfigOffloadHandler(),
         )
+        // [T-self-manual] minis-self — on-demand manual (tools from
+        // AgentTools, settings from ConfigBridge, plus the CLI/feature/
+        // architecture text that used to sit in the system prompt).
+        NativeOffloadServer.register(
+            "minis-self",
+            com.openminis.app.sandbox.offload.SelfOffloadHandler(),
+        )
         NativeOffloadServer.register("minis-browser-use", BrowserUseOffloadHandler(this))
         // T188: minis-sessions-cli — agent-side query of chat history.
         // Registers next to the other minis-* tools so PRootKernel.

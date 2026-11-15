@@ -24,7 +24,7 @@ class GlobalMemoryWritableWordingTest {
             val fragment = MemoryRepository(dir).loadGlobalMemoryFragment()!!
             assertTrue(
                 fragment.startsWith(
-                    "Global memory (GLOBAL.md — user-curated and writable; you may update it when the user asks)."
+                    "Global memory index (GLOBAL.md — user-curated and writable; you may update it when the user asks)."
                 )
             )
             assertFalse(fragment.contains("read-only"))
