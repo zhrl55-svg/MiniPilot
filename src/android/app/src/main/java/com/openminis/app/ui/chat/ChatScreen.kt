@@ -161,6 +161,7 @@ import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Language
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Delete
+import androidx.compose.material.icons.outlined.Settings
 import com.openminis.app.ui.components.MinisIcons
 import com.openminis.app.ui.components.MenuItemIcon
 import com.openminis.app.ui.components.MinisMenuDivider
@@ -721,6 +722,10 @@ fun ChatScreen(
     /** [T-android-picker-provider-edit] Open one provider instance's settings —
      *  wired to the edit button on each provider section of the model picker. */
     onEditProviderClick: (instanceId: String) -> Unit = {},
+    /** [T-android-chat-menu-settings] "设置" at the bottom of the chat "…"
+     *  menu: opens the app Settings screen — the same Routes.SETTINGS
+     *  destination as the session list's gear button. */
+    onSettingsClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -3840,6 +3845,22 @@ fun ChatScreen(
                                     },
                                 )
                             }
+                            // [T-android-chat-menu-settings] App Settings, last
+                            // row of the menu — the chat-side counterpart of the
+                            // session list's gear button, routing to the same
+                            // Routes.SETTINGS destination (a full-screen push on
+                            // the outer NavHost, see ChatSplitScaffold).
+                            MinisMenuDivider()
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.settings)) },
+                                onClick = {
+                                    showChatMenu = false
+                                    onSettingsClick()
+                                },
+                                leadingIcon = {
+                                    MenuItemIcon(Icons.Outlined.Settings)
+                                },
+                            )
                         }
                         // [T-speed-tier] Speed submenu: three mutually exclusive
                         // tiers, the current one checked. Anchored like the chat

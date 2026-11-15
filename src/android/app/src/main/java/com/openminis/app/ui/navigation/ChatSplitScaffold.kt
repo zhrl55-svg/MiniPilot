@@ -1006,6 +1006,10 @@ fun ChatSplitScaffoldRoute(
                 },
                 onModelGroupsClick = { navController.safeNavigate(Routes.MODEL_GROUPS) },
                 onEditProviderClick = { id -> navController.safeNavigate(Routes.providerDetail(id)) },
+                // [T-android-chat-menu-settings] "设置" in the chat "…" menu —
+                // the same full-screen push to Routes.SETTINGS as the session
+                // list's gear button above.
+                onSettingsClick = { navController.safeNavigate(Routes.SETTINGS) },
             )
         },
     )
