@@ -169,10 +169,21 @@ class DebugRPCHandler(private val context: Context) {
             // Agent skills / guard audit (acceptance surface for the skill
             // store and the risk audit).
             "agent.skills.list" -> AgentDebugMethods.skillsList(context, params)
+            "agent.skills.get" -> AgentDebugMethods.skillsGet(context, params)
+            "agent.skills.hint" -> AgentDebugMethods.skillsHint(context, params)
+            "agent.skills.matchBench" -> AgentDebugMethods.skillsMatchBench(context, params)
+            "agent.skills.config.get" -> AgentDebugMethods.skillsConfigGet(context)
+            "agent.skills.config.set" -> AgentDebugMethods.skillsConfigSet(context, params)
             "agent.skills.clear" -> AgentDebugMethods.skillsClear(context, params)
             "agent.audit.tail" -> AgentDebugMethods.auditTail(context, params)
             "agent.guard.setEnforce" -> AgentDebugMethods.guardSetEnforce(context, params)
             "agent.guard.status" -> AgentDebugMethods.guardStatus(context)
+
+            // Private storage composition / controlled cleanup (P0 acceptance).
+            "storage.breakdown" -> StorageDebugMethods.breakdown(context, params)
+            "storage.cleanupPreview" -> StorageDebugMethods.cleanupPreview(context, params)
+            "storage.cleanup" -> StorageDebugMethods.cleanup(context, params)
+            "storage.cleanupAudit" -> StorageDebugMethods.cleanupAudit(context, params)
 
             // Memory index (Phase A acceptance surface).
             "memory.index.status" -> MemoryDebugMethods.indexStatus(context)

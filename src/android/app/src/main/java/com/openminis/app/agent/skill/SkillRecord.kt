@@ -18,18 +18,27 @@ internal fun JSONObject.optText(key: String): String? =
  * a raw coordinate, which would break on the next screen. [viewId] is the
  * accessibility view id when the call carried one. [summary] is the human line
  * shown in the injected hint (<= 80 chars).
+ *
+ * [input] and [output] carry the ACTUAL command and the key part of what it
+ * printed. They are what makes a hint actionable: "run `du -sh …`, it printed
+ * X, therefore Y". Both fields are optional so records written before schema 3
+ * still decode (a v2 record simply has neither).
  */
 data class SkillStep(
     val tool: String,
     val target: String? = null,
     val viewId: String? = null,
     val summary: String,
+    val input: String? = null,
+    val output: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("tool", tool)
         put("target", target ?: JSONObject.NULL)
         put("viewId", viewId ?: JSONObject.NULL)
         put("summary", summary)
+        put("input", input ?: JSONObject.NULL)
+        put("output", output ?: JSONObject.NULL)
     }
 
     companion object {
@@ -42,6 +51,8 @@ data class SkillStep(
                 target = o.optText("target"),
                 viewId = o.optText("viewId"),
                 summary = summary,
+                input = o.optText("input"),
+                output = o.optText("output"),
             )
         }
     }
@@ -53,8 +64,13 @@ data class SkillStep(
  * appending a duplicate.
  *
  * `keywords` holds the goal's char bigrams (first 12) for inspection; matching
- * itself recomputes bigrams from [goal] so long goals are not penalised by the
- * 12-item cap.
+ * itself recomputes features from [goal] so long goals are not penalised by
+ * the 12-item cap.
+ *
+ * Schema 3 adds [conclusion] (what the successful run established) and the
+ * per-step `input`/`output` fields. Schema-2 records load unchanged; the new
+ * fields simply read as null. Saving after a schema-2 load writes schema 3 and
+ * keeps every existing record.
  */
 data class SkillRecord(
     val id: String,
@@ -66,6 +82,7 @@ data class SkillRecord(
     val successCount: Int = 1,
     val createdAt: Long,
     val lastUsedAt: Long,
+    val conclusion: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("id", id)
@@ -77,6 +94,7 @@ data class SkillRecord(
         put("successCount", successCount)
         put("createdAt", createdAt)
         put("lastUsedAt", lastUsedAt)
+        put("conclusion", conclusion ?: JSONObject.NULL)
     }
 
     companion object {
@@ -113,6 +131,7 @@ data class SkillRecord(
                 successCount = o.optInt("successCount", 1).coerceAtLeast(1),
                 createdAt = createdAt,
                 lastUsedAt = o.optLong("lastUsedAt", createdAt),
+                conclusion = o.optText("conclusion"),
             )
         }
     }

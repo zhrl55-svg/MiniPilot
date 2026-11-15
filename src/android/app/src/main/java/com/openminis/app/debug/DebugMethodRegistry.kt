@@ -746,8 +746,58 @@ object DebugMethodRegistry {
             params = listOf(
                 ParamSpec("limit", "int", required = false, default = 20, description = "Max records (1..200)."),
             ),
-            returns = "[{id, goal, appPackage, successCount, lastUsedAt, stepCount, toolChain:[...]}]",
+            returns = "[{id, goal, appPackage, successCount, lastUsedAt, stepCount, hasInput, hasOutput, hasConclusion, toolChain:[...]}]",
             example = ex("limit" to 20),
+        ),
+        MethodSpec(
+            name = "agent.skills.get",
+            description = "[T-skill-store-v3] One full record, including each step's actual command/input, key output excerpt, and the run's conclusion.",
+            params = listOf(
+                ParamSpec("id", "string", required = true, description = "Record id from agent.skills.list."),
+            ),
+            returns = "{id, goal, appPackage, keywords:[...], steps:[{tool,target,viewId,summary,input,output}], toolChain:[...], successCount, createdAt, lastUsedAt, conclusion}",
+            example = ex("id" to "0123456789abcdef"),
+        ),
+        MethodSpec(
+            name = "agent.skills.hint",
+            description = "[T-skill-store-v3] Run the chat loop's skill retrieval + rendering and return the exact prompt section. A hit must contain commands/inputs, key output, and a conclusion — not a tool-name list.",
+            params = listOf(
+                ParamSpec("goal", "string", required = true, description = "Task text to match, as the user would phrase it."),
+                ParamSpec("appPackage", "string", required = false, description = "Foreground package to use for same-app weighting; defaults to this app."),
+            ),
+            returns = "{hit, score, threshold, algorithm, recordCount, matchedGoal, matchedId, hint}",
+            example = ex("goal" to "看看私有目录都被什么占满了"),
+        ),
+        MethodSpec(
+            name = "agent.skills.matchBench",
+            description = "[T-skill-store-v3] Built-in benchmark: 10 pairs of differently-worded Chinese tasks. mode=synthetic records the first wording and retrieves it from the second (all pairs compete); mode=store scores the queries against the real skills.json.",
+            params = listOf(
+                ParamSpec("mode", "string", required = false, default = "synthetic", description = "synthetic or store."),
+                ParamSpec("pairs", "[[string]]", required = false, description = "Optional custom pairs: [[storedGoal, query], ...]."),
+                ParamSpec("threshold", "number", required = false, description = "Override the configured threshold for this run."),
+                ParamSpec("algorithm", "string", required = false, description = "hybrid (default) or legacy."),
+                ParamSpec("appPackage", "string", required = false, description = "Package used for same-app weighting; defaults to this app."),
+            ),
+            returns = "{mode, algorithm, threshold, appPackage, pairCount, hits, hitRate, pairs:[{storedGoal, query, hit, score, expectedScore, matchedGoal, conceptScore, bigramDice, queryConcepts, recordConcepts}]}",
+            example = ex("mode" to "synthetic"),
+        ),
+        MethodSpec(
+            name = "agent.skills.config.get",
+            description = "[T-skill-store-v3] Retrieval knobs in force (threshold, algorithm) plus each algorithm's default threshold.",
+            params = emptyList(),
+            returns = "{threshold, algorithm, legacyThreshold, hybridThreshold}",
+            example = JSONObject(),
+        ),
+        MethodSpec(
+            name = "agent.skills.config.set",
+            description = "[T-skill-store-v3] Adjust the matching threshold and/or switch to the legacy algorithm. Omitted fields are untouched.",
+            params = listOf(
+                ParamSpec("threshold", "number", required = false, description = "0.05..0.95; stored explicitly and used by both algorithms."),
+                ParamSpec("algorithm", "string", required = false, description = "hybrid (default) or legacy fallback."),
+                ParamSpec("reset", "bool", required = false, default = false, description = "Clear both settings first."),
+            ),
+            returns = "{threshold, algorithm}",
+            example = ex("algorithm" to "legacy", "threshold" to 0.55),
         ),
         MethodSpec(
             name = "agent.skills.clear",
@@ -780,6 +830,53 @@ object DebugMethodRegistry {
             params = emptyList(),
             returns = "{enforce, auditPath, skillsPath, auditLines, skillCount}",
             example = JSONObject(),
+        ),
+
+        // --- Private storage composition / controlled cleanup ---
+        MethodSpec(
+            name = "storage.breakdown",
+            description = "[T-storage] One call returns the composition of the app's private directories: per-root trees sorted by size, category buckets (business/model/cache/temp/environment), the largest entries, and identified temp candidates. Symlinks are never followed, so sizes match Android's own app-storage figure.",
+            params = listOf(
+                ParamSpec("maxDepth", "int", required = false, default = 3, description = "Directory depth kept in each root tree (1..8)."),
+                ParamSpec("maxEntries", "int", required = false, default = 120, description = "Max largest-entry records (1..1000)."),
+                ParamSpec("minBytes", "int", required = false, default = 1048576, description = "Largest-entry cutoff; smaller nodes are omitted from top[]."),
+                ParamSpec("includeFiles", "bool", required = false, default = true, description = "Include individual files in top[] (use to locate 1 GB blobs)."),
+                ParamSpec("maxFiles", "int", required = false, default = 400000, description = "Walk guard; a larger tree is reported with truncated=true."),
+            ),
+            returns = "{generatedAt, roots:[{name,path,bytes,files,category,children:[...]}], buckets:[{category,bytes,human,files}], top:[{path,bytes,human,files,category,isDir}], tempCandidates:[{path,bytes,human,files,reason,category}], totals:{bytes,human,files}, scan:{ms,walkedFiles,truncated}}",
+            example = ex("maxDepth" to 3, "includeFiles" to true),
+        ),
+        MethodSpec(
+            name = "storage.cleanupPreview",
+            description = "[T-storage] Show exactly what a cleanup would delete and how much, without deleting. Every path is judged against the regenerable whitelist; non-whitelisted paths are returned under refused[] with a reason.",
+            params = listOf(
+                ParamSpec("paths", "[string]", required = false, description = "Absolute paths to evaluate. Omit with all=true to use the scan's temp candidates."),
+                ParamSpec("all", "bool", required = false, default = false, description = "Use every identified temp/cache candidate."),
+                ParamSpec("minAgeMinutes", "int", required = false, default = 60, description = "Temp files younger than this are kept (avoid active downloads)."),
+            ),
+            returns = "{dryRun, allowed:[{path,bytes,files,category,reason}], refused:[{path,reason,category}], totalBytes, totalFiles}",
+            example = ex("all" to true),
+        ),
+        MethodSpec(
+            name = "storage.cleanup",
+            description = "[T-storage] Controlled deletion. Only paths accepted by the regenerable whitelist are removed; every other path is refused with a reason. Requires confirm=true; without it this behaves as a preview. Appends an audit line to the cleanup log for every call.",
+            params = listOf(
+                ParamSpec("paths", "[string]", required = false, description = "Absolute paths to delete."),
+                ParamSpec("all", "bool", required = false, default = false, description = "Delete every allowed temp/cache candidate."),
+                ParamSpec("confirm", "bool", required = false, default = false, description = "Must be true to actually delete."),
+                ParamSpec("minAgeMinutes", "int", required = false, default = 60, description = "Temp files younger than this are kept."),
+            ),
+            returns = "{dryRun, auditId, allowed, refused, deleted:[{path,bytes,files,category,reason,freedBytes,failed}], totalBytes, freedBytes, auditPath}",
+            example = ex("paths" to arrayListOf("/data/user/0/com.openminis.app.dev/cache"), "confirm" to true),
+        ),
+        MethodSpec(
+            name = "storage.cleanupAudit",
+            description = "[T-storage] Recent cleanup audit lines (preview and delete), newest last, as written to storage-cleanup-audit.jsonl.",
+            params = listOf(
+                ParamSpec("limit", "int", required = false, default = 20, description = "Max lines (1..500)."),
+            ),
+            returns = "[{id, ts, iso, action, dryRun, requested, deleted, refused, totalBytes, freedBytes}]",
+            example = ex("limit" to 20),
         ),
 
         // --- Memory index (Phase A acceptance surface) ---

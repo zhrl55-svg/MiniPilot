@@ -183,5 +183,14 @@ zz.txt
 ui2.xml
 .workbuddy/
 
+# PC 端模型副本（约 422MB，asr-sensevoice / mnn-llm-0.3b / voiceprint）。
+# 模型本体保留在本机，由 scripts/deploy_sensevoice.sh 等脚本按需推送到设备；
+# 整个目录都不入库，避免误提交。
+models/
+# 临时 TTFB 基准目录（约 3.2MB），可随时重建
+.tmp_ttfb_bench/
+# 本机排查无线 adb / hub.json 的一次性脚本，不属于 App 源码
+phone_fix.ps1
+
 # codebase-index cache (machine-local; do not commit)
 .claude/cache/codebase-index/

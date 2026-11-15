@@ -14710,7 +14710,12 @@ class ChatViewModel(
                     if (callResult == null || callResult.isError) {
                         skillAnyFailure = true
                     } else {
-                        skillSteps += com.openminis.app.agent.skill.SkillStore.stepFor(callName, callArgs)
+                        // [T-skill-store-v3] The result text is the sediment's
+                        // "what it printed" half; without it a hit can only
+                        // replay tool names, which is useless as a method.
+                        skillSteps += com.openminis.app.agent.skill.SkillStore.stepFor(
+                            callName, callArgs, callResult.content,
+                        )
                     }
                 }
             }.onFailure { skillAnyFailure = true }
