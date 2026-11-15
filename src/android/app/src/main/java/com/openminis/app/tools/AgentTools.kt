@@ -74,6 +74,13 @@ object AgentTools {
         // on-device assistant through LocalCapabilityRegistry + routes.
         add(NewsSearchTool.definition())
         add(StockQuoteTool.definition())
+        // [T-android-train-quote] 12306 余票（只读）。站表与会话 cookie 都在
+        // 端侧维护，直连手机网络，不走沙箱/代理。
+        add(TrainQuoteTool.definition())
+        // [T-android-notification-summary] 最近通知摘要（只读，需通知访问权限）。
+        add(NotificationsTool.definition())
+        // [T-android-brave-web-search] Brave 网页搜索；Key 未配置时工具会明确提示。
+        add(WebSearchTool.definition())
         if (hubEnabled) add(com.openminis.app.hub.HubCallTool.definition(hubDeviceNames))
         if (memoryEnabled) {
             if (!isHelper) add(memoryWriteDefinition())

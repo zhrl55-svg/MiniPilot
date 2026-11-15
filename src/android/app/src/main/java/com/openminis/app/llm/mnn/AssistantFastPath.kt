@@ -71,6 +71,9 @@ object AssistantFastPath {
             "amap_search" -> "查周边"
             "news_search" -> "查新闻"
             "stock_quote" -> "查行情"
+            "train_12306" -> "查车票"
+            "notifications" -> "读通知"
+            "web_search" -> "搜网页"
             else -> "执行"
         }
         // 关键参数：决定「查周边 超市」里那个「超市」。

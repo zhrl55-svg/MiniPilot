@@ -48,6 +48,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Handyman
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
@@ -142,6 +143,8 @@ fun SettingsScreen(
     // [T-music-player-top] The music settings sheet (NetEase login + proxy
     // address) is hosted here so it does not need a navigation route.
     var showMusicSheet by remember { mutableStateOf(false) }
+    // [T-android-brave-web-search] Brave Search API key entry.
+    var showWebSearchSheet by remember { mutableStateOf(false) }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -374,6 +377,15 @@ fun SettingsScreen(
                     title = stringResource(R.string.network_container_dns),
                     subtitle = null,
                     onClick = onContainerDnsClick,
+                    showDivider = true,
+                )
+                // [T-android-brave-web-search] Brave Search API key.
+                SettingsItem(
+                    icon = Icons.Outlined.Search,
+                    iconColor = Color(0xFF5856D6),
+                    title = stringResource(R.string.settings_web_search),
+                    subtitle = stringResource(R.string.settings_web_search_subtitle),
+                    onClick = { showWebSearchSheet = true },
                     showDivider = false,
                 )
             }
@@ -473,6 +485,11 @@ fun SettingsScreen(
         com.openminis.app.ui.media.music.MusicSettingsSheet(
             onDismiss = { showMusicSheet = false },
         )
+    }
+
+    // [T-android-brave-web-search] Brave Search API key.
+    if (showWebSearchSheet) {
+        WebSearchSettingsSheet(onDismiss = { showWebSearchSheet = false })
     }
 
     if (showFeedbackSheet) {

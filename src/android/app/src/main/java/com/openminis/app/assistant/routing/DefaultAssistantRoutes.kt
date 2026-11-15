@@ -1,7 +1,7 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 7
+    const val SEED_VERSION = 10
 
     private val RETIRED_AT_V3 = setOf("life.media")
 
@@ -134,6 +134,70 @@ object DefaultAssistantRoutes {
                 "开户", "交易", "定投", "怎么买", "讨论", "接口", "代码", "实现", "方案", "指数基金",
             ),
             examples = listOf("上证指数现在多少", "今天大盘怎么样"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        // [T-android-train-quote] 12306 余票：只读查询，永不确认。讨论
+        // 「加个车票功能」或「怎么买/退票/改签」留在云端，不抢本地路由。
+        r(
+            "info.train", "Train tickets", "life", "train_12306", "query", 165,
+            listOf(
+                "车票", "车票余票", "高铁票", "动车票", "火车票", "余票", "买票", "抢票",
+                "12306", "车次",
+            ),
+            patterns = listOf(
+                """.*(?:车票|高铁票|动车票|火车票|余票).*""",
+                """(?:查|看|搜|问).{0,8}(?:到|至|去).{0,12}(?:车票|高铁票|动车票|火车票|余票)""",
+                """(?:车票|高铁票|动车票|火车票|余票).{0,8}(?:查询|查一下|有没有|还有吗|多少)""",
+            ),
+            exclude = listOf(
+                "怎么买", "购票流程", "退票", "改签", "报销", "车票价格", "抢票软件",
+                "讨论", "接口", "代码", "实现", "方案", "加个", "添加", "增加", "支持",
+                "功能", "开发", "多少钱", "怎么去",
+            ),
+            examples = listOf("明天北京南到上海虹桥的车票", "查一下后天从张掖西到兰州西的余票"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        // [T-android-notification-summary] 最近通知摘要：只读、不确认。
+        // 「通知设置」仍归 life.settings-open，讨论句留在云端。
+        r(
+            "info.notifications", "Recent notifications", "life", "notifications", "summary", 155,
+            listOf(
+                "读通知", "读一下通知", "念通知", "最新通知", "通知摘要", "谁发消息",
+                "刚才谁发消息", "有什么通知", "未读通知", "通知消息",
+            ),
+            patterns = listOf(
+                """(?:读|念|看|查|播报|说说).{0,4}通知""",
+                """(?:最近|刚才|刚刚|今天).{0,6}(?:谁发消息|谁发来消息)""",
+            ),
+            exclude = listOf(
+                "通知设置", "打开通知", "关闭通知", "通知栏", "通知权限", "通知样式",
+                "讨论", "接口", "代码", "实现", "方案", "功能", "开发", "测试",
+            ),
+            examples = listOf("读一下通知", "刚才谁发消息"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        // [T-android-brave-web-search] 通用网页搜索：只返回搜索结果，不打开
+        // 页面。优先级高于 tool.browser(115)，低于 info.news(168)；打开网址、
+        // 新闻/股票/天气/导航等各有专线，这里全部排除。
+        r(
+            "info.websearch", "Web search", "network", "web_search", "search", 160,
+            listOf(
+                "搜网页", "搜索网页", "网页搜索", "网上搜", "上网搜", "网上查", "上网查",
+                "帮我搜一下", "查资料",
+            ),
+            patterns = listOf(
+                """(?:帮我|给我|请|麻烦)?\s*(?:上网|在网上|网上|网页)\s*(?:搜|搜索|查)(?:索|一下)?\s*.{1,40}""",
+                """(?:搜|搜索)\s*(?:网页|网页结果|网上)""",
+                """(?:查|找)\s*(?:资料|教程|官网|文档|攻略)""",
+            ),
+            exclude = listOf(
+                "打开", "浏览", "网址", "链接", "新闻", "资讯", "热点", "股票", "行情",
+                "天气", "附近", "导航", "怎么去", "车票", "余票", "通知", "笔记", "联系人",
+                "讨论", "功能",
+                "运行", "执行", "命令", "脚本", "终端", "shell", "grep", "awk", "find",
+                "文件", "记忆", "歌", "音乐", "快递", "翻译",
+            ),
+            examples = listOf("帮我搜一下 Kotlin 协程教程", "上网查一下 Brave Search API 文档"),
             confirm = ConfirmMode.NEVER,
         ),
 

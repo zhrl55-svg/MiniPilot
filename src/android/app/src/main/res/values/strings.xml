@@ -2933,4 +2933,13 @@
     <string name="music_chart_new">New songs</string>
     <string name="music_chart_rising">Rising</string>
     <string name="music_queue_chip">Queue %1$d/%2$d</string>
+    <string name="settings_web_search">Web Search</string>
+    <string name="settings_web_search_subtitle">Brave Search API key for the web_search tool</string>
+    <string name="web_search_key_title">Brave Search API Key</string>
+    <string name="web_search_key_subtitle">The agent uses this key for general web searches. Create one at api.search.brave.com. Leave it empty to keep web search off.</string>
+    <string name="web_search_key_label">API Key</string>
+    <string name="web_search_key_save">Save</string>
+    <string name="web_search_key_clear">Clear</string>
+    <string name="web_search_key_configured">Key saved on this device.</string>
+    <string name="web_search_key_missing">No key configured.</string>
 </resources>

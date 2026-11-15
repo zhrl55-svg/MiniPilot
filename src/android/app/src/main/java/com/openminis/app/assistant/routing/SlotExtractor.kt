@@ -81,7 +81,16 @@ class SlotExtractor(
             // The tools own query normalization (news strips command words,
             // stocks scan for an index keyword), so passing the full sentence
             // keeps the local path deterministic and model-free.
-            "news_search", "stock_quote" -> args.put("query", text)
+            "news_search", "stock_quote", "web_search" -> args.put("query", text)
+            // [T-android-train-quote] 站名/日期能确定性抽出就抽；抽不到的
+            // 可选槽交给工具默认值，from/to 缺失时路由会退回云端。
+            "train_12306" -> extractTrain(text, args)
+            // [T-android-notification-summary] 「最近 10 条通知」→ limit。
+            "notifications" -> {
+                Regex("""(?:最近|最新)?\s*(\d{1,2})\s*条(?:通知|消息)""").find(text)?.let { match ->
+                    match.groupValues[1].toIntOrNull()?.let { args.put("limit", it) }
+                }
+            }
             "file_edit" -> {
                 pathRegex.find(text)?.let { args.put("path", it.value) }
             }

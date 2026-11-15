@@ -101,6 +101,45 @@ object LocalCapabilityRegistry {
             ),
         ),
         LocalCapability(
+            // [T-android-train-quote] 12306 余票：只读查询，from/to 是必需槽，
+            // date / time_range / only_available 抽得到才带。
+            "train_12306", "Train tickets",
+            mapOf(
+                "query" to action(
+                    "query", true,
+                    slots = arrayOf(
+                        slot("from", SlotType.QUERY),
+                        slot("to", SlotType.QUERY),
+                        slot("date", SlotType.TIME, required = false),
+                        slot("time_range", SlotType.TEXT, required = false),
+                        slot("only_available", SlotType.ENUM, required = false),
+                    ),
+                ),
+            ),
+        ),
+        LocalCapability(
+            // [T-android-notification-summary] 最近通知摘要（只读）。
+            "notifications", "Notifications",
+            mapOf(
+                "summary" to action(
+                    "summary", true,
+                    slots = arrayOf(slot("limit", SlotType.NUMBER, required = false)),
+                ),
+            ),
+        ),
+        LocalCapability(
+            // [T-android-brave-web-search] 通用网页搜索（只读，需要 Brave Key）。
+            // query 是必需槽：工具总会把整句当查询词，标成必需也让路由的
+            // 「话题提及」判定把自由文本当成指令而不是讨论。
+            "web_search", "Web search",
+            mapOf(
+                "search" to action(
+                    "search", true,
+                    slots = arrayOf(slot("query", SlotType.QUERY)),
+                ),
+            ),
+        ),
+        LocalCapability(
             "calendar", "Calendar",
             mapOf(
                 "list" to action("list", true),

@@ -2721,4 +2721,13 @@
     <string name="music_chart_new">新歌榜</string>
     <string name="music_chart_rising">飙升榜</string>
     <string name="music_queue_chip">候选 %1$d/%2$d</string>
+    <string name="settings_web_search">网页搜索</string>
+    <string name="settings_web_search_subtitle">为 web_search 工具填写 Brave Search API Key</string>
+    <string name="web_search_key_title">Brave Search API Key</string>
+    <string name="web_search_key_subtitle">Agent 用这个 Key 做通用网页搜索。可在 api.search.brave.com 申请。留空表示不使用网页搜索。</string>
+    <string name="web_search_key_label">API Key</string>
+    <string name="web_search_key_save">保存</string>
+    <string name="web_search_key_clear">清除</string>
+    <string name="web_search_key_configured">Key 已保存在本机。</string>
+    <string name="web_search_key_missing">尚未配置 Key。</string>
 </resources>

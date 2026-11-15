@@ -68,6 +68,9 @@ object LocalActionSpeech {
             "amap_search" to "search" -> "搜索地点"
             "news_search" to "search" -> "查询新闻"
             "stock_quote" to "quote" -> "查询行情"
+            "train_12306" to "query" -> "查询车票"
+            "notifications" to "summary" -> "读取通知"
+            "web_search" to "search" -> "搜索网页"
             else -> fallbackLabel.ifBlank { "$capability/$action" }
         }
     }

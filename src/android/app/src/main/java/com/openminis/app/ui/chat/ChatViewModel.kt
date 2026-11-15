@@ -68,7 +68,10 @@ import com.openminis.app.tools.BatchToolOrder
 import com.openminis.app.tools.ReadImageTool
 import com.openminis.app.tools.AmapSearchTool
 import com.openminis.app.tools.NewsSearchTool
+import com.openminis.app.tools.NotificationsTool
 import com.openminis.app.tools.StockQuoteTool
+import com.openminis.app.tools.TrainQuoteTool
+import com.openminis.app.tools.WebSearchTool
 import com.openminis.app.tools.ToolExecutionResult
 import com.openminis.app.offload.OffloadPermissionManager
 import com.openminis.app.service.SessionActivityTracker
@@ -15089,6 +15092,25 @@ class ChatViewModel(
                 // Key-free Sina quote endpoint; blocking HTTP lives on IO.
                 withContext(Dispatchers.IO) {
                     StockQuoteTool.execute(argsJson)
+                }
+            }
+            TrainQuoteTool.NAME -> {
+                // [T-android-train-quote] 12306 余票；站表/会话 cookie 在
+                // 进程内缓存，阻塞 HTTP 放 IO。
+                withContext(Dispatchers.IO) {
+                    TrainQuoteTool.execute(argsJson)
+                }
+            }
+            NotificationsTool.NAME -> {
+                // [T-android-notification-summary] 读取进程内通知缓存。
+                withContext(Dispatchers.IO) {
+                    NotificationsTool.execute(context, argsJson)
+                }
+            }
+            WebSearchTool.NAME -> {
+                // [T-android-brave-web-search] Brave 搜索；Key 在设置里配置。
+                withContext(Dispatchers.IO) {
+                    WebSearchTool.execute(context, argsJson)
                 }
             }
             FileReadTool.NAME -> {
