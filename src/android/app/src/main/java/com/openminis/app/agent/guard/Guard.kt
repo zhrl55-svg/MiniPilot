@@ -1,6 +1,8 @@
 package com.openminis.app.agent.guard
 
 import android.content.Context
+import com.openminis.app.accessibility.A11yLabels
+import com.openminis.app.accessibility.MinisAccessibilityService
 import com.openminis.app.agent.userask.PendingAsk
 import com.openminis.app.agent.userask.UserAskCenter
 import com.openminis.app.agent.userask.UserAskOption
@@ -94,6 +96,35 @@ object Guard {
         Rule(RiskLevel.SENSITIVE, ".keystore", Regex("""\.keystore""", RegexOption.IGNORE_CASE)),
     )
 
+    /**
+     * Accessibility taps whose command text carries no semantics (`tap node
+     * a3f2`, `tap xy 600 1200`, `tap id com.x:id/pay`). Guard resolves the
+     * target node and appends its label chain, so the money/irreversible
+     * rules can see what is actually being pressed without scanning the whole
+     * screen (Pilot's own false-positive lesson).
+     */
+    private val A11Y_TAP_NODE = Regex(
+        """android-a11y-cli\s+tap\s+(?:node)\s+(\S+)""", RegexOption.IGNORE_CASE,
+    )
+    private val A11Y_TAP_ID = Regex(
+        """android-a11y-cli\s+tap\s+id\s+(\S+)""", RegexOption.IGNORE_CASE,
+    )
+    private val A11Y_TAP_XY = Regex(
+        """android-a11y-cli\s+tap\s+xy\s+(-?\d+)\s+(-?\d+)""", RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Chinese irreversible intents that only make sense for a UI target
+     * ("卸载", "清除数据", "退出登录"). Applied to the resolved target line
+     * only, never to the whole command, so a file named 删除 does not trip it.
+     */
+    private val IRREVERSIBLE_TARGET_WORDS = Regex(
+        """卸载|清除数据|恢复出厂|注销账号|删除账号|退出登录|解绑银行卡|格式化""",
+    )
+
+    /** `input text <secret>` must never survive in the audit evidence. */
+    private val TYPED_TEXT = Regex("""(\binput\s+text\s+)([^\n]+)""", RegexOption.IGNORE_CASE)
+
     /** Long opaque values in an evidence string; only applied at SENSITIVE. */
     private val SECRET_VALUE = Regex("""[A-Za-z0-9_\-]{16,}""")
 
@@ -108,13 +139,26 @@ object Guard {
      * level the first rule in table order wins.
      */
     fun classify(toolName: String, argsJson: String): RiskVerdict {
-        val text = scannedText(toolName, argsJson)
-        if (text.isBlank()) return RiskVerdict.NONE
+        val commandText = scannedText(toolName, argsJson)
+        if (commandText.isBlank()) return RiskVerdict.NONE
+
+        // For opaque accessibility taps the command alone says nothing about
+        // what is being pressed. Resolve the target node and give the rule
+        // tables its label chain. A coordinate tap resolves through the
+        // smallest actionable node at that point — no whole-screen scan.
+        val targetText = if (toolName == "shell_execute") a11yTargetText(commandText) else null
+        val text = if (targetText.isNullOrBlank()) commandText else "$commandText\n[target] $targetText"
 
         val candidates = mutableListOf<RiskVerdict>()
 
         IRREVERSIBLE_RULES.firstOrNull { it.regex.containsMatchIn(text) }?.let {
             candidates += RiskVerdict(it.level, it.label, text)
+        }
+
+        if (!targetText.isNullOrBlank()) {
+            IRREVERSIBLE_TARGET_WORDS.find(targetText)?.let {
+                candidates += RiskVerdict(RiskLevel.IRREVERSIBLE, "a11y target: ${it.value}", text)
+            }
         }
 
         if (MONEY_WORDS.containsMatchIn(text) && MONEY_ACTIONS.containsMatchIn(text)) {
@@ -133,11 +177,15 @@ object Guard {
         }
 
         val top = candidates.maxByOrNull { it.level.ordinal } ?: return RiskVerdict.NONE
+        // Lead with the resolved target so the confirmation card says
+        // "target: 微信 支付" even when the command itself is long.
+        val evidenceBase = if (targetText.isNullOrBlank()) top.evidence
+                           else "target: $targetText\n$commandText"
         // Redacted whenever the sensitive rule hit, even if a higher level won:
         // an API key must not survive in the audit just because the same
         // command also deletes a directory.
-        val evidence = if (sensitiveHit) redact(top.evidence) else top.evidence
-        return top.copy(evidence = evidence.take(MAX_EVIDENCE))
+        val evidence = if (sensitiveHit) redact(evidenceBase) else evidenceBase
+        return top.copy(evidence = redactTypedText(evidence).take(MAX_EVIDENCE))
     }
 
     private fun scannedText(toolName: String, argsJson: String): String {
@@ -149,6 +197,43 @@ object Guard {
             else -> ""
         }
     }
+
+    /**
+     * Resolve an opaque `android-a11y-cli tap ...` to a target description.
+     *
+     * Only tap forms are handled; `tap text 支付` already carries its label in
+     * the command, and non-tap a11y commands cannot spend money or delete an
+     * account. Any failure (service down, stale node, coordinates off-screen)
+     * returns null and leaves the command as the only evidence — the audit
+     * must never break a tool call.
+     */
+    private fun a11yTargetText(command: String): String? = runCatching {
+        if (!command.contains("android-a11y-cli", ignoreCase = true)) return@runCatching null
+        val svc = MinisAccessibilityService.getInstance() ?: return@runCatching null
+
+        A11Y_TAP_NODE.find(command)?.let { m ->
+            svc.nodeRegistry.get(m.groupValues[1])?.let {
+                return@runCatching A11yLabels.describeTarget(it)
+            }
+        }
+        A11Y_TAP_XY.find(command)?.let { m ->
+            val x = m.groupValues[1].toIntOrNull() ?: return@runCatching null
+            val y = m.groupValues[2].toIntOrNull() ?: return@runCatching null
+            A11yLabels.nodeAt(svc.rootNodes(), x, y)?.let {
+                return@runCatching A11yLabels.describeTarget(it)
+            }
+        }
+        A11Y_TAP_ID.find(command)?.let { m ->
+            A11yLabels.nodeByResourceId(svc.rootNodes(), m.groupValues[1])?.let {
+                return@runCatching A11yLabels.describeTarget(it)
+            }
+        }
+        null
+    }.getOrNull()
+
+    /** Replace the value after `input text` so a password never reaches the audit. */
+    internal fun redactTypedText(text: String): String =
+        TYPED_TEXT.replace(text) { m -> m.groupValues[1] + "***" }
 
     /** Replace any long opaque value with `***`. */
     internal fun redact(text: String): String = SECRET_VALUE.replace(text, "***")

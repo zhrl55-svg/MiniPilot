@@ -6,8 +6,11 @@ import android.graphics.Bitmap
 import android.graphics.Path
 import android.graphics.Rect
 import android.os.Build
+import android.os.SystemClock
 import android.view.Display
 import android.view.accessibility.AccessibilityNodeInfo
+import com.openminis.app.accessibility.A11yJournal
+import com.openminis.app.accessibility.A11yLabels
 import com.openminis.app.accessibility.AccessibilityRecoveryManager
 import com.openminis.app.accessibility.MinisAccessibilityService
 import com.openminis.app.accessibility.NodeRegistry
@@ -29,6 +32,13 @@ import org.json.JSONObject
  * matches the rest of `android-*` so `--quiet` strips it cleanly.
  */
 class AccessibilityOffloadHandler(private val context: Context) : NativeOffloadHandler {
+
+    /**
+     * Chat session owning the current request. Offload handlers run on
+     * multiple worker threads, so this must be thread-local rather than a
+     * field; [A11yJournal] uses it to group actions by chat.
+     */
+    private val requestSessionId = ThreadLocal<String?>()
 
     companion object {
         private const val TAG = "A11yOffload"
@@ -56,6 +66,12 @@ class AccessibilityOffloadHandler(private val context: Context) : NativeOffloadH
         private const val VAR_MINIS_ATTACHMENTS = "/var/minis/attachments"
         private const val A11Y_SHOT_SUBDIR = "screenshots"
 
+        /** Cap for `ui dump --interactive`; beyond this the model's attention scatters. */
+        private const val DEFAULT_INTERACTIVE_NODES = 120
+
+        /** How far up from a non-clickable node to look for the real click target. */
+        private const val TAP_ANCESTOR_DEPTH = 5
+
         private const val TOP_HELP = """android-a11y-cli — UI-layer automation via Android AccessibilityService.
 
 Usage:
@@ -72,15 +88,27 @@ Groups:
   notify    watch | once
   dialog    detect | dismiss
   extract   text | list | form
+  journal   tail | clear
   service   status | ping
 
 Output: JSON envelope { ok, data | error: { code, message } }.
 Use --compact to emit on a single line; --quiet to strip the envelope.
 
+Actions return `changed` (a visible UI change was observed within ~1s),
+`settleMs`, and the resolved `target`. Pass --no-verify to skip that wait.
+
 First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 """
         private const val SERVICE_HELP = "service status | ping\n"
         private const val UI_HELP = """ui dump | find | info | node | screenshot
+
+  ui dump                      Dump the current screen.
+    --interactive              Keep only actionable nodes, aggregate their
+                               labels, redact password fields, cap the result
+                               at 120 nodes. This is the prompt-friendly view;
+                               prefer it over a raw dump.
+    --max-nodes N              Cap the number of emitted nodes (0 = no cap).
+    --depth N                  Maximum tree depth (default 10).
 
   ui screenshot                Capture a system-wide screenshot via
                                AccessibilityService.takeScreenshot (API 30+).
@@ -95,7 +123,11 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
                                (minis://attachments/screenshots/<file>) and
                                `host_path` (the Android-side path, for
                                debugging only — tools cannot read it).
+
+Action groups (tap/input/scroll/gesture/dialog) return `changed` and
+`settleMs`; pass --no-verify to skip the ~1s change-detection wait.
 """
+        private const val JOURNAL_HELP = "journal tail [--limit N] | clear\n"
         private const val TAP_HELP = "tap node <id> | tap xy <x> <y> | tap text <s> | tap id <res>\n"
         private const val INPUT_HELP = "input text <s> [--node id] [--clear|--append] | input clear | input key BACK|HOME|RECENTS|NOTIFICATIONS\n"
         private const val SCROLL_HELP = "scroll node <id> [--direction up|down|left|right] [--times n] | scroll xy <x> <y> | scroll to-text <s>\n"
@@ -116,6 +148,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
                 "clickable", "editable", "scrollable", "checked", "enabled",
                 "visible-only", "auto-scroll", "auto-dismiss", "auto-confirm",
                 "confirm", "deny", "children", "ancestors",
+                "interactive", "no-verify",
             ),
         )
         if (args.hasFlag("h", "help") || args.positional.isEmpty()) {
@@ -154,7 +187,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         // `handle` is not a suspend fun. The prompt self-cancels after
         // AccessibilityRecoveryManager.PROMPT_TIMEOUT_MS so this can never
         // block the worker indefinitely.
-        if (sub != "service" && sub != "--version") {
+        if (sub != "service" && sub != "--version" && sub != "journal") {
             val usable = kotlinx.coroutines.runBlocking {
                 AccessibilityRecoveryManager.ensureGrantOrPrompt(context)
             }
@@ -197,6 +230,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         com.openminis.app.service.SessionActivityTracker.updateToolStatus(
             statusForSubAction(sub, args.positional.getOrNull(1), args),
         )
+        requestSessionId.set(request.sessionId)
         return try {
             when (sub) {
                 // [T-android-a11y-helper-mount] Resolve screenshots against the
@@ -220,6 +254,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
                 "notify"    -> notifySub(args)
                 "dialog"    -> dialogSub(args)
                 "extract"   -> extractSub(args)
+                "journal"   -> journalSub(args)
                 "service"   -> serviceSub(args)
                 "--version" -> NativeOffloadResult(0, "android-a11y-cli 0.1\n")
                 else        -> NativeOffloadResult(2, "$TOOL: unknown subcommand '$sub'\n$TOP_HELP")
@@ -231,6 +266,8 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         } catch (e: Throwable) {
             AppLogger.warning(TAG, "uncaught: ${e.javaClass.simpleName} ${e.message}")
             err(args, "INTERNAL", "${e.javaClass.simpleName}: ${e.message ?: ""}")
+        } finally {
+            requestSessionId.remove()
         }
     }
 
@@ -298,40 +335,106 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         val svc = svcOrThrow()
         val maxDepth = args.getInt("depth") ?: 10
         val compact = args.hasFlag("compact")
+        val interactive = args.hasFlag("interactive")
         val visibleOnly = args.getBool("visible-only") ?: true
+        val maxNodes = args.getInt("max-nodes")
+            ?: if (interactive) DEFAULT_INTERACTIVE_NODES else 0
         val arr = JSONArray()
+        val seen = HashSet<String>()
+        var truncated = false
         for (root in svc.rootNodes()) {
-            walkNode(svc.nodeRegistry, root, 0, maxDepth, visibleOnly, compact, arr)
+            if (walkNode(
+                    svc.nodeRegistry, root, 0, maxDepth, visibleOnly, compact,
+                    interactive, maxNodes, seen, arr,
+                )
+            ) {
+                truncated = true
+                break
+            }
         }
-        return ok(args, JSONObject().put("count", arr.length()).put("nodes", arr))
+        var informative = 0
+        for (i in 0 until arr.length()) {
+            if (arr.optJSONObject(i)?.optString("name").orEmpty().isNotBlank()) informative++
+        }
+        val data = JSONObject().put("count", arr.length()).put("nodes", arr)
+        if (interactive) data.put("interactive", true)
+        if (maxNodes > 0) data.put("truncated", truncated || arr.length() >= maxNodes)
+        // A nearly empty interactive tree usually means a self-drawn surface
+        // (WebView / Flutter / game). Point the model at the screenshot path
+        // instead of letting it conclude the screen is blank.
+        if (interactive && (arr.length() < 8 || informative < 3)) {
+            data.put("screenshotSuggested", true)
+        }
+        return ok(args, data)
     }
 
+    /**
+     * Returns true when [maxNodes] cut the walk short, so the caller can mark
+     * the result `truncated`.
+     */
     private fun walkNode(
         registry: NodeRegistry, node: AccessibilityNodeInfo?,
-        depth: Int, maxDepth: Int, visibleOnly: Boolean, compact: Boolean, out: JSONArray,
-    ) {
-        if (node == null || depth > maxDepth) return
-        if (!visibleOnly || node.isVisibleToUser) out.put(nodeToJson(registry, node, depth, compact))
-        for (i in 0 until node.childCount) {
-            walkNode(registry, node.getChild(i), depth + 1, maxDepth, visibleOnly, compact, out)
+        depth: Int, maxDepth: Int, visibleOnly: Boolean, compact: Boolean,
+        interactive: Boolean, maxNodes: Int, seen: MutableSet<String>, out: JSONArray,
+    ): Boolean {
+        if (node == null || depth > maxDepth) return false
+        if (maxNodes > 0 && out.length() >= maxNodes) return true
+        val visible = !visibleOnly || node.isVisibleToUser
+        if (visible && (!interactive || A11yLabels.isActionable(node))) {
+            val obj = nodeToJson(registry, node, depth, compact)
+            // Interactive mode aggregates labels, so a clickable row and its
+            // clickable child often describe the same target. Keep one.
+            if (!interactive || seen.add(dedupeKey(obj))) out.put(obj)
         }
+        for (i in 0 until node.childCount) {
+            if (walkNode(
+                    registry, node.getChild(i), depth + 1, maxDepth, visibleOnly,
+                    compact, interactive, maxNodes, seen, out,
+                )
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private fun dedupeKey(obj: JSONObject): String {
+        val center = obj.optJSONObject("center")
+        return listOf(
+            obj.optString("role"),
+            obj.optString("name"),
+            obj.optString("viewId"),
+            center?.optInt("x") ?: -1,
+            center?.optInt("y") ?: -1,
+        ).joinToString("|")
     }
 
     private fun nodeToJson(registry: NodeRegistry, n: AccessibilityNodeInfo, depth: Int, compact: Boolean): JSONObject {
         val id = registry.put(n)
         val rect = Rect(); n.getBoundsInScreen(rect)
-        val text = n.text?.toString()
-        val desc = n.contentDescription?.toString()
-        val obj = JSONObject().put("nodeId", id)
+        val password = n.isPassword
+        val own = A11yLabels.ownLabel(n)
+        val name = if (own.isNotBlank()) own else A11yLabels.labelOf(n)
+        val text = if (password) "" else n.text?.toString() ?: ""
+        val desc = if (password) "" else n.contentDescription?.toString() ?: ""
+        val obj = JSONObject()
+            .put("nodeId", id)
+            .put("role", A11yLabels.roleOf(n.className?.toString()))
+            .put("name", name)
+            .put("password", password)
+            .put("untrusted", true)
         if (compact) {
-            if (!text.isNullOrEmpty()) obj.put("text", text)
-            if (!desc.isNullOrEmpty()) obj.put("contentDesc", desc)
+            if (text.isNotEmpty()) obj.put("text", text)
+            if (desc.isNotEmpty()) obj.put("contentDesc", desc)
+            n.viewIdResourceName?.takeIf { it.isNotEmpty() }?.let { obj.put("viewId", it) }
             obj.put("clickable", n.isClickable)
             obj.put("center", JSONObject().put("x", rect.centerX()).put("y", rect.centerY()))
         } else {
             obj.put("className", n.className?.toString() ?: "")
-            obj.put("text", text ?: "")
-            obj.put("contentDesc", desc ?: "")
+            obj.put("text", text)
+            obj.put("contentDesc", desc)
+            val hint = if (password) "" else n.hintText?.toString() ?: ""
+            if (hint.isNotEmpty()) obj.put("hint", hint)
             obj.put("resourceId", n.viewIdResourceName ?: "")
             obj.put("packageName", n.packageName?.toString() ?: "")
             obj.put("bounds", JSONObject()
@@ -387,8 +490,9 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
     }
 
     private fun matchesPredicate(n: AccessibilityNodeInfo, args: OffloadArgs): Boolean {
-        args.get("text")?.let { if (n.text?.toString() != it) return false }
-        args.get("text-contains")?.let { if (n.text?.toString()?.contains(it) != true) return false }
+        val nodeText = if (n.isPassword) null else n.text?.toString()
+        args.get("text")?.let { if (nodeText != it) return false }
+        args.get("text-contains")?.let { if (nodeText?.contains(it) != true) return false }
         args.get("desc")?.let { if (n.contentDescription?.toString() != it) return false }
         args.get("desc-contains")?.let { if (n.contentDescription?.toString()?.contains(it) != true) return false }
         args.get("id")?.let { if (n.viewIdResourceName != it) return false }
@@ -557,15 +661,19 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             ?: return NativeOffloadResult(2, "$TOOL tap node: missing <nodeId>\n")
         val n = svc.nodeRegistry.get(nodeId)
             ?: return err(args, "NODE_NOT_FOUND", "no live node with id=$nodeId")
-        val action = if (args.hasFlag("long")) AccessibilityNodeInfo.ACTION_LONG_CLICK
-                     else AccessibilityNodeInfo.ACTION_CLICK
-        if (!n.isClickable && !args.hasFlag("long")) {
-            val r = Rect(); n.getBoundsInScreen(r)
-            return tapXYRaw(svc, r.centerX(), r.centerY(), args)
+        val before = probeBefore(svc, args)
+        // Capture the target before the click: a successful tap often replaces
+        // the node (new activity, dialog dismissed), leaving it stale.
+        val target = targetJson(n)
+        val (clicked, via) = performTapOnNode(svc, n, args)
+        if (!clicked) {
+            return err(args, "ACTION_FAILED", "click failed on node $nodeId and coordinate fallback")
         }
-        return if (n.performAction(action))
-            ok(args, JSONObject().put("nodeId", nodeId).put("action", "click"))
-        else err(args, "ACTION_FAILED", "performAction($action) returned false")
+        return ok(args, finishAction(
+            svc, args, "tap.node", before,
+            JSONObject().put("nodeId", nodeId).put("via", via).put("target", target),
+            target,
+        ))
     }
 
     private fun tapXY(args: OffloadArgs): NativeOffloadResult {
@@ -578,18 +686,15 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
     }
 
     private fun tapXYRaw(svc: MinisAccessibilityService, x: Int, y: Int, args: OffloadArgs): NativeOffloadResult {
-        val duration = args.getLong("duration") ?: if (args.hasFlag("long")) 1000L else 50L
-        val path = Path().apply {
-            moveTo(x.toFloat(), y.toFloat())
-            lineTo(x.toFloat() + 0.1f, y.toFloat() + 0.1f)
+        val targetNode = A11yLabels.nodeAt(svc.rootNodes(), x, y)
+        val target = targetNode?.let { targetJson(it) }
+        val before = probeBefore(svc, args)
+        if (!dispatchTap(svc, x, y, args)) {
+            return err(args, "GESTURE_FAILED", "dispatchGesture returned cancelled / timed out")
         }
-        val gestureOk = svc.dispatchSimpleGesture(path, 0L, duration)
-        if (args.hasFlag("double")) {
-            Thread.sleep(80)
-            svc.dispatchSimpleGesture(path, 0L, duration)
-        }
-        return if (gestureOk) ok(args, JSONObject().put("x", x).put("y", y).put("action", "tap"))
-        else err(args, "GESTURE_FAILED", "dispatchGesture returned cancelled / timed out")
+        val data = JSONObject().put("x", x).put("y", y).put("action", "tap").put("via", "coordinate")
+        target?.let { data.put("target", it) }
+        return ok(args, finishAction(svc, args, "tap.xy", before, data, target))
     }
 
     private fun tapText(args: OffloadArgs): NativeOffloadResult {
@@ -600,15 +705,24 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         val index = args.getInt("index") ?: 0
         val matches = ArrayList<AccessibilityNodeInfo>()
         for (root in svc.rootNodes()) findByTextOrDesc(root, text, contains, 30, 0, matches)
-        val n = matches.getOrNull(index)
+        // The status bar's Wi-Fi/Bluetooth labels live in a system window and
+        // often precede the app window in traversal order. A text tap means
+        // the app's label, so prefer nodes owned by the foreground package.
+        val candidates = preferForeground(svc, matches)
+        val n = candidates.getOrNull(index)
             ?: return err(args, "NODE_NOT_FOUND",
                 "no node with text${if (contains) " containing " else "="}\"$text\" (matches: ${matches.size})")
-        if (n.isClickable) n.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-        else {
-            val r = Rect(); n.getBoundsInScreen(r)
-            tapXYRaw(svc, r.centerX(), r.centerY(), args)
+        val before = probeBefore(svc, args)
+        val target = targetJson(n)
+        val (clicked, via) = performTapOnNode(svc, n, args)
+        if (!clicked) {
+            return err(args, "ACTION_FAILED", "click failed on text \"$text\" and coordinate fallback")
         }
-        return ok(args, JSONObject().put("text", text).put("action", "click"))
+        return ok(args, finishAction(
+            svc, args, "tap.text", before,
+            JSONObject().put("text", text).put("via", via).put("target", target),
+            target,
+        ))
     }
 
     private fun findByTextOrDesc(
@@ -616,7 +730,9 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         maxDepth: Int, depth: Int, out: MutableList<AccessibilityNodeInfo>,
     ) {
         if (node == null || depth > maxDepth) return
-        val t = node.text?.toString()
+        // Password fields match by label only; their value is not searchable
+        // (and the reply redacts it anyway).
+        val t = if (node.isPassword) null else node.text?.toString()
         val d = node.contentDescription?.toString()
         val match = if (contains)
             (t != null && t.contains(target)) || (d != null && d.contains(target))
@@ -632,11 +748,21 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             ?: return NativeOffloadResult(2, "$TOOL tap id: missing <resourceId>\n")
         val matches = ArrayList<AccessibilityNodeInfo>()
         for (root in svc.rootNodes()) findByResourceId(root, rid, 30, 0, matches)
-        val n = matches.firstOrNull()
+        // A bare `android:id/title` exists in system windows too; prefer the
+        // app the user is looking at.
+        val n = preferForeground(svc, matches).firstOrNull()
             ?: return err(args, "NODE_NOT_FOUND", "no node with resource-id=$rid")
-        return if (n.performAction(AccessibilityNodeInfo.ACTION_CLICK))
-            ok(args, JSONObject().put("resourceId", rid).put("action", "click"))
-        else err(args, "ACTION_FAILED", "performAction(CLICK) returned false")
+        val before = probeBefore(svc, args)
+        val target = targetJson(n)
+        val (clicked, via) = performTapOnNode(svc, n, args)
+        if (!clicked) {
+            return err(args, "ACTION_FAILED", "click failed on resource-id=$rid and coordinate fallback")
+        }
+        return ok(args, finishAction(
+            svc, args, "tap.id", before,
+            JSONObject().put("resourceId", rid).put("via", via).put("target", target),
+            target,
+        ))
     }
 
     private fun findByResourceId(
@@ -646,6 +772,23 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         if (node == null || depth > maxDepth) return
         if (node.viewIdResourceName == rid) out.add(node)
         for (i in 0 until node.childCount) findByResourceId(node.getChild(i), rid, maxDepth, depth + 1, out)
+    }
+
+    /**
+     * Prefer nodes owned by the foreground app. The status bar (system UI) is
+     * a separate window whose labels ("WLAN", "蓝牙", "电量") often precede the
+     * app window in [MinisAccessibilityService.rootNodes] order, so a naive
+     * `tap text WLAN` can hit the status bar instead of the settings row.
+     */
+    private fun preferForeground(
+        svc: MinisAccessibilityService,
+        matches: List<AccessibilityNodeInfo>,
+    ): List<AccessibilityNodeInfo> {
+        if (matches.size <= 1) return matches
+        val pkg = try { svc.foregroundPackage().first } catch (_: Throwable) { null }
+        if (pkg.isNullOrBlank()) return matches
+        val preferred = matches.filter { it.packageName?.toString() == pkg }
+        return if (preferred.isNotEmpty()) preferred else matches
     }
 
     // ── input ────────────────────────────────────────────────────────────
@@ -666,37 +809,61 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             ?: return NativeOffloadResult(2, "$TOOL input text: missing <text>\n")
         val node = resolveTargetEditable(svc, args)
             ?: return err(args, "NODE_NOT_FOUND", "no editable focus and no --node specified")
-        val finalText = when {
-            args.hasFlag("clear")  -> text
-            args.hasFlag("append") -> (node.text?.toString() ?: "") + text
-            else                   -> text
+        val base = if (args.hasFlag("append")) node.text?.toString() ?: "" else ""
+        val finalText = base + text
+        val before = probeBefore(svc, args)
+        val target = targetJson(node)
+        if (!svc.setNodeText(node, finalText)) {
+            return err(args, "ACTION_FAILED", "ACTION_SET_TEXT failed (node may not be editable)")
         }
-        return if (svc.setNodeText(node, finalText))
-            ok(args, JSONObject().put("text", finalText).put("action", "setText"))
-        else err(args, "ACTION_FAILED", "ACTION_SET_TEXT failed (node may not be editable)")
+        val data = JSONObject()
+            .put("chars", finalText.length)
+            .put("action", "setText")
+            .put("via", "node")
+            .put("target", target)
+        if (node.isPassword) data.put("password", true)
+        return ok(args, finishAction(
+            svc, args, "input.text", before, data, target, chars = finalText.length,
+        ))
     }
 
     private fun inputClear(args: OffloadArgs): NativeOffloadResult {
         val svc = svcOrThrow()
         val node = resolveTargetEditable(svc, args)
             ?: return err(args, "NODE_NOT_FOUND", "no editable focus and no --node specified")
-        return if (svc.setNodeText(node, ""))
-            ok(args, JSONObject().put("action", "clear"))
-        else err(args, "ACTION_FAILED", "ACTION_SET_TEXT('') failed")
+        val before = probeBefore(svc, args)
+        val target = targetJson(node)
+        if (!svc.setNodeText(node, "")) {
+            return err(args, "ACTION_FAILED", "ACTION_SET_TEXT('') failed")
+        }
+        return ok(args, finishAction(
+            svc, args, "input.clear", before,
+            JSONObject().put("action", "clear").put("via", "node").put("target", target),
+            target,
+        ))
     }
 
     private fun inputKey(args: OffloadArgs): NativeOffloadResult {
         val svc = svcOrThrow()
         val keyName = args.positional.getOrNull(2)
             ?: return NativeOffloadResult(2, "$TOOL input key: missing <keycode>\n")
-        return when (keyName.uppercase()) {
-            "BACK" -> { svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK); ok(args, JSONObject().put("key", "BACK")) }
-            "HOME" -> { svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME); ok(args, JSONObject().put("key", "HOME")) }
-            "RECENTS" -> { svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_RECENTS); ok(args, JSONObject().put("key", "RECENTS")) }
-            "NOTIFICATIONS" -> { svc.performGlobalAction(AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS); ok(args, JSONObject().put("key", "NOTIFICATIONS")) }
-            else -> err(args, "INVALID_ARGS",
-                "key '$keyName' not supported via accessibility (try BACK/HOME/RECENTS/NOTIFICATIONS; for ENTER/DPAD use shizuku-cli `input keyevent`)")
+        val action = when (keyName.uppercase()) {
+            "BACK" -> AccessibilityService.GLOBAL_ACTION_BACK
+            "HOME" -> AccessibilityService.GLOBAL_ACTION_HOME
+            "RECENTS" -> AccessibilityService.GLOBAL_ACTION_RECENTS
+            "NOTIFICATIONS" -> AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
+            else -> return err(args, "INVALID_ARGS",
+                "key '$keyName' not supported via accessibility (try BACK/HOME/RECENTS/NOTIFICATIONS; " +
+                    "for ENTER/DPAD use shizuku-cli `input keyevent`)")
         }
+        val before = probeBefore(svc, args)
+        if (!svc.performGlobalAction(action)) {
+            return err(args, "ACTION_FAILED", "performGlobalAction($keyName) returned false")
+        }
+        return ok(args, finishAction(
+            svc, args, "input.key", before,
+            JSONObject().put("key", keyName.uppercase()).put("via", "global"),
+        ))
     }
 
     private fun resolveTargetEditable(svc: MinisAccessibilityService, args: OffloadArgs): AccessibilityNodeInfo? {
@@ -733,9 +900,64 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             "up", "left"    -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
             else -> return err(args, "INVALID_ARGS", "--direction must be up|down|left|right")
         }
+        // A list row is usually the node the model has an id for, but the
+        // scrollable RecyclerView is its ancestor. Try the row first (cheap),
+        // then the nearest scrollable ancestor/descendant.
+        val scrollable = when {
+            n.isScrollable -> n
+            else -> scrollableAncestor(n) ?: firstScrollable(n, 20, 0) ?: n
+        }
+        val before = probeBefore(svc, args)
+        val target = targetJson(scrollable)
         var done = 0
-        repeat(times) { if (n.performAction(action)) done++ }
-        return ok(args, JSONObject().put("scrolled", done).put("direction", direction))
+        repeat(times) { if (scrollable.performAction(action)) done++ }
+        var via = if (scrollable === n) "node" else "scrollable"
+        if (done == 0) {
+            // The node refused ACTION_SCROLL (common for custom lists). A
+            // gesture over its bounds is the reliable fallback.
+            val r = Rect(); scrollable.getBoundsInScreen(r)
+            val distance = (r.height() / 3).coerceIn(200, 600)
+            if (dispatchScrollGesture(svc, r.centerX(), r.centerY(), direction, distance, 300L)) {
+                done = 1
+                via = "coordinate"
+            }
+        }
+        val data = JSONObject()
+            .put("scrolled", done)
+            .put("direction", direction)
+            .put("via", via)
+            .put("target", target)
+        if (done == 0) data.put("note", "no scroll action accepted; try scroll xy with explicit coordinates")
+        return ok(args, finishAction(svc, args, "scroll.node", before, data, target))
+    }
+
+    private fun scrollableAncestor(node: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        var cur = try { node.parent } catch (_: Throwable) { null }
+        var depth = 0
+        while (cur != null && depth < 20) {
+            if (cur.isScrollable) return cur
+            cur = try { cur.parent } catch (_: Throwable) { null }
+            depth++
+        }
+        return null
+    }
+
+    private fun dispatchScrollGesture(
+        svc: MinisAccessibilityService,
+        x: Int, y: Int, direction: String, distance: Int, duration: Long,
+    ): Boolean {
+        val (dx, dy) = when (direction) {
+            "down"  -> 0 to -distance
+            "up"    -> 0 to distance
+            "left"  -> distance to 0
+            "right" -> -distance to 0
+            else -> return false
+        }
+        val path = Path().apply {
+            moveTo(x.toFloat(), y.toFloat())
+            lineTo((x + dx).toFloat(), (y + dy).toFloat())
+        }
+        return svc.dispatchSimpleGesture(path, 0L, duration)
     }
 
     private fun scrollXY(args: OffloadArgs): NativeOffloadResult {
@@ -754,10 +976,15 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             "right" -> -distance to 0
             else -> return err(args, "INVALID_ARGS", "--direction must be up|down|left|right")
         }
+        val before = probeBefore(svc, args)
         val path = Path().apply { moveTo(x.toFloat(), y.toFloat()); lineTo((x + dx).toFloat(), (y + dy).toFloat()) }
-        return if (svc.dispatchSimpleGesture(path, 0L, duration))
-            ok(args, JSONObject().put("direction", direction).put("distance", distance))
-        else err(args, "GESTURE_FAILED", "scroll gesture cancelled")
+        if (!svc.dispatchSimpleGesture(path, 0L, duration)) {
+            return err(args, "GESTURE_FAILED", "scroll gesture cancelled")
+        }
+        return ok(args, finishAction(
+            svc, args, "scroll.xy", before,
+            JSONObject().put("direction", direction).put("distance", distance).put("via", "coordinate"),
+        ))
     }
 
     private fun scrollToText(args: OffloadArgs): NativeOffloadResult {
@@ -773,13 +1000,21 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             "up", "left"    -> AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
             else -> return err(args, "INVALID_ARGS", "--direction must be up|down|left|right")
         }
+        val before = probeBefore(svc, args)
         repeat(maxScrolls) {
             val matches = ArrayList<AccessibilityNodeInfo>()
             for (root in svc.rootNodes()) findByTextOrDesc(root, text, contains = true, 30, 0, matches)
-            val hit = matches.firstOrNull()
-            if (hit != null) return ok(args, JSONObject()
-                .put("found", true)
-                .put("node", nodeToJson(svc.nodeRegistry, hit, 0, compact = true)))
+            val hit = preferForeground(svc, matches).firstOrNull()
+            if (hit != null) {
+                val target = targetJson(hit)
+                return ok(args, finishAction(
+                    svc, args, "scroll.to-text", before,
+                    JSONObject().put("found", true)
+                        .put("node", nodeToJson(svc.nodeRegistry, hit, 0, compact = true))
+                        .put("target", target),
+                    target,
+                ))
+            }
             val scrolled = container?.performAction(action) ?: run {
                 var any = false
                 for (root in svc.rootNodes()) {
@@ -788,10 +1023,18 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
                 }
                 any
             }
-            if (!scrolled) return ok(args, JSONObject().put("found", false).put("reason", "scroll_action_rejected"))
+            if (!scrolled) {
+                return ok(args, finishAction(
+                    svc, args, "scroll.to-text", before,
+                    JSONObject().put("found", false).put("reason", "scroll_action_rejected"),
+                ))
+            }
             Thread.sleep(400)
         }
-        return ok(args, JSONObject().put("found", false))
+        return ok(args, finishAction(
+            svc, args, "scroll.to-text", before,
+            JSONObject().put("found", false).put("exhausted", true),
+        ))
     }
 
     private fun firstScrollable(node: AccessibilityNodeInfo?, maxDepth: Int, depth: Int): AccessibilityNodeInfo? {
@@ -820,10 +1063,17 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         val x2 = args.positional.getOrNull(4)?.toIntOrNull() ?: return NativeOffloadResult(2, "$TOOL gesture swipe: missing <x2>\n")
         val y2 = args.positional.getOrNull(5)?.toIntOrNull() ?: return NativeOffloadResult(2, "$TOOL gesture swipe: missing <y2>\n")
         val duration = args.getLong("duration") ?: 300L
+        val before = probeBefore(svc, args)
         val path = Path().apply { moveTo(x1.toFloat(), y1.toFloat()); lineTo(x2.toFloat(), y2.toFloat()) }
-        return if (svc.dispatchSimpleGesture(path, 0L, duration))
-            ok(args, JSONObject().put("from", JSONArray().put(x1).put(y1)).put("to", JSONArray().put(x2).put(y2)))
-        else err(args, "GESTURE_FAILED", "swipe cancelled")
+        if (!svc.dispatchSimpleGesture(path, 0L, duration)) {
+            return err(args, "GESTURE_FAILED", "swipe cancelled")
+        }
+        return ok(args, finishAction(
+            svc, args, "gesture.swipe", before,
+            JSONObject().put("from", JSONArray().put(x1).put(y1))
+                .put("to", JSONArray().put(x2).put(y2))
+                .put("via", "coordinate"),
+        ))
     }
 
     private fun gesturePinch(args: OffloadArgs): NativeOffloadResult {
@@ -832,9 +1082,16 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         val cy = args.positional.getOrNull(3)?.toFloatOrNull() ?: return NativeOffloadResult(2, "$TOOL gesture pinch: missing <cy>\n")
         val scale = args.getDouble("scale")?.toFloat() ?: 0.5f
         val duration = args.getLong("duration") ?: 300L
-        return if (svc.dispatchPinch(cx, cy, scale, duration))
-            ok(args, JSONObject().put("center", JSONArray().put(cx).put(cy)).put("scale", scale))
-        else err(args, "GESTURE_FAILED", "pinch cancelled")
+        val before = probeBefore(svc, args)
+        if (!svc.dispatchPinch(cx, cy, scale, duration)) {
+            return err(args, "GESTURE_FAILED", "pinch cancelled")
+        }
+        return ok(args, finishAction(
+            svc, args, "gesture.pinch", before,
+            JSONObject().put("center", JSONArray().put(cx).put(cy))
+                .put("scale", scale)
+                .put("via", "coordinate"),
+        ))
     }
 
     private fun gesturePath(args: OffloadArgs): NativeOffloadResult {
@@ -851,9 +1108,14 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             for (i in 1 until pts.size) lineTo(pts[i].first, pts[i].second)
         }
         val duration = args.getLong("duration") ?: (pts.size * 100L)
-        return if (svc.dispatchSimpleGesture(path, 0L, duration))
-            ok(args, JSONObject().put("points", pts.size))
-        else err(args, "GESTURE_FAILED", "path cancelled")
+        val before = probeBefore(svc, args)
+        if (!svc.dispatchSimpleGesture(path, 0L, duration)) {
+            return err(args, "GESTURE_FAILED", "path cancelled")
+        }
+        return ok(args, finishAction(
+            svc, args, "gesture.path", before,
+            JSONObject().put("points", pts.size).put("via", "coordinate"),
+        ))
     }
 
     // ── wait ─────────────────────────────────────────────────────────────
@@ -878,17 +1140,18 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
         val targetId = args.get("id")
         val targetClass = args.get("class")
         while (System.currentTimeMillis() < deadline) {
+            val matches = ArrayList<AccessibilityNodeInfo>()
             for (root in svc.rootNodes()) {
-                val matches = ArrayList<AccessibilityNodeInfo>()
                 if (targetText != null) findByTextOrDesc(root, targetText, contains = containsOnly, 30, 0, matches)
                 if (targetId != null) findByResourceId(root, targetId, 30, 0, matches)
                 if (targetClass != null) findByClassName(root, targetClass, 30, 0, matches)
-                val found = matches.isNotEmpty()
-                if (found == present) {
-                    return if (present) ok(args, JSONObject().put("found", true)
-                        .put("node", nodeToJson(svc.nodeRegistry, matches.first(), 0, compact = true)))
-                    else ok(args, JSONObject().put("disappeared", true))
-                }
+            }
+            val preferred = preferForeground(svc, matches)
+            val found = preferred.isNotEmpty()
+            if (found == present) {
+                return if (present) ok(args, JSONObject().put("found", true)
+                    .put("node", nodeToJson(svc.nodeRegistry, preferred.first(), 0, compact = true)))
+                else ok(args, JSONObject().put("disappeared", true))
             }
             Thread.sleep(200)
         }
@@ -1053,7 +1316,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 
     private fun collectClickableTexts(node: AccessibilityNodeInfo?, maxDepth: Int, depth: Int, out: JSONArray, registry: NodeRegistry) {
         if (node == null || depth > maxDepth) return
-        val t = node.text?.toString()
+        val t = if (node.isPassword) null else node.text?.toString()
         if (node.isClickable && !t.isNullOrEmpty()) {
             out.put(JSONObject().put("text", t).put("nodeId", registry.put(node)))
         }
@@ -1062,7 +1325,9 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 
     private fun collectText(node: AccessibilityNodeInfo?, maxDepth: Int, depth: Int, out: StringBuilder) {
         if (node == null || depth > maxDepth) return
-        node.text?.toString()?.takeIf { it.isNotBlank() }?.let { out.append(it).append(' ') }
+        if (!node.isPassword) {
+            node.text?.toString()?.takeIf { it.isNotBlank() }?.let { out.append(it).append(' ') }
+        }
         for (i in 0 until node.childCount) collectText(node.getChild(i), maxDepth, depth + 1, out)
     }
 
@@ -1077,19 +1342,23 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             deny    -> listOf("拒绝", "取消", "否", "不允许", "Cancel", "Deny", "No")
             else    -> listOf("取消", "关闭", "否", "Cancel", "Close")
         }
+        val before = probeBefore(svc, args)
         for (label in candidates) {
             val matches = ArrayList<AccessibilityNodeInfo>()
             for (root in svc.rootNodes()) findByTextOrDesc(root, label, contains = false, 30, 0, matches)
-            val btn = matches.firstOrNull { it.isClickable } ?: matches.firstOrNull()
+            val preferred = preferForeground(svc, matches)
+            val btn = preferred.firstOrNull { it.isClickable } ?: preferred.firstOrNull()
             if (btn != null) {
-                val clicked = if (btn.isClickable) btn.performAction(AccessibilityNodeInfo.ACTION_CLICK) else {
-                    val r = Rect(); btn.getBoundsInScreen(r)
-                    svc.dispatchSimpleGesture(
-                        Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()); lineTo(r.exactCenterX() + 0.1f, r.exactCenterY() + 0.1f) },
-                        0L, 50L
-                    )
+                val target = targetJson(btn)
+                val (clicked, via) = performTapOnNode(svc, btn, args)
+                if (clicked) {
+                    return ok(args, finishAction(
+                        svc, args, "dialog.dismiss", before,
+                        JSONObject().put("dismissed", true).put("button", label)
+                            .put("via", via).put("target", target),
+                        target,
+                    ))
                 }
-                if (clicked) return ok(args, JSONObject().put("dismissed", true).put("button", label))
             }
         }
         return err(args, "NODE_NOT_FOUND", "no matching dismiss button found (looked for: ${candidates.joinToString()})")
@@ -1124,7 +1393,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
 
     private fun collectVisibleText(node: AccessibilityNodeInfo?, maxDepth: Int, depth: Int, arr: JSONArray, sb: StringBuilder, sep: String) {
         if (node == null || depth > maxDepth) return
-        if (node.isVisibleToUser) {
+        if (node.isVisibleToUser && !node.isPassword) {
             val t = node.text?.toString()
             if (!t.isNullOrBlank()) {
                 val r = Rect(); node.getBoundsInScreen(r)
@@ -1182,14 +1451,167 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
     private fun collectFormFields(node: AccessibilityNodeInfo?, maxDepth: Int, depth: Int, arr: JSONArray, registry: NodeRegistry) {
         if (node == null || depth > maxDepth) return
         if (node.isEditable || node.isCheckable) {
+            val password = node.isPassword
             val obj = JSONObject().put("nodeId", registry.put(node))
                 .put("type", node.className?.toString() ?: "")
                 .put("label", node.contentDescription?.toString() ?: node.hintText?.toString() ?: "")
-            if (node.isEditable) obj.put("value", node.text?.toString() ?: "")
+                .put("password", password)
+            if (node.isEditable && !password) obj.put("value", node.text?.toString() ?: "")
             if (node.isCheckable) obj.put("checked", node.isChecked)
             arr.put(obj)
         }
         for (i in 0 until node.childCount) collectFormFields(node.getChild(i), maxDepth, depth + 1, arr, registry)
+    }
+
+    // ── action loop: probe → act → verify ─────────────────────────────────
+
+    /**
+     * Fingerprint of the visible tree, used to answer "did the action do
+     * anything?". [A11yLabels.signature] walks up to 300 nodes and includes
+     * text, bounds and checked/selected/focused, so a checkbox toggle, a list
+     * scroll and a full screen change all register.
+     */
+    private fun screenSignature(svc: MinisAccessibilityService): Int? = try {
+        var h = 17
+        h = h * 31 + A11yLabels.signature(svc.rootNodes())
+        val (pkg, _) = svc.foregroundPackage()
+        h = h * 31 + (pkg?.hashCode() ?: 0)
+        h
+    } catch (_: Throwable) {
+        null
+    }
+
+    private fun probeBefore(svc: MinisAccessibilityService, args: OffloadArgs): Int? =
+        if (args.hasFlag("no-verify")) null else screenSignature(svc)
+
+    /**
+     * Attach the action's observed outcome. Never fails the action: a missing
+     * fingerprint or a stale node degrades to `changed:null`.
+     */
+    private fun finishAction(
+        svc: MinisAccessibilityService,
+        args: OffloadArgs,
+        action: String,
+        before: Int?,
+        data: JSONObject,
+        target: JSONObject? = null,
+        chars: Int? = null,
+    ): JSONObject {
+        val pkg = try { svc.foregroundPackage().first } catch (_: Throwable) { null }
+        if (pkg != null) data.put("foregroundPackage", pkg)
+
+        var observed: Boolean? = null
+        if (!args.hasFlag("no-verify")) {
+            if (before == null) {
+                data.put("changed", JSONObject.NULL)
+                data.put("verify", "unavailable")
+            } else {
+                val timeout = (args.getLong("verify-timeout") ?: 1_000L).coerceIn(100L, 5_000L)
+                val start = SystemClock.uptimeMillis()
+                var changed = false
+                while (SystemClock.uptimeMillis() - start < timeout) {
+                    Thread.sleep(120L)
+                    val after = screenSignature(svc)
+                    if (after != null && after != before) {
+                        changed = true
+                        break
+                    }
+                }
+                observed = changed
+                data.put("changed", changed)
+                data.put("settleMs", SystemClock.uptimeMillis() - start)
+                if (!changed) {
+                    data.put("note", "no visible change within ${timeout}ms; re-dump before retrying")
+                }
+            }
+        }
+
+        A11yJournal.append(
+            context = context,
+            sessionId = requestSessionId.get(),
+            action = action,
+            packageName = pkg,
+            target = target,
+            via = data.optString("via").takeIf { it.isNotBlank() },
+            changed = observed,
+            chars = chars,
+        )
+        return data
+    }
+
+    private fun targetJson(n: AccessibilityNodeInfo): JSONObject = try {
+        val r = Rect(); n.getBoundsInScreen(r)
+        JSONObject()
+            .put("label", A11yLabels.labelOf(n))
+            .put("role", A11yLabels.roleOf(n.className?.toString()))
+            .put("viewId", n.viewIdResourceName ?: "")
+            .put("packageName", n.packageName?.toString() ?: "")
+            .put("password", n.isPassword)
+            .put("center", JSONObject().put("x", r.centerX()).put("y", r.centerY()))
+    } catch (_: Throwable) {
+        JSONObject().put("label", "")
+    }
+
+    /**
+     * Pilot's landing order, adapted: the node itself, then up to
+     * [TAP_ANCESTOR_DEPTH] clickable ancestors (a list row owns the click
+     * handler while the text lives in a filtered child), then a coordinate
+     * gesture. The reply names the path that worked, so a coordinate miss is
+     * visible instead of silently "successful".
+     */
+    private fun performTapOnNode(
+        svc: MinisAccessibilityService,
+        node: AccessibilityNodeInfo,
+        args: OffloadArgs,
+    ): Pair<Boolean, String> {
+        val long = args.hasFlag("long")
+        val action = if (long) AccessibilityNodeInfo.ACTION_LONG_CLICK
+                     else AccessibilityNodeInfo.ACTION_CLICK
+        var cur: AccessibilityNodeInfo? = node
+        var level = 0
+        while (cur != null && level <= TAP_ANCESTOR_DEPTH) {
+            val clicked = try {
+                (level == 0 || cur.isClickable || long) && cur.performAction(action)
+            } catch (_: Throwable) {
+                false
+            }
+            if (clicked) return true to if (level == 0) "node" else "ancestor$level"
+            cur = try { cur.parent } catch (_: Throwable) { null }
+            level++
+        }
+        val r = Rect()
+        try { node.getBoundsInScreen(r) } catch (_: Throwable) { return false to "none" }
+        val ok = dispatchTap(svc, r.centerX(), r.centerY(), args)
+        return ok to if (ok) "coordinate" else "none"
+    }
+
+    private fun dispatchTap(
+        svc: MinisAccessibilityService, x: Int, y: Int, args: OffloadArgs,
+    ): Boolean {
+        val duration = args.getLong("duration") ?: if (args.hasFlag("long")) 1_000L else 50L
+        val path = Path().apply {
+            moveTo(x.toFloat(), y.toFloat())
+            lineTo(x.toFloat() + 0.1f, y.toFloat() + 0.1f)
+        }
+        val ok = svc.dispatchSimpleGesture(path, 0L, duration)
+        if (ok && args.hasFlag("double")) {
+            Thread.sleep(80)
+            return svc.dispatchSimpleGesture(path, 0L, duration)
+        }
+        return ok
+    }
+
+    private fun journalSub(args: OffloadArgs): NativeOffloadResult {
+        return when (args.positional.getOrNull(1)) {
+            null -> NativeOffloadResult(2, JOURNAL_HELP)
+            "tail" -> {
+                val limit = (args.getInt("limit") ?: 20).coerceIn(1, 200)
+                val entries = A11yJournal.tail(context, limit)
+                ok(args, JSONObject().put("count", entries.length()).put("entries", entries))
+            }
+            "clear" -> ok(args, JSONObject().put("cleared", A11yJournal.clear(context)))
+            else -> NativeOffloadResult(2, "$TOOL journal: unknown action\n$JOURNAL_HELP")
+        }
     }
 
     // ── helpers ──────────────────────────────────────────────────────────
@@ -1259,6 +1681,7 @@ First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
             "notify"   -> if (v == "watch") "a11y_cli: watching notifications" else "a11y_cli: notify $v"
             "dialog"   -> "a11y_cli: dialog $v"
             "extract"  -> "a11y_cli: extracting ${v.ifBlank { "text" }}"
+            "journal"  -> if (v == "clear") "a11y_cli: clearing action journal" else "a11y_cli: reading action journal"
             "service"  -> "a11y_cli: service $v"
             else       -> "Running: a11y_cli $sub"
         }

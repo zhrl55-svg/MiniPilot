@@ -117,7 +117,11 @@ class MinisAccessibilityService : AccessibilityService() {
             type = AccessibilityEvent.eventTypeToString(event.eventType),
             packageName = event.packageName?.toString(),
             className = event.className?.toString(),
-            text = event.text?.joinToString(" ") { it?.toString() ?: "" }?.takeIf { it.isNotBlank() },
+            // [T-a11y-password-redaction] TYPE_VIEW_TEXT_CHANGED carries the
+            // typed value. A password event must never enter the ring buffer
+            // (which `event watch` and context injection can read).
+            text = if (event.isPassword) null
+                   else event.text?.joinToString(" ") { it?.toString() ?: "" }?.takeIf { it.isNotBlank() },
             timestamp = System.currentTimeMillis(),
         )
         eventRing.offer(rec)
@@ -175,9 +179,17 @@ class MinisAccessibilityService : AccessibilityService() {
             ) {
                 val node = queue.removeFirst()
                 visited++
-                val text = node.text?.toString()?.trim().orEmpty()
-                    .ifBlank { node.contentDescription?.toString()?.trim().orEmpty() }
-                if (text.isNotBlank()) builder.append(text).append('\n')
+                // [T-a11y-password-redaction] Password fields may report their
+                // contents through AccessibilityNodeInfo.text; this cache is
+                // injected into model context, so never let one through.
+                // Editable fields are skipped too: their `text` is whatever the
+                // user typed (email, search query, sometimes a code), not UI
+                // context the assistant needs.
+                if (!node.isPassword && !node.isEditable) {
+                    val text = node.text?.toString()?.trim().orEmpty()
+                        .ifBlank { node.contentDescription?.toString()?.trim().orEmpty() }
+                    if (text.isNotBlank()) builder.append(text).append('\n')
+                }
                 for (i in 0 until node.childCount) {
                     node.getChild(i)?.let { queue.add(it) }
                 }

@@ -702,7 +702,10 @@ class ShizukuOffloadHandler(private val context: Context) : NativeOffloadHandler
         // `input text` doesn't accept spaces directly — replace with %s
         val safe = text.replace(' ', '%').replace("'", "")
         val r = ShizukuManager.runProcess(arrayOf("input", "text", safe))
-        return if (r.exitCode == 0) okEnvelope(JSONObject().put("text", text), args)
+        // Never echo the typed value back into the transcript; the length is
+        // enough for the agent to confirm the call and matches the audit rule
+        // (a11y-cli.md §4.5: typed text is not logged).
+        return if (r.exitCode == 0) okEnvelope(JSONObject().put("chars", text.length).put("redacted", true), args)
         else errEnvelope("OPERATION_FAILED", failMessage(r), args)
     }
 

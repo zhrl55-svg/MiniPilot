@@ -216,6 +216,15 @@ class DebugRPCHandler(private val context: Context) {
                 }
                 handleShizukuExec(params)
             }
+            // [T-android-a11y-action-loop] Direct harness for the accessibility
+            // CLI: ui dump --interactive, tap verification and the action
+            // journal can be exercised without an in-shell prompt.
+            "debug.a11y.exec" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleA11yExec(params)
+            }
             // [T-multi-select-share] Share Chat picker / export, served by the
             // ChatScreen showing the session (iOS parity, DEBUG only).
             "debug.chatShare.openPicker" -> {
@@ -1251,6 +1260,41 @@ class DebugRPCHandler(private val context: Context) {
                 .put("showInSettings", tool.showInSettings))
         }
         return JSONObject().put("tools", arr).put("count", arr.length())
+    }
+
+    /**
+     * [T-android-a11y-action-loop] Direct invocation of
+     * [com.openminis.app.sandbox.offload.AccessibilityOffloadHandler] for e2e
+     * harnesses. Mirrors [handleShizukuExec]. DEBUG-build only — gated in
+     * [dispatch].
+     */
+    private fun handleA11yExec(params: JSONObject): JSONObject {
+        val argvTail: List<String> = when {
+            params.has("args") -> {
+                val arr = params.optJSONArray("args")
+                    ?: throw RPCException(-32602, "args must be an array of strings")
+                List(arr.length()) { arr.optString(it) }
+            }
+            params.has("command") -> {
+                params.optString("command").trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
+            }
+            else -> throw RPCException(-32602, "Missing 'args' (array) or 'command' (string)")
+        }
+        AppLogger.info("DebugRPC", "debug.a11y.exec argv=${argvTail.joinToString(" ")}")
+        val handler = com.openminis.app.sandbox.offload.AccessibilityOffloadHandler(context)
+        val request = com.openminis.app.sandbox.NativeOffloadRequest(
+            pid = -1,
+            argv = listOf("android-a11y-cli") + argvTail,
+            env = emptyMap(),
+            cwd = "/",
+            sessionId = null,
+        )
+        val result = handler.handle(request)
+        return JSONObject().apply {
+            put("exitCode", result.exitCode)
+            put("output", result.output)
+            put("argv", JSONArray(argvTail))
+        }
     }
 
     /**

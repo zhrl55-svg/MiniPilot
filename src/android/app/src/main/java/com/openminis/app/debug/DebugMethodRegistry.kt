@@ -85,6 +85,20 @@ object DebugMethodRegistry {
             example = ex("args" to JSONArray().apply { put("exec"); put("id") }),
         ),
         MethodSpec(
+            name = "debug.a11y.exec",
+            description = "DEBUG-only: invoke AccessibilityOffloadHandler directly with the given argv. Parallels debug.shizuku.exec — lets harnesses verify android-a11y-cli ui dump --interactive, tap verification and the action journal without an in-shell prompt.",
+            params = listOf(
+                ParamSpec("args", "[string]", required = false, description = "argv past `android-a11y-cli` (e.g. [\"ui\", \"dump\", \"--interactive\", \"--compact\"]). Either this or 'command' is required."),
+                ParamSpec("command", "string", required = false, description = "Whitespace-separated alternative to args."),
+            ),
+            returns = "{exitCode, output, argv}",
+            example = ex(
+                "args" to JSONArray().apply {
+                    put("ui"); put("dump"); put("--interactive"); put("--compact")
+                },
+            ),
+        ),
+        MethodSpec(
             name = "debug.modelUse.exec",
             description = "DEBUG-only: invoke ModelUseOffloadHandler directly with the given argv. Parallels debug.shizuku.exec — lets harnesses trigger `minis-model-use run/list/search` without an in-shell prompt.",
             params = listOf(
