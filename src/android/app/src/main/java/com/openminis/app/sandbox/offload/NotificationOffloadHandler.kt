@@ -4,9 +4,7 @@ import android.Manifest
 import android.app.AlarmManager
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
@@ -19,6 +17,7 @@ import com.openminis.app.logging.AppLogger
 import com.openminis.app.offload.MinisNotificationListenerService
 import com.openminis.app.offload.OffloadPermissionManager
 import com.openminis.app.offload.ScheduledNotificationReceiver
+import com.openminis.app.offload.ScheduledNotificationScheduler
 import com.openminis.app.offload.ScheduledNotificationStore
 import com.openminis.app.sandbox.NativeOffloadHandler
 import com.openminis.app.sandbox.NativeOffloadRequest
@@ -83,6 +82,7 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
                 }
                 "list" -> handleList(args)
                 "pending" -> handlePending(args)
+                "history" -> handleHistory(args)
                 "cancel" -> handleCancel(args)
                 "settings" -> handleSettings(args)
                 else -> NativeOffloadResult(2, "android-notification: unknown subcommand '$sub'\n$HELP")
@@ -263,34 +263,36 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
 
         val id = args.get("id") ?: UUID.randomUUID().toString()
         val requestCode = id.hashCode() and 0x7FFFFFFF
-
-        val intent = Intent(context, ScheduledNotificationReceiver::class.java).apply {
-            putExtra(ScheduledNotificationReceiver.EXTRA_ID, id)
-            putExtra(ScheduledNotificationReceiver.EXTRA_TITLE, title)
-            putExtra(ScheduledNotificationReceiver.EXTRA_BODY, body)
-        }
-        val pi = PendingIntent.getBroadcast(
-            context, requestCode, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        val record = ScheduledNotificationStore.Record(
+            id = id,
+            title = title,
+            body = body,
+            triggerAtMs = triggerAtMs,
+            triggerAt = formatIso(triggerAtMs),
+            requestCode = requestCode,
+            state = ScheduledNotificationStore.State.PENDING,
+            createdAtMs = System.currentTimeMillis(),
         )
-        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        try {
-            am.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerAtMs, pi)
-        } catch (e: SecurityException) {
-            val errBody = JSONObject().put("error", "exact_alarm_denied")
-                .put("message", "Exact alarms blocked. On Android 14+ grant 'Alarms & reminders' in Settings; on Xiaomi/Huawei/Oppo/OnePlus/Vivo also enable autostart and disable battery optimization. Underlying: ${e.message}")
-                .toString()
-            return NativeOffloadResult(77, OffloadOutput.formatBody(errBody, args) + "\n")
+        if (!store.add(record)) {
+            return NativeOffloadResult(
+                1,
+                "android-notification: failed to persist the scheduled notification\n",
+            )
         }
 
-        val entry = JSONObject()
-            .put("id", id)
-            .put("title", title)
-            .put("body", body)
-            .put("trigger_at_ms", triggerAtMs)
-            .put("trigger_at", formatIso(triggerAtMs))
-            .put("request_code", requestCode)
-        store.add(entry)
+        val result = ScheduledNotificationScheduler.schedule(context, record)
+        if (!result.success) {
+            val error = result.error ?: "schedule_failed"
+            store.markFailed(id, error)
+            val errBody = JSONObject()
+                .put("error", if (result.exactAlarmDenied) "exact_alarm_denied" else "schedule_failed")
+                .put("message", error)
+                .toString()
+            return NativeOffloadResult(
+                if (result.exactAlarmDenied) 77 else 1,
+                OffloadOutput.formatBody(errBody, args) + "\n",
+            )
+        }
 
         AppLogger.info(TAG, "schedule: id=$id title='$title' trigger=${formatIso(triggerAtMs)}")
         val data = JSONObject()
@@ -298,6 +300,7 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
             .put("title", title)
             .put("body", body)
             .put("scheduled", formatIso(triggerAtMs))
+            .put("state", ScheduledNotificationStore.State.PENDING.wire)
         return NativeOffloadResult(0, OffloadOutput.formatBody(data.toString(2), args) + "\n")
     }
 
@@ -305,72 +308,111 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
 
     /**
      * Cancel pending (scheduled-but-not-yet-fired) notifications. Mirrors
-     * apple-notification cancel: --id removes one, --all removes all.
-     * If the id matches an already-delivered notification (very common —
-     * the model can't tell pending vs delivered), fall through to nm.cancel
-     * on the integer hash so the user-visible notification disappears too.
+     * apple-notification cancel: --id cancels one, --all cancels all.
+     * [T-android-reminder-delivery-state] Cancelled records are retained as
+     * history instead of being deleted. If the id matches an already-delivered
+     * notification (very common — the model can't tell pending vs delivered),
+     * fall through to nm.cancel on the integer hash so the user-visible
+     * notification disappears too.
      */
     private fun handleCancel(args: OffloadArgs): NativeOffloadResult {
         if (args.hasFlag("all")) {
-            // Cancel pending: walk store, drop alarms, clear prefs.
-            val all = store.loadAll()
-            var n = 0
-            for (i in 0 until all.length()) {
-                val o = all.getJSONObject(i)
-                cancelAlarmFor(o.optString("id"), o.optInt("request_code"))
-                n++
+            // Cancel every record that has not started delivery. A record in
+            // `delivering` is already being posted and cannot be recalled; it
+            // is reported separately instead of pretending it was cancelled.
+            val active = store.active()
+            var pendingCleared = 0
+            var skippedDelivering = 0
+            for (record in active) {
+                when (record.state) {
+                    ScheduledNotificationStore.State.PENDING -> {
+                        ScheduledNotificationScheduler.cancel(context, record)
+                        if (store.markCancelled(record.id)) pendingCleared++
+                    }
+                    ScheduledNotificationStore.State.DELIVERING -> skippedDelivering++
+                    else -> Unit
+                }
             }
-            store.clear()
             // Also clear delivered notifications (matches apple-notification
             // cancel --all semantics: nothing the user sees from us remains).
             nm.cancelAll()
-            AppLogger.info(TAG, "cancel --all: pending=$n")
-            val data = JSONObject().put("cancelled", "all").put("pending_cleared", n)
+            AppLogger.info(
+                TAG,
+                "cancel --all: pending=$pendingCleared skippedDelivering=$skippedDelivering",
+            )
+            val data = JSONObject()
+                .put("cancelled", "all")
+                .put("pending_cleared", pendingCleared)
+                .put("skipped_delivering", skippedDelivering)
             return NativeOffloadResult(0, OffloadOutput.formatBody(data.toString(2), args) + "\n")
         }
-        val id = args.get("id")
+        val id = args.get("id")?.takeIf { it.isNotBlank() }
             ?: return NativeOffloadResult(2, "android-notification cancel: --id <id> or --all is required\n")
 
         val entry = store.get(id)
-        if (entry != null) {
-            cancelAlarmFor(id, entry.optInt("request_code"))
-            store.remove(id)
+        val notifId = id.hashCode() and 0x7FFFFFFF
+        if (entry == null) {
+            // No reminder record: the id may belong to an immediate
+            // `send`/`schedule` notification whose record was pruned. Drop the
+            // visible notification if there is one.
+            nm.cancel(notifId)
+            val data = JSONObject().put("cancelled", id).put("was_pending", false)
+            return NativeOffloadResult(0, OffloadOutput.formatBody(data.toString(2), args) + "\n")
+        }
+        if (entry.state == ScheduledNotificationStore.State.DELIVERING) {
+            val data = JSONObject()
+                .put("cancelled", false)
+                .put("was_pending", false)
+                .put("state", entry.state.wire)
+                .put("message", "already delivering; cancellation is too late")
+            return NativeOffloadResult(1, OffloadOutput.formatBody(data.toString(2), args) + "\n")
+        }
+
+        var wasPending = false
+        if (entry.state == ScheduledNotificationStore.State.PENDING) {
+            ScheduledNotificationScheduler.cancel(context, entry)
+            wasPending = store.markCancelled(entry.id)
         }
         // Also drop any delivered notification posted with the same id —
         // notifId = id.hashCode() & 0x7FFFFFFF, same convention as both
         // immediate-send and scheduled-fire.
-        val notifId = id.hashCode() and 0x7FFFFFFF
         nm.cancel(notifId)
 
-        AppLogger.info(TAG, "cancel: id=$id pending=${entry != null}")
-        val data = JSONObject().put("cancelled", id).put("was_pending", entry != null)
+        val latest = store.get(id)
+        AppLogger.info(TAG, "cancel: id=$id pending=$wasPending state=${latest?.state?.wire}")
+        val data = JSONObject()
+            .put("cancelled", id)
+            .put("was_pending", wasPending)
+            .put("state", latest?.state?.wire ?: entry.state.wire)
         return NativeOffloadResult(0, OffloadOutput.formatBody(data.toString(2), args) + "\n")
     }
 
-    private fun cancelAlarmFor(id: String, requestCode: Int) {
-        val intent = Intent(context, ScheduledNotificationReceiver::class.java).apply {
-            putExtra(ScheduledNotificationReceiver.EXTRA_ID, id)
-        }
-        val pi = PendingIntent.getBroadcast(
-            context, requestCode, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        val am = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        am.cancel(pi)
-        pi.cancel()
-    }
-
-    // ── pending ─────────────────────────────────────────────────────────
+    // ── pending / history ───────────────────────────────────────────────
 
     /** List scheduled-but-not-yet-fired notifications. iOS equivalent is
      *  UNUserNotificationCenter.getPendingNotificationRequests. */
     private fun handlePending(args: OffloadArgs): NativeOffloadResult {
-        store.sweepExpired()
-        val all = store.loadAll()
+        val active = store.active()
         val out = JSONObject()
-            .put("notifications", all)
-            .put("count", all.length())
+            .put("notifications", recordsJson(active))
+            .put("count", active.size)
         return NativeOffloadResult(0, OffloadOutput.formatBody(out.toString(2), args) + "\n")
+    }
+
+    /** Reminder history including delivered / cancelled / failed records. */
+    private fun handleHistory(args: OffloadArgs): NativeOffloadResult {
+        val limit = (args.getInt("limit") ?: 50).coerceIn(1, 500)
+        val history = store.history(limit)
+        val out = JSONObject()
+            .put("reminders", recordsJson(history))
+            .put("count", history.size)
+        return NativeOffloadResult(0, OffloadOutput.formatBody(out.toString(2), args) + "\n")
+    }
+
+    private fun recordsJson(records: List<ScheduledNotificationStore.Record>): JSONArray {
+        val array = JSONArray()
+        for (record in records) array.put(record.toJson())
+        return array
     }
 
     // ── settings ────────────────────────────────────────────────────────
@@ -409,6 +451,12 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
             data.put("schedule_exact_allowed", canSchedule)
         }
         data.put("listener_access", MinisNotificationListenerService.isEnabled(context))
+        val active = store.active()
+        val history = store.history(500)
+        data.put("pending_count", active.count { it.state == ScheduledNotificationStore.State.PENDING })
+        data.put("delivering_count", active.count { it.state == ScheduledNotificationStore.State.DELIVERING })
+        data.put("failed_count", history.count { it.state == ScheduledNotificationStore.State.FAILED })
+        data.put("delivered_count", history.count { it.state == ScheduledNotificationStore.State.DELIVERED })
         AppLogger.info(TAG, "settings: can_post=$canPost listener=${MinisNotificationListenerService.isEnabled(context)}")
         return NativeOffloadResult(0, OffloadOutput.formatBody(data.toString(2), args) + "\n")
     }
@@ -561,7 +609,9 @@ Usage:
                                        (alias: send — same flags)
   android-notification                  Same as `list` (default subcommand)
   android-notification list [--max N]   Active (already-delivered)
-  android-notification pending          Scheduled but not yet fired
+  android-notification pending          Scheduled / delivering reminders
+  android-notification history [--limit N]
+                                       Reminder records with delivery state
   android-notification cancel --id <id>
   android-notification cancel --all
   android-notification clear            Cancel all delivered (legacy)
@@ -570,6 +620,8 @@ Usage:
 Examples:
   android-notification schedule --title "Reminder" --body "Standup" --after 300
   android-notification schedule --title "Meeting" --body "..." --at 2026-04-26T15:00:00
+  android-notification pending
+  android-notification history --limit 20
   android-notification cancel --id <id-from-pending>
 
 Notes:
@@ -578,6 +630,10 @@ Notes:
   - --after / --at use AlarmManager.setExactAndAllowWhileIdle so they
     fire reliably even in Doze. Requires SCHEDULE_EXACT_ALARM on
     Android 14+ (settings reports schedule_exact_allowed).
+  - Reminder states are pending → delivering → delivered | failed;
+    pending → cancelled. A failed state records the delivery error
+    instead of dropping the reminder. history keeps the last 100
+    terminal records.
   - list needs Notification access (Settings → Apps → Special app
     access → Notification access → Minis). First list call opens it.
 """

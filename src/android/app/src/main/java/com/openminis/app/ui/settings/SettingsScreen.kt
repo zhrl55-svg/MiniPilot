@@ -21,8 +21,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Notifications
+import androidx.compose.material.icons.outlined.Place
+import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Lan
 import androidx.compose.material.icons.outlined.Dns
 import androidx.compose.material.icons.outlined.Router
@@ -140,6 +145,18 @@ fun SettingsScreen(
     var localAssistantMode by remember {
         mutableStateOf(com.openminis.app.llm.mnn.LocalAssistantPrefs.isEnabled(context))
     }
+    // [T-android-context-injection] Per-source switches for the request-only
+    // device context block. Defaults live in ContextInjectionSettings.
+    var contextConfig by remember {
+        mutableStateOf(
+            com.openminis.app.assistant.context.ContextInjectionSettings.load(context),
+        )
+    }
+    val setContextConfig: (com.openminis.app.assistant.context.ContextInjectionSettings.Config) -> Unit =
+        { updated ->
+            contextConfig = updated
+            com.openminis.app.assistant.context.ContextInjectionSettings.save(context, updated)
+        }
     // [T-music-player-top] The music settings sheet (NetEase login + proxy
     // address) is hosted here so it does not need a navigation route.
     var showMusicSheet by remember { mutableStateOf(false) }
@@ -294,6 +311,88 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_assistant_routes),
                     subtitle = stringResource(R.string.settings_assistant_routes_subtitle),
                     onClick = onAssistantRoutesClick,
+                    showDivider = false,
+                )
+            }
+
+            // -- Message context --
+            // [T-android-context-injection] Appended to the model system
+            // prompt per request, never persisted into chat history. Time,
+            // battery and weather are on by default; everything that can carry
+            // personal content is opt-in.
+            SettingsSection(
+                title = stringResource(R.string.settings_section_message_context),
+                footer = stringResource(R.string.settings_context_footer),
+            ) {
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.Schedule,
+                    iconColor = Color(0xFF5856D6),
+                    title = stringResource(R.string.settings_context_time),
+                    subtitle = stringResource(R.string.settings_context_time_subtitle),
+                    checked = contextConfig.time,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(time = on))
+                    },
+                )
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.BatteryFull,
+                    iconColor = Color(0xFF34C759),
+                    title = stringResource(R.string.settings_context_battery),
+                    subtitle = stringResource(R.string.settings_context_battery_subtitle),
+                    checked = contextConfig.battery,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(battery = on))
+                    },
+                )
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.Cloud,
+                    iconColor = Color(0xFF5AC8FA),
+                    title = stringResource(R.string.settings_context_weather),
+                    subtitle = stringResource(R.string.settings_context_weather_subtitle),
+                    checked = contextConfig.weather,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(weather = on))
+                    },
+                )
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.Place,
+                    iconColor = Color(0xFFFF9500),
+                    title = stringResource(R.string.settings_context_location),
+                    subtitle = stringResource(R.string.settings_context_location_subtitle),
+                    checked = contextConfig.location,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(location = on))
+                    },
+                )
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.Notifications,
+                    iconColor = Color(0xFFFF3B30),
+                    title = stringResource(R.string.settings_context_notifications),
+                    subtitle = stringResource(R.string.settings_context_notifications_subtitle),
+                    checked = contextConfig.notifications,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(notifications = on))
+                    },
+                )
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.Apps,
+                    iconColor = Color(0xFF007AFF),
+                    title = stringResource(R.string.settings_context_current_app),
+                    subtitle = stringResource(R.string.settings_context_current_app_subtitle),
+                    checked = contextConfig.currentApp,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(currentApp = on))
+                    },
+                )
+                SettingsSwitchRow(
+                    icon = Icons.Outlined.Description,
+                    iconColor = Color(0xFF8E8E93),
+                    title = stringResource(R.string.settings_context_screen_text),
+                    subtitle = stringResource(R.string.settings_context_screen_text_subtitle),
+                    checked = contextConfig.screenText,
+                    onCheckedChange = { on ->
+                        setContextConfig(contextConfig.copy(screenText = on))
+                    },
                     showDivider = false,
                 )
             }

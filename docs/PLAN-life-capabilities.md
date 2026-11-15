@@ -1,7 +1,7 @@
 # 生活能力建议 — 基于 Operit2 盘点与 Minis 现状
 
 日期：2026-11-15
-状态：建议稿，未实施
+状态：P0-1 上下文注入与 P0-3 提醒投递状态已实施；其余为建议稿
 参考：同日对 AAswordman/Operit2 的生活类能力盘点（内置工具 / Android Host / 外部插件 / 工作流四层）
 
 ---
@@ -123,3 +123,19 @@ Minis 不需要照抄 Operit2 的广度。Minis 在三个关键维度上已经�
 2. P0-1 ContextAssembler（收益最大，需要设置项与隐私评审）
 3. P0-2 通知历史持久化（隐私面最大，放最后）
 4. P1-2 能力台账 → P1-1 新能力 → P1-3 语音补齐
+
+## 7. 实施记录（2026-11-15）
+
+- **提醒投递状态（P0-3）**：`ScheduledNotificationStore` 增加
+  `pending → delivering → delivered / failed` 与 `pending → cancelled`
+  状态机；`ScheduledNotificationReceiver` 先写持久化 claim 再投递，失败写入
+  `failed` 与真实错误；`ScheduledNotificationScheduler.rescheduleAll` 在
+  `BOOT_COMPLETED`、`MY_PACKAGE_REPLACED` 和冷启动时重挂未来提醒、补投逾期
+  提醒、把中断的 `delivering` 标记为 unknown-outcome 失败；新增
+  `android-notification history`，本地 `reminder list` 改为历史视图。
+- **上下文注入（P0-1）**：`ContextAssembler` 在系统提示词末尾附加
+  `<device-context>`；时间/电量/天气默认开，位置/通知/当前应用/屏幕文本
+  默认关。天气与位置走 `WeatherContextCache` 的 30 分钟内存缓存，请求路径
+  不发网络请求；屏幕文本由无障碍服务后台节流缓存，并在注入前做不可信数据
+  转义。设置页新增“消息上下文”分组。
+- **未实施**：P0-2 通知历史持久化、能力台账、新能力扩展。

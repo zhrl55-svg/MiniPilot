@@ -10,16 +10,16 @@ import com.openminis.app.R
 import com.openminis.app.logging.AppLogger
 
 /**
- * Fires when an `android-notification schedule` AlarmManager alarm
- * triggers. Posts the notification immediately and removes the entry
- * from the pending-notifications prefs so a follow-up `pending` call
- * no longer lists it.
+ * Fires when an `android-notification schedule` AlarmManager alarm triggers.
  *
- * Mirrors the AlarmReceiver pattern but for the user-scheduled
- * notification path (apple-notification schedule), which on iOS goes
- * through UNUserNotificationCenter directly. Android has no equivalent
- * "scheduled local notification" API, so we use AlarmManager + a
- * receiver as the moral equivalent.
+ * [T-android-reminder-delivery-state] The receiver no longer removes the store
+ * entry itself. [ScheduledNotificationDelivery] claims the record first, posts,
+ * then records `delivered`/`failed`, so a denied or failed post is visible in
+ * history instead of vanishing.
+ *
+ * The title/body extras remain only for alarms armed by a pre-state-machine
+ * build; the current scheduler stores content in the record and sends only the
+ * id. That legacy fallback posts once, without history, exactly as before.
  */
 class ScheduledNotificationReceiver : BroadcastReceiver() {
 
@@ -77,18 +77,21 @@ class ScheduledNotificationReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
-        val id = intent.getStringExtra(EXTRA_ID) ?: "unknown"
-        val title = intent.getStringExtra(EXTRA_TITLE) ?: "Minis"
-        val body = intent.getStringExtra(EXTRA_BODY) ?: ""
-        AppLogger.debug(TAG, "scheduled notification fired: id=$id title='$title'")
-
-        // Drop the prefs entry so `pending` no longer surfaces it.
-        try {
-            ScheduledNotificationStore(context).remove(id)
-        } catch (e: Throwable) {
-            AppLogger.warning(TAG, "remove($id) failed: ${e.message}")
+        val id = intent.getStringExtra(EXTRA_ID) ?: return
+        val store = ScheduledNotificationStore(context)
+        if (store.get(id) == null) {
+            // Legacy alarm armed before the state-machine upgrade. It has no
+            // record to claim or record history against; post it once.
+            val title = intent.getStringExtra(EXTRA_TITLE) ?: return
+            val body = intent.getStringExtra(EXTRA_BODY) ?: ""
+            AppLogger.debug(TAG, "legacy scheduled notification fired: id=$id")
+            postLegacy(context, id, title, body)
+            return
         }
+        ScheduledNotificationDelivery.deliver(context, id)
+    }
 
+    private fun postLegacy(context: Context, id: String, title: String, body: String) {
         val notifId = id.hashCode() and 0x7FFFFFFF
         val notification = NotificationCompat.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
@@ -102,7 +105,7 @@ class ScheduledNotificationReceiver : BroadcastReceiver() {
                 as android.app.NotificationManager
             nm.notify(notifId, notification)
         } catch (e: SecurityException) {
-            AppLogger.error(TAG, "post denied — POST_NOTIFICATIONS missing: ${e.message}")
+            AppLogger.error(TAG, "legacy post denied — POST_NOTIFICATIONS missing: ${e.message}")
         }
     }
 }

@@ -40,6 +40,16 @@ class AlarmReceiver : BroadcastReceiver() {
             } catch (t: Throwable) {
                 AppLogger.warning(TAG, "scheduled-task rescheduleAll failed: ${t.message}")
             }
+            // [T-android-reminder-delivery-state] One-shot reminder alarms are
+            // dropped by the OS exactly like scheduled-task alarms. Re-arm them
+            // and deliver anything that came due while the app was down; an
+            // interrupted `delivering` claim is marked failed, never forgotten.
+            try {
+                val report = ScheduledNotificationScheduler.rescheduleAll(context)
+                AppLogger.info(TAG, "reminder recovery: $report")
+            } catch (t: Throwable) {
+                AppLogger.warning(TAG, "reminder rescheduleAll failed: ${t.message}")
+            }
             // The wake-word service does not survive a reboot or an app
             // update, so the feature would silently stop working until the
             // user opens the app again. BOOT_COMPLETED is one of the few

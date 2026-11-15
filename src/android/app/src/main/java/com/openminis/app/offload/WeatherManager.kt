@@ -164,7 +164,7 @@ object WeatherManager {
      * WMO Weather interpretation codes to human-readable descriptions.
      * https://open-meteo.com/en/docs#weathervariables
      */
-    private fun weatherCodeToDescription(code: Int): String = when (code) {
+    fun weatherCodeToDescription(code: Int): String = when (code) {
         0 -> "Clear sky"
         1 -> "Mainly clear"
         2 -> "Partly cloudy"

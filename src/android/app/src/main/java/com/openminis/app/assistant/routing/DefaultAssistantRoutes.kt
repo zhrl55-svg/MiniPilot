@@ -190,12 +190,14 @@ object DefaultAssistantRoutes {
                 """(?:搜|搜索)\s*(?:网页|网页结果|网上)""",
                 """(?:查|找)\s*(?:资料|教程|官网|文档|攻略)""",
             ),
+            // Route validation caps exclude terms at 20. The dropped shell /
+            // file tokens cannot reach this route anyway: its patterns require
+            // "上网/网上/网页 + 搜/查" or a "资料/教程/官网/文档/攻略" target,
+            // and none of those shell words are web-search keywords.
             exclude = listOf(
                 "打开", "浏览", "网址", "链接", "新闻", "资讯", "热点", "股票", "行情",
                 "天气", "附近", "导航", "怎么去", "车票", "余票", "通知", "笔记", "联系人",
                 "讨论", "功能",
-                "运行", "执行", "命令", "脚本", "终端", "shell", "grep", "awk", "find",
-                "文件", "记忆", "歌", "音乐", "快递", "翻译",
             ),
             examples = listOf("帮我搜一下 Kotlin 协程教程", "上网查一下 Brave Search API 文档"),
             confirm = ConfirmMode.NEVER,

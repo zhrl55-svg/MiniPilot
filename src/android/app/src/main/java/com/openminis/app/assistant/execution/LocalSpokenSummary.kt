@@ -20,7 +20,7 @@ object LocalSpokenSummary {
     private const val MAX_CHARS = 220
 
     private val ARRAY_KEYS = listOf(
-        "items", "notes", "reminders", "events", "contacts",
+        "items", "notes", "reminders", "notifications", "events", "contacts",
         "sessions", "results", "tasks", "data",
     )
 

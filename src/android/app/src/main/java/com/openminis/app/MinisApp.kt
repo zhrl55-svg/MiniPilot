@@ -385,6 +385,26 @@ class MinisApp : Application(), ImageLoaderFactory {
             }.onFailure {
                 Log.w("MinisApp", "startup rescheduleAll failed: ${it.message}")
             }
+            // [T-android-reminder-delivery-state] `android-notification
+            // schedule` reminders use one-shot exact alarms too. A force-stop
+            // or OEM cleanup drops them without BOOT_COMPLETED, so the same
+            // cold-start pass re-arms future reminders, delivers overdue ones,
+            // and turns an interrupted delivering claim into a visible failure.
+            runCatching {
+                com.openminis.app.offload.ScheduledNotificationScheduler
+                    .rescheduleAll(this@MinisApp)
+            }.onFailure {
+                Log.w("MinisApp", "startup reminder recovery failed: ${it.message}")
+            }
+            // [T-android-context-injection] Warm the weather/location cache so
+            // the first model request can include the block without waiting
+            // for a network call. No-op when both switches are off.
+            runCatching {
+                com.openminis.app.assistant.context.WeatherContextCache
+                    .warm(this@MinisApp)
+            }.onFailure {
+                Log.w("MinisApp", "context weather warm failed: ${it.message}")
+            }
         }
 
         // T-android-fgs-timeout-crash: chain an UncaughtExceptionHandler

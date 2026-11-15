@@ -18,6 +18,7 @@ import com.openminis.app.logging.AppLogger
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -31,6 +32,9 @@ class MinisAccessibilityService : AccessibilityService() {
         private const val TAG = "MinisA11y"
         const val SERVICE_ID = "com.openminis.app/.accessibility.MinisAccessibilityService"
         private const val EVENT_RING_CAP = 1024
+        private const val SCREEN_TEXT_MAX_CHARS = 600
+        private const val SCREEN_TEXT_MAX_NODES = 300
+        private const val SCREEN_TEXT_THROTTLE_MS = 1_500L
 
         @Volatile
         private var _instance: MinisAccessibilityService? = null
@@ -48,6 +52,19 @@ class MinisAccessibilityService : AccessibilityService() {
 
     private val eventRing = ConcurrentLinkedQueue<RecordedEvent>()
     private val eventListeners = CopyOnWriteArrayList<(RecordedEvent) -> Unit>()
+
+    // [T-android-context-injection] Cheap foreground-app and screen-text
+    // caches. The model request path reads these without touching the
+    // accessibility tree; captures happen on a background executor and are
+    // throttled so content-change storms cannot jank the service.
+    @Volatile private var lastActivePackage: String? = null
+    @Volatile private var lastScreenText: String? = null
+    @Volatile private var lastScreenTextPackage: String? = null
+    @Volatile private var lastScreenTextAtMs: Long = 0L
+    @Volatile private var lastCaptureRequestAtMs: Long = 0L
+    private val screenCaptureExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "minis-a11y-screen-context").apply { isDaemon = true }
+    }
 
     val nodeRegistry: NodeRegistry = NodeRegistry()
 
@@ -81,6 +98,21 @@ class MinisAccessibilityService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null) return
+        // [T-android-context-injection] Foreground app is cheap: every event
+        // carries its package. Screen text is captured separately because the
+        // tree walk is heavier and must stay off the main thread.
+        val eventPackage = event.packageName?.toString()
+        if (eventPackage != null && eventPackage != lastActivePackage) {
+            lastActivePackage = eventPackage
+            lastScreenText = null
+            lastScreenTextPackage = null
+            lastScreenTextAtMs = 0L
+        }
+        if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED
+        ) {
+            maybeCaptureScreenText(eventPackage)
+        }
         val rec = RecordedEvent(
             type = AccessibilityEvent.eventTypeToString(event.eventType),
             packageName = event.packageName?.toString(),
@@ -95,6 +127,72 @@ class MinisAccessibilityService : AccessibilityService() {
         }
     }
 
+    /** [T-android-context-injection] Last package seen by the service. */
+    fun currentPackageName(): String? = lastActivePackage
+
+    /**
+     * [T-android-context-injection] Recently captured visible text, or null
+     * when it is older than [maxAgeMs]. Never walks the tree here.
+     */
+    fun cachedScreenText(maxAgeMs: Long = 2 * 60 * 1000L): String? {
+        val text = lastScreenText ?: return null
+        if (lastScreenTextPackage != lastActivePackage) return null
+        return if (System.currentTimeMillis() - lastScreenTextAtMs <= maxAgeMs) {
+            text
+        } else {
+            null
+        }
+    }
+
+    private fun maybeCaptureScreenText(eventPackage: String?) {
+        // Do not feed Minis' own chat/settings UI back into the model.
+        if (eventPackage == null || eventPackage == packageName) return
+        val now = System.currentTimeMillis()
+        if (now - lastCaptureRequestAtMs < SCREEN_TEXT_THROTTLE_MS) return
+        lastCaptureRequestAtMs = now
+        try {
+            screenCaptureExecutor.execute { captureScreenText() }
+        } catch (t: Throwable) {
+            AppLogger.warning(TAG, "screen text capture schedule failed: ${t.message}")
+        }
+    }
+
+    private fun captureScreenText() {
+        val root = try {
+            rootInActiveWindow
+        } catch (t: Throwable) {
+            AppLogger.warning(TAG, "rootInActiveWindow failed: ${t.message}")
+            null
+        } ?: return
+        try {
+            val builder = StringBuilder()
+            val queue = ArrayDeque<AccessibilityNodeInfo>()
+            queue.add(root)
+            var visited = 0
+            while (queue.isNotEmpty() &&
+                visited < SCREEN_TEXT_MAX_NODES &&
+                builder.length < SCREEN_TEXT_MAX_CHARS
+            ) {
+                val node = queue.removeFirst()
+                visited++
+                val text = node.text?.toString()?.trim().orEmpty()
+                    .ifBlank { node.contentDescription?.toString()?.trim().orEmpty() }
+                if (text.isNotBlank()) builder.append(text).append('\n')
+                for (i in 0 until node.childCount) {
+                    node.getChild(i)?.let { queue.add(it) }
+                }
+            }
+            val captured = builder.toString().trim().take(SCREEN_TEXT_MAX_CHARS)
+            if (captured.isNotBlank()) {
+                lastScreenText = captured
+                lastScreenTextPackage = root.packageName?.toString()
+                lastScreenTextAtMs = System.currentTimeMillis()
+            }
+        } catch (t: Throwable) {
+            AppLogger.warning(TAG, "screen text capture failed: ${t.message}")
+        }
+    }
+
     override fun onInterrupt() {
         AppLogger.info(TAG, "service interrupted")
     }
@@ -105,6 +203,11 @@ class MinisAccessibilityService : AccessibilityService() {
         eventRing.clear()
         nodeRegistry.clear()
         eventListeners.clear()
+        lastActivePackage = null
+        lastScreenText = null
+        lastScreenTextPackage = null
+        lastScreenTextAtMs = 0L
+        screenCaptureExecutor.shutdownNow()
         AppLogger.info(TAG, "service destroyed")
     }
 

@@ -56,6 +56,35 @@ class LocalResultFormatterTest {
     }
 
     @Test
+    fun `reminder history becomes a readable list with states`() {
+        val json = """
+            {
+              "reminders": [
+                {"title":"喝水","state":"pending","trigger_at":"2026-11-15T20:00:00+08:00"},
+                {"title":"开会","state":"delivered","trigger_at":"2026-11-15T18:00:00+08:00"}
+              ],
+              "count": 2
+            }
+        """.trimIndent()
+
+        val answer = LocalResultFormatter.answer("reminder", "list", json, true)
+
+        assertTrue(answer.contains("• 喝水（待触发，11-15 20:00）"))
+        assertTrue(answer.contains("• 开会（已送达，11-15 18:00）"))
+    }
+
+    @Test
+    fun `empty reminder list says so explicitly`() {
+        val answer = LocalResultFormatter.answer(
+            "reminder",
+            "pending",
+            """{"notifications":[],"count":0}""",
+            true,
+        )
+        assertEquals("没有待触发的提醒。", answer)
+    }
+
+    @Test
     fun `unknown structured payload stays out of the bubble`() {
         val answer = LocalResultFormatter.answer(
             "calendar",

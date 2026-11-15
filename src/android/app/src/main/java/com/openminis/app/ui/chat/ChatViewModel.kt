@@ -17631,6 +17631,20 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             append("- Current date: ").append(dateStr).append(" (").append(tzId).append(")\n")
             append("- Device language: ").append(lang).append("\n")
             append("- minis-model-use models available: ").append(modelUseCount)
+            // [T-android-context-injection] Device state is request-only:
+            // appended here, never written into agentHistory. Helpers keep
+            // their focused identity prompt and do not receive user device
+            // data. All sources are opt-in in Settings › Agent Runtime;
+            // time/battery/weather are on by default, the rest are off.
+            if (helperConfig == null) {
+                val deviceContext =
+                    com.openminis.app.assistant.context.ContextAssembler
+                        .appendToSystemPrompt(context, null)
+                if (deviceContext.isNotBlank()) {
+                    append("\n\n")
+                    append(deviceContext)
+                }
+            }
         }
     }
 

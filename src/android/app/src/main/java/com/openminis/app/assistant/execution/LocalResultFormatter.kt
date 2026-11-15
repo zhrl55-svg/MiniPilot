@@ -38,6 +38,7 @@ object LocalResultFormatter {
         return when {
             structured is JSONObject && capability == "weather" -> weather(structured)
             structured is JSONObject && capability == "device" -> device(action, structured)
+            structured is JSONObject && capability == "reminder" -> reminder(action, structured)
             structured != null -> "" // 不把原始 JSON 倒给用户，留在工具块里
             else -> truncate(body)
         }
@@ -207,6 +208,66 @@ object LocalResultFormatter {
         if (clauses.isEmpty()) return ""
         return clauses.joinToString("，") + "。"
     }
+
+    // ── Reminder ─────────────────────────────────────────────────────────
+
+    private fun reminder(action: String, json: JSONObject): String {
+        val array = when (action) {
+            "list", "history" -> json.optJSONArray("reminders")
+                ?: json.optJSONArray("notifications")
+            "pending" -> json.optJSONArray("notifications")
+            else -> null
+        } ?: return ""
+        if (array.length() == 0) {
+            return if (action == "pending") "没有待触发的提醒。" else "还没有提醒记录。"
+        }
+        val lines = mutableListOf<String>()
+        for (i in 0 until minOf(array.length(), REMINDER_MAX_LINES)) {
+            val item = array.optJSONObject(i) ?: continue
+            val title = item.optString("title").ifBlank { "提醒" }
+            val state = reminderStateZh(item.optString("state"))
+            val time = formatReminderTime(item.optString("trigger_at"))
+            val suffix = buildString {
+                if (state.isNotBlank()) append(state)
+                if (time.isNotBlank()) {
+                    if (isNotEmpty()) append("，")
+                    append(time)
+                }
+            }
+            lines += if (suffix.isBlank()) "• $title" else "• $title（$suffix）"
+        }
+        if (lines.isEmpty()) return ""
+        val more = if (array.length() > REMINDER_MAX_LINES) {
+            "\n…另有 ${array.length() - REMINDER_MAX_LINES} 条"
+        } else {
+            ""
+        }
+        return lines.joinToString("\n") + more
+    }
+
+    private fun reminderStateZh(raw: String): String = when (raw) {
+        "delivering" -> "投递中"
+        "delivered" -> "已送达"
+        "cancelled", "canceled" -> "已取消"
+        "failed" -> "失败"
+        "pending" -> "待触发"
+        else -> ""
+    }
+
+    /** `2026-11-15T19:30:00+08:00` -> `11-15 19:30`; leave unknown text alone. */
+    private fun formatReminderTime(raw: String): String {
+        val value = raw.trim()
+        if (value.isEmpty()) return ""
+        val date = value.substringBefore('T')
+        val clock = value.substringAfter('T', "").take(5)
+        return if (date.length >= 10 && clock.length == 5) {
+            "${date.substring(5)} $clock"
+        } else {
+            value.take(16)
+        }
+    }
+
+    private const val REMINDER_MAX_LINES = 10
 
     private fun formatNumber(value: Double): String =
         String.format(Locale.US, "%.1f", value)

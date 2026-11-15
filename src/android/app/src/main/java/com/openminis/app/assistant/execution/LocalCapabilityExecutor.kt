@@ -363,7 +363,7 @@ class LocalCapabilityExecutor(private val context: Context) {
             )
             "list" -> offload(
                 "android-notification", handler,
-                listOf("android-notification", "pending"),
+                listOf("android-notification", "history", "--limit", "50"),
             )
             "cancel" -> {
                 val id = args.optString("id").ifBlank {
@@ -392,6 +392,10 @@ class LocalCapabilityExecutor(private val context: Context) {
         val matches = mutableListOf<JSONObject>()
         for (i in 0 until notifications.length()) {
             val n = notifications.optJSONObject(i) ?: continue
+            // Only a not-yet-claimed reminder can be cancelled; delivering
+            // records are already being posted and terminal ones are history.
+            val state = n.optString("state")
+            if (state.isNotBlank() && state != "pending") continue
             val haystack = n.optString("title") + " " + n.optString("body")
             if (haystack.contains(query, ignoreCase = true)) matches += n
         }
