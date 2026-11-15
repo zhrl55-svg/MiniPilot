@@ -215,12 +215,25 @@ object SkillMatcher {
      * by the SMALLER side's total. Containment matters here because the query
      * is usually shorter than the recorded goal, and a short query that names
      * every concept of a longer goal is a strong match.
+     *
+     * A shared GENERIC concept is not evidence of the same task. The live
+     * case: "看看私有目录都被什么占满了" against an ASR fragment "你看看这此
+     * 快捷工具使用有什么问题" shares only `search`; because `search` is the
+     * smaller side's whole weight, raw containment scored 1.0 and the fragment
+     * beat every real storage record. Requiring at least one concrete shared
+     * concept zeroes that signal; character overlap can still carry a genuine
+     * near-duplicate (e.g. "查询缓存" vs "查询一下缓存").
      */
     private fun conceptScore(q: Set<String>, r: Set<String>): Double {
         if (q.isEmpty() || r.isEmpty()) return 0.0
         var inter = 0.0
-        for (c in q) if (c in r) inter += conceptWeight(c)
-        if (inter == 0.0) return 0.0
+        var concreteInter = 0.0
+        for (c in q) if (c in r) {
+            val weight = conceptWeight(c)
+            inter += weight
+            if (c !in GENERIC_CONCEPTS) concreteInter += weight
+        }
+        if (inter == 0.0 || concreteInter == 0.0) return 0.0
         val qWeight = q.sumOf { conceptWeight(it) }
         val rWeight = r.sumOf { conceptWeight(it) }
         return inter / minOf(qWeight, rWeight)

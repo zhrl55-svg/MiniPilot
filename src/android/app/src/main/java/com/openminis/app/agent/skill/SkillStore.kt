@@ -56,6 +56,13 @@ object SkillStore {
     private const val MAX_STEPS = 12
     private const val MAX_HINT_STEPS = 6
 
+    /**
+     * A recorded goal must be a task, not an ASR fragment. Two cleaned
+     * characters is enough for a real command ("截屏", "静音"); the intent
+     * marker below is what rejects a bare noun like "手电筒".
+     */
+    private const val MIN_GOAL_CLEAN_CHARS = 2
+
     /** The literal value the runtime substitutes for the placeholder; plain contains() so regex metacharacters cannot break the check. */
     private const val SECRET_LITERAL = "password"
 
@@ -84,7 +91,98 @@ object SkillStore {
         "未能完成|没有完成|无法完成|未完成|未成功|任务失败|做不到|放弃了",
     )
 
+    // ── Goal quality ────────────────────────────────────────────────────────
+
+    /**
+     * A goal is only stored / matched when it names an action. The field data
+     * this gate was written against is full of ASR fragments ("就这个",
+     * "手电筒", "我们可以加个手电筒功能"): a bare noun has no direction (on or
+     * off?), and a feature-discussion sentence is not a task the user asked
+     * the device to perform. Both would match an unrelated live request.
+     *
+     * Keep this concrete: a verb / request marker, or an interrogative that
+     * asks the agent to find something out ("今天会下雨吗").
+     */
+    private val TASK_MARKER = Regex(
+        "打开|关闭|关掉|关上|开启|启动|停用|设置|调整|调到|调高|调低|调亮|调暗|调大|调小|" +
+            "清理|清除|删除|删掉|清空|释放|腾出|截屏|截图|截个图|拍照|拍张照|保存|发送|分享|" +
+            "下载|上传|安装|卸载|播放|暂停|提醒|记一下|记住|添加|新建|创建|写入|读取|查看|" +
+            "查询|查一下|查查|看看|看一下|帮我|帮忙|导航|规划|连接|断开|搜索|搜一下|找一下|" +
+            "拨号|拨打|打电话|打个电话|呼叫|静音|震动|取消|预约|总结|整理|检查|测试|统计|" +
+            "列出|显示|告诉我|还剩|剩多少|多少|哪个|哪些|什么|哪里|是否|有没有|吗|呢|怎么|" +
+            "如何|大一点|小一点|小声|大声|放首歌|放歌|听歌|来首歌|发条|发个|发给|问一下|问问|" +
+            "读一下|写个|写一下|删了|删一下|清一下|截个|截一下|截长图|录屏|录个屏|开一下|关一下|" +
+            "开个|连一下|连上|设个|定个|定一个|设一个|查下|看下|试下|重启|关机|开机|锁屏|解锁|" +
+            "免打扰|把|" +
+            "\\b(open|close|turn|set|check|show|list|clean|clear|delete|take|screenshot|save|" +
+            "send|share|download|upload|install|uninstall|play|pause|record|remind|add|create|" +
+            "write|read|search|find|navigate|connect|disconnect|enable|disable|toggle|mute|unmute|" +
+            "increase|decrease|raise|lower|put|call|message|text|lock|unlock|restart|reboot|" +
+            "query|what|how|which|where|please)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * "我们可以加个手电筒功能" is a design discussion, not "turn the flashlight
+     * on". The first alternative needs a first-person plural plus a feature /
+     * discussion word; the second catches "加个…功能" without the pronoun. A
+     * real request ("帮我加个闹钟", "我们能不能打开手电筒") does not match
+     * either — the polite modal alone is not a discussion.
+     */
+    private val DISCUSSION_MARKER = Regex(
+        "(我们|咱们)[^。！？!?]{0,12}(加个|增加|实现|做个|需求|想法|讨论|觉得)" +
+            "|(加个|增加|实现|做个|支持)[^。！？!?]{0,12}功能" +
+            "|\\b(we|let'?s)\\b[^.!?]{0,20}\\b(add|implement|support|feature)\\b",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Whole goal is a filler / acknowledgement. */
+    private val FILLER_ONLY = Regex(
+        "^(嗯+|哦+|呃+|啊+|那个|这个|就这个|就是|然后|好的?|行|可以|ok|okay|对对)[，,。.、\\s]*$",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** Leading discourse fillers to strip before the goal is stored. */
+    private val LEADING_FILLER = Regex(
+        "^(嗯+|哦+|呃+|啊+|那个|这个|就是|然后|好的|好|行|ok|okay)[，,。.、\\s]+",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /** ASR often omits the comma: "嗯帮我打开手电筒". Only pure interjections. */
+    private val LEADING_INTERJECTION = Regex("^(嗯+|哦+|呃+|啊+)", RegexOption.IGNORE_CASE)
+
+    /** A bare search / request verb with no object: "我看看", "帮我看看这个". */
+    private val VAGUE_GOAL = Regex(
+        "^(我|你)?(看看|看一下|看下|查一下|查下|查查|试试|试下|弄一下|搞一下|来一下|" +
+            "帮我看看|帮我看一下|帮我查一下)(这个|那个|一下)?[吧啊呀呢。.!！?？\\s]*$",
+        RegexOption.IGNORE_CASE,
+    )
+
     private val lock = Any()
+
+    /** Stable names for the three hint elements; also returned by `agent.skills.hint`. */
+    private const val PART_INPUTS = "inputs"
+    private const val PART_KEY_OUTPUT = "keyOutput"
+    private const val PART_CONCLUSION = "conclusion"
+
+    /**
+     * The chat loop and `agent.skills.hint` share this one decision: what was
+     * matched, whether it is safe to inject, and — when it is not — exactly
+     * which of the three contract elements is missing.
+     */
+    data class HintDecision(
+        val hit: Boolean,
+        val hint: String?,
+        val score: Double,
+        val threshold: Double,
+        val algorithm: SkillMatcher.Algorithm,
+        val recordCount: Int,
+        val matchingPoolCount: Int,
+        val eligibleCount: Int,
+        val record: SkillRecord?,
+        val missing: List<String>,
+        val reason: String,
+    )
 
     // ── Paths ───────────────────────────────────────────────────────────────
 
@@ -159,6 +257,99 @@ object SkillStore {
         n
     }
 
+    // ── Goal quality / eligibility ──────────────────────────────────────────
+
+    /**
+     * Canonical task text: trimmed, whitespace-collapsed, with leading
+     * discourse fillers ("嗯，", "那个，") removed. This is what a NEW record
+     * stores, so its goal reads as a task instead of a transcription artifact.
+     * Existing records are never rewritten by this function.
+     */
+    fun normalizeGoal(raw: String): String {
+        var s = raw.trim().replace(Regex("\\s+"), " ")
+        while (true) {
+            var next = s.replaceFirst(LEADING_FILLER, "").trim()
+            if (next == s) next = s.replaceFirst(LEADING_INTERJECTION, "").trim()
+            if (next == s) break
+            s = next
+        }
+        return s.trim('"', '\'', '“', '”')
+    }
+
+    /**
+     * Why [rawGoal] is not a usable task description, or null when it is.
+     * Codes are stable and surface in `agent.skills.list` / `matchBench`:
+     * `empty`, `filler`, `vague`, `too-short`, `discussion`, `no-task-verb`.
+     */
+    fun goalProblem(rawGoal: String): String? {
+        val goal = normalizeGoal(rawGoal)
+        val cleaned = SkillMatcher.clean(goal)
+        if (cleaned.isEmpty()) return "empty"
+        if (FILLER_ONLY.matches(goal) || FILLER_ONLY.matches(cleaned)) return "filler"
+        if (VAGUE_GOAL.matches(goal) || VAGUE_GOAL.matches(cleaned)) return "vague"
+        if (cleaned.length < MIN_GOAL_CLEAN_CHARS) return "too-short"
+        if (DISCUSSION_MARKER.containsMatchIn(goal)) return "discussion"
+        if (!TASK_MARKER.containsMatchIn(goal)) return "no-task-verb"
+        return null
+    }
+
+    /**
+     * The three elements a hint must carry: a command/input, the key output it
+     * produced, and the conclusion. Missing elements are returned in contract
+     * order (`inputs`, `keyOutput`, `conclusion`) so a caller can say which
+     * item failed. Low-value steps are excluded exactly as they are when the
+     * hint is rendered, so the check and the text cannot disagree.
+     */
+    internal fun missingHintParts(steps: List<SkillStep>, conclusion: String?): List<String> {
+        val actionable = distillSteps(steps)
+        val hasInput = actionable.any {
+            !it.input.isNullOrBlank() || !it.target.isNullOrBlank()
+        }
+        val hasOutput = actionable.any { !it.output.isNullOrBlank() }
+        val hasConclusion = !conclusion.isNullOrBlank()
+        return buildList {
+            if (!hasInput) add(PART_INPUTS)
+            if (!hasOutput) add(PART_KEY_OUTPUT)
+            if (!hasConclusion) add(PART_CONCLUSION)
+        }
+    }
+
+    fun missingHintParts(record: SkillRecord): List<String> =
+        missingHintParts(record.steps, record.conclusion)
+
+    /**
+     * Non-null when this record must not be injected. Format is a compact
+     * reason (`goal-discussion`, `missing-keyOutput,conclusion`), or both
+     * joined by `+`.
+     */
+    fun ineligibleReason(record: SkillRecord): String? {
+        val goal = goalProblem(record.goal)
+        val missing = missingHintParts(record)
+        if (goal == null && missing.isEmpty()) return null
+        return buildList {
+            if (goal != null) add("goal-$goal")
+            if (missing.isNotEmpty()) add("missing-" + missing.joinToString(","))
+        }.joinToString("+")
+    }
+
+    fun isEligible(record: SkillRecord): Boolean = ineligibleReason(record) == null
+
+    /**
+     * The gate [maybeRecord] applies before writing: a new record must have a
+     * readable goal AND all three hint elements. This is what keeps the store
+     * from growing a new generation of unusable entries.
+     */
+    internal fun recordRejection(
+        goal: String,
+        steps: List<SkillStep>,
+        conclusion: String?,
+    ): String? {
+        goalProblem(goal)?.let { return "goal-$it" }
+        val missing = missingHintParts(steps, conclusion)
+        if (missing.isNotEmpty()) return "missing-" + missing.joinToString(",")
+        return null
+    }
+
     // ── Waste removal ───────────────────────────────────────────────────────
 
     /**
@@ -225,7 +416,7 @@ object SkillStore {
         allSucceeded: Boolean,
         finalAssistantText: String,
     ): SkillRecord? {
-        val goalText = goal?.trim().orEmpty()
+        val goalText = normalizeGoal(goal.orEmpty())
         if (goalText.isEmpty()) {
             AppLogger.info(TAG, "[Skill] skip: empty goal")
             return null
@@ -257,9 +448,29 @@ object SkillStore {
             .take(MAX_CONCLUSION_CHARS)
             .ifBlank { null }
 
-        val now = System.currentTimeMillis()
-        val id = sha1Hex(goalText).take(16)
         val storedGoal = goalText.take(MAX_GOAL_CHARS)
+        // [T-skill-store-quality] New records must be usable the moment they
+        // land. A fragment goal or a trace missing one of the three hint
+        // elements would be matched later and then refused at injection time,
+        // so it is not written at all; the skip reason is logged for the
+        // harness.
+        recordRejection(storedGoal, storedSteps, conclusion)?.let { reason ->
+            AppLogger.info(
+                TAG,
+                "[Skill] skip: $reason (goal=\"${storedGoal.take(60)}\" " +
+                    "steps=${storedSteps.size} conclusion=${!conclusion.isNullOrBlank()})",
+            )
+            return null
+        }
+
+        // A package the caller could not identify still has an honest answer:
+        // this chat runs in our app, and the accessibility helper falls back
+        // to context.packageName. Never write null when it is knowable.
+        val providedApp = appPackage?.trim()?.takeIf { it.isNotEmpty() }
+        val fallbackApp = runCatching { foregroundPackage(context) }.getOrNull()
+
+        val now = System.currentTimeMillis()
+        val id = idForGoal(storedGoal)
         val record = synchronized(lock) {
             val records = load(context).toMutableList()
             val existingIndex = records.indexOfFirst { it.id == id }
@@ -267,7 +478,7 @@ object SkillStore {
                 val old = records[existingIndex]
                 old.copy(
                     goal = storedGoal,
-                    appPackage = appPackage ?: old.appPackage,
+                    appPackage = providedApp ?: old.appPackage ?: fallbackApp,
                     keywords = SkillMatcher.keywords(storedGoal),
                     steps = storedSteps,
                     toolChain = toolChain,
@@ -279,7 +490,7 @@ object SkillStore {
                 SkillRecord(
                     id = id,
                     goal = storedGoal,
-                    appPackage = appPackage,
+                    appPackage = providedApp ?: fallbackApp,
                     keywords = SkillMatcher.keywords(storedGoal),
                     steps = storedSteps,
                     toolChain = toolChain,
@@ -318,43 +529,104 @@ object SkillStore {
 
     /**
      * The system-prompt section for the best matching past run, or null when
-     * nothing reaches the configured threshold. The caller must append it
-     * verbatim and must leave the prompt untouched on null (a stray character
-     * would invalidate the provider's prompt cache).
+     * nothing reaches the configured threshold OR the match cannot produce a
+     * complete hint. The caller must append it verbatim and must leave the
+     * prompt untouched on null (a stray character would invalidate the
+     * provider's prompt cache).
+     *
+     * This is the only injection path; [hintFor] is the diagnostic view of the
+     * same decision used by `agent.skills.hint`, so the RPC can never report a
+     * hit the chat loop would reject.
      */
     fun promptHintFor(context: Context, goal: String?, appPackage: String?): String? {
-        val query = goal?.trim().orEmpty()
-        if (query.isEmpty()) {
-            AppLogger.info(TAG, "[Skill] hint skip: empty query")
-            return null
-        }
-        val records = load(context)
-        if (records.isEmpty()) {
-            AppLogger.info(TAG, "[Skill] hint skip: no records")
-            return null
-        }
-        val config = runCatching { SkillSettings.config(context) }
-            .getOrDefault(SkillMatcher.MatchConfig())
-        val match = SkillMatcher.best(query, records, appPackage, config)
-        if (match == null) {
-            val top = records.maxOfOrNull {
-                SkillMatcher.score(query, it, appPackage, config.algorithm)
-            } ?: 0.0
+        val decision = hintFor(context, goal, appPackage)
+        if (decision.hit && decision.hint != null) {
             AppLogger.info(
                 TAG,
-                "[Skill] hint skip: below threshold (top=${"%.2f".format(top)} " +
-                    "threshold=${"%.2f".format(config.threshold)} algo=${config.algorithm.wire} " +
-                    "records=${records.size})",
+                "[Skill] hint id=${decision.record?.id} score=${"%.2f".format(decision.score)} " +
+                    "algo=${decision.algorithm.wire} steps=${decision.record?.steps?.size ?: 0} " +
+                    "chars=${decision.hint.length} pool=${decision.matchingPoolCount} " +
+                    "eligible=${decision.eligibleCount}",
             )
-            return null
+            return decision.hint
         }
-        val hint = renderHint(match.record, query)
         AppLogger.info(
             TAG,
-            "[Skill] hint id=${match.record.id} score=${"%.2f".format(match.score)} " +
-                "algo=${config.algorithm.wire} steps=${match.record.steps.size} chars=${hint.length}",
+            "[Skill] hint skip: ${decision.reason} (score=${"%.2f".format(decision.score)} " +
+                "threshold=${"%.2f".format(decision.threshold)} algo=${decision.algorithm.wire} " +
+                "records=${decision.recordCount} pool=${decision.matchingPoolCount} " +
+                "eligible=${decision.eligibleCount} " +
+                "matched=${decision.record?.id ?: "-"} " +
+                "missing=${decision.missing.joinToString(",").ifEmpty { "-" }})",
         )
-        return hint
+        return null
+    }
+
+    /** Shared retrieval decision for the chat loop and the debug RPC. */
+    fun hintFor(
+        context: Context,
+        goal: String?,
+        appPackage: String?,
+        config: SkillMatcher.MatchConfig = runCatching { SkillSettings.config(context) }
+            .getOrDefault(SkillMatcher.MatchConfig()),
+    ): HintDecision = decideHint(goal.orEmpty(), appPackage, load(context), config)
+
+    /**
+     * Pure decision core. Dirty goals (ASR fragments, feature discussions) are
+     * removed from the matching pool entirely, so they can neither win a match
+     * nor be injected. Among the remaining candidates the top match must carry
+     * all three contract elements; an incomplete winner returns `hit=false`
+     * with its missing parts instead of injecting a partial hint. This is the
+     * "宁可不给" direction: a near-miss must not steer the agent.
+     */
+    internal fun decideHint(
+        query: String,
+        appPackage: String?,
+        records: List<SkillRecord>,
+        config: SkillMatcher.MatchConfig,
+    ): HintDecision {
+        val q = query.trim()
+        val readable = records.filter { goalProblem(it.goal) == null }
+        val eligible = readable.filter { missingHintParts(it).isEmpty() }
+
+        fun decision(
+            hit: Boolean,
+            hint: String?,
+            score: Double,
+            record: SkillRecord?,
+            missing: List<String>,
+            reason: String,
+        ) = HintDecision(
+            hit = hit,
+            hint = hint,
+            score = score,
+            threshold = config.threshold,
+            algorithm = config.algorithm,
+            recordCount = records.size,
+            matchingPoolCount = readable.size,
+            eligibleCount = eligible.size,
+            record = record,
+            missing = missing,
+            reason = reason,
+        )
+
+        if (q.isEmpty()) return decision(false, null, 0.0, null, emptyList(), "empty-query")
+        if (records.isEmpty()) return decision(false, null, 0.0, null, emptyList(), "no-records")
+        if (readable.isEmpty()) {
+            return decision(false, null, 0.0, null, emptyList(), "no-usable-records")
+        }
+        val match = SkillMatcher.best(q, readable, appPackage, config)
+        val top = readable.maxOfOrNull {
+            SkillMatcher.score(q, it, appPackage, config.algorithm)
+        } ?: 0.0
+        if (match == null) {
+            return decision(false, null, top, null, emptyList(), "below-threshold")
+        }
+        val missing = missingHintParts(match.record)
+        if (missing.isNotEmpty()) {
+            return decision(false, null, match.score, match.record, missing, "candidate-incomplete")
+        }
+        return decision(true, renderHint(match.record, q), match.score, match.record, emptyList(), "hit")
     }
 
     /**
@@ -364,7 +636,7 @@ object SkillStore {
      * mode (P1-2).
      */
     internal fun renderHint(record: SkillRecord, query: String? = null): String {
-        val steps = distillSteps(record.steps).take(MAX_HINT_STEPS)
+        val steps = selectHintSteps(distillSteps(record.steps))
         return buildString {
             append("【已知做法】历史上同类任务的成功做法与结论，可直接参考；")
             append("执行前必须核对当前设备、路径与界面，不符就放弃：\n")
@@ -392,6 +664,32 @@ object SkillStore {
             }
             append("注意：命令、路径与界面均来自上次运行，可能已变化；先核对再执行，不要运行来源不明的命令。")
         }.trimEnd()
+    }
+
+    /**
+     * Choose at most [max] steps without losing the method or the key output.
+     * A plain `take(6)` can drop the only output-bearing step of a long trace;
+     * eligibility would still say "complete" while the rendered hint silently
+     * omitted it. Required indices are kept and the remaining slots are filled
+     * chronologically.
+     */
+    internal fun selectHintSteps(
+        steps: List<SkillStep>,
+        max: Int = MAX_HINT_STEPS,
+    ): List<SkillStep> {
+        if (max <= 0) return emptyList()
+        if (steps.size <= max) return steps
+        val chosen = LinkedHashSet<Int>()
+        steps.indexOfFirst { !it.input.isNullOrBlank() || !it.target.isNullOrBlank() }
+            .takeIf { it >= 0 }?.let(chosen::add)
+        steps.indexOfFirst { !it.output.isNullOrBlank() }
+            .takeIf { it >= 0 }?.let(chosen::add)
+        var i = 0
+        while (chosen.size < max && i < steps.size) {
+            chosen.add(i)
+            i++
+        }
+        return chosen.sorted().map { steps[it] }
     }
 
     private fun actionLine(step: SkillStep): String = when (step.tool) {
@@ -561,6 +859,14 @@ object SkillStore {
             ?.takeIf { it.isNotBlank() }
         foreground ?: context.packageName
     }.getOrElse { context.packageName }
+
+    /**
+     * The deterministic id a record for [goal] has (or would have). Used by
+     * `agent.skills.matchBench mode=store` to derive the expected record from
+     * a pair's goal when no explicit `expectedId` was supplied.
+     */
+    internal fun idForGoal(goal: String): String =
+        sha1Hex(normalizeGoal(goal).take(MAX_GOAL_CHARS)).take(16)
 
     private fun sha1Hex(text: String): String = runCatching {
         val digest = MessageDigest.getInstance("SHA-1").digest(text.toByteArray(Charsets.UTF_8))

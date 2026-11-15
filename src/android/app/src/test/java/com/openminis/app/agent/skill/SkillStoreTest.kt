@@ -18,6 +18,33 @@ import org.junit.Test
  */
 class SkillStoreTest {
 
+    private fun completeSteps(): List<SkillStep> = listOf(
+        SkillStep(
+            tool = "shell_execute",
+            target = "du -sh /data/user/0/com.openminis.app.dev/files/* | sort -h",
+            summary = "执行命令：du -sh /data/user/0/com.openminis.app.dev/files/* | sort -h",
+            input = "du -sh /data/user/0/com.openminis.app.dev/files/* | sort -h",
+            output = "1.2G /data/user/0/com.openminis.app.dev/files/alpine-rootfs\n212M .../models",
+        ),
+    )
+
+    private fun completeRecord(
+        goal: String,
+        id: String = goal,
+        steps: List<SkillStep> = completeSteps(),
+        conclusion: String? = "最大的是 alpine-rootfs，约 1.2 GB。",
+    ): SkillRecord = SkillRecord(
+        id = id,
+        goal = goal,
+        appPackage = "com.openminis.app.dev",
+        keywords = SkillMatcher.keywords(goal),
+        steps = steps,
+        toolChain = steps.map { it.tool },
+        createdAt = 0L,
+        lastUsedAt = 0L,
+        conclusion = conclusion,
+    )
+
     private fun v2Document(): String {
         val step = JSONObject().apply {
             put("tool", "shell_execute")
@@ -160,5 +187,134 @@ class SkillStoreTest {
         assertTrue(excerpt, excerpt.contains("line20"))
         assertTrue(excerpt, excerpt.contains("…"))
         assertTrue("must stay bounded: ${excerpt.length}", excerpt.length <= 600)
+    }
+
+    @Test
+    fun `fragment and discussion goals are rejected, real tasks are not`() {
+        assertEquals("filler", SkillStore.goalProblem("就这个"))
+        assertEquals("no-task-verb", SkillStore.goalProblem("手电筒"))
+        assertEquals("discussion", SkillStore.goalProblem("我们可以加个手电筒功能"))
+        assertEquals("vague", SkillStore.goalProblem("我看看"))
+        assertEquals("vague", SkillStore.goalProblem("帮我看看这个"))
+        assertNull(SkillStore.goalProblem("查询一下 App 私有目录的占用构成"))
+        assertNull(SkillStore.goalProblem("打开手电筒"))
+        assertNull(SkillStore.goalProblem("声音小一点"))
+        assertNull(SkillStore.goalProblem("今天会下雨吗"))
+        assertNull(SkillStore.goalProblem("看看手机存储都被什么占满了"))
+    }
+
+    @Test
+    fun `leading fillers are stripped before a goal is stored`() {
+        assertEquals("帮我打开手电筒", SkillStore.normalizeGoal("  嗯，帮我打开手电筒  "))
+        assertEquals("帮我打开手电筒", SkillStore.normalizeGoal("嗯帮我打开手电筒"))
+        assertEquals("帮我打开手电筒", SkillStore.normalizeGoal("那个，帮我打开手电筒"))
+        assertEquals("帮我打开手电筒", SkillStore.normalizeGoal("好的，帮我打开手电筒"))
+        assertNull(SkillStore.goalProblem("嗯，帮我打开手电筒"))
+        assertEquals(
+            "帮我打开手电筒",
+            SkillStore.normalizeGoal(SkillStore.normalizeGoal("嗯，帮我打开手电筒")),
+        )
+    }
+
+    @Test
+    fun `records missing a hint element are ineligible and name the missing item`() {
+        val complete = completeRecord("查询 App 私有目录的存储构成")
+        assertNull(SkillStore.ineligibleReason(complete))
+
+        val noOutput = complete.copy(steps = complete.steps.map { it.copy(output = null) })
+        assertEquals(listOf("keyOutput"), SkillStore.missingHintParts(noOutput))
+        assertEquals("missing-keyOutput", SkillStore.ineligibleReason(noOutput))
+
+        val noConclusion = complete.copy(conclusion = null)
+        assertEquals(listOf("conclusion"), SkillStore.missingHintParts(noConclusion))
+        assertEquals("missing-conclusion", SkillStore.ineligibleReason(noConclusion))
+
+        val noInput = complete.copy(
+            steps = listOf(SkillStep("browser_use", null, null, "浏览器 打开", null, "ok")),
+        )
+        assertEquals(listOf("inputs"), SkillStore.missingHintParts(noInput))
+        assertEquals("missing-inputs", SkillStore.ineligibleReason(noInput))
+    }
+
+    @Test
+    fun `dirty goals never enter the matching pool`() {
+        val dirty = completeRecord("手电筒")
+        val incomplete = completeRecord(
+            goal = "打开手电筒",
+            id = "incomplete",
+            steps = completeSteps().map { it.copy(output = null) },
+            conclusion = null,
+        )
+        val decision = SkillStore.decideHint(
+            query = "把闪光灯打开",
+            appPackage = "com.openminis.app.dev",
+            records = listOf(dirty, incomplete),
+            config = SkillMatcher.MatchConfig(),
+        )
+        assertFalse(decision.hit)
+        assertNull(decision.hint)
+        // The readable but incomplete record is the only candidate, and the
+        // decision reports exactly what it lacks instead of injecting it.
+        assertEquals("candidate-incomplete", decision.reason)
+        assertEquals(listOf("keyOutput", "conclusion"), decision.missing)
+        assertEquals("incomplete", decision.record?.id)
+        assertEquals(2, decision.recordCount)
+        assertEquals(1, decision.matchingPoolCount)
+        assertEquals(0, decision.eligibleCount)
+    }
+
+    @Test
+    fun `a complete match renders method key output and conclusion`() {
+        val record = completeRecord("查询 App 私有目录的存储构成")
+        val decision = SkillStore.decideHint(
+            query = "看看私有目录里什么最占空间",
+            appPackage = "com.openminis.app.dev",
+            records = listOf(record),
+            config = SkillMatcher.MatchConfig(),
+        )
+        assertTrue(decision.reason, decision.hit)
+        assertEquals("hit", decision.reason)
+        val hint = decision.hint
+        assertNotNull(hint)
+        assertTrue(hint!!, hint.contains("du -sh /data/user/0/com.openminis.app.dev/files/*"))
+        assertTrue(hint, hint.contains("关键输出："))
+        assertTrue(hint, hint.contains("alpine-rootfs"))
+        assertTrue(hint, hint.contains("结论："))
+        assertFalse(hint, hint.contains("shell_execute"))
+    }
+
+    @Test
+    fun `a hint keeps key output that sits on a later step`() {
+        val steps = (1..8).map { i ->
+            SkillStep(
+                tool = "shell_execute",
+                target = "cmd$i",
+                summary = "执行命令：cmd$i",
+                input = "cmd$i",
+                output = if (i == 8) "the-key-output" else null,
+            )
+        }
+        val record = completeRecord(goal = "查看一组命令", steps = steps, conclusion = "done")
+        val hint = SkillStore.renderHint(record)
+        assertTrue(hint, hint.contains("关键输出：the-key-output"))
+    }
+
+    @Test
+    fun `new records are gated on a readable goal and all three elements`() {
+        assertEquals(
+            "goal-no-task-verb",
+            SkillStore.recordRejection("手电筒", completeSteps(), "手电筒已打开"),
+        )
+        assertNull(
+            SkillStore.recordRejection("打开手电筒", completeSteps(), "手电筒已打开"),
+        )
+        assertEquals(
+            "missing-keyOutput,conclusion",
+            SkillStore.recordRejection(
+                "打开手电筒",
+                completeSteps().map { it.copy(output = null) },
+                null,
+            ),
+        )
     }
 }

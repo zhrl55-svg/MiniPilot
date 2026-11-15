@@ -82,6 +82,19 @@ class SkillMatcherTest {
     }
 
     @Test
+    fun `a shared generic verb alone is not a task match`() {
+        // The 2026-11-15 field false positive: the only shared concept is
+        // `search` ("看看"), which the containment formula used to score 1.0.
+        val noise = record("你看看这此快捷工具使用有什么问题")
+        val score = SkillMatcher.score("看看私有目录都被什么占满了", noise, "com.openminis.app.dev")
+        assertTrue(
+            "generic overlap scored $score (concepts=${SkillMatcher.concepts("看看私有目录都被什么占满了")} / " +
+                "${SkillMatcher.concepts(noise.goal)})",
+            score < SkillMatcher.DEFAULT_HYBRID_THRESHOLD,
+        )
+    }
+
+    @Test
     fun `legacy algorithm remains available and behaves as before`() {
         val original = record("打开手电筒")
         assertEquals(1.0, SkillMatcher.legacyScore("打开手电筒", original, "com.openminis.app.dev"), 1e-9)
