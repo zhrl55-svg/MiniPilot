@@ -4,6 +4,7 @@ import com.openminis.app.assistant.routing.ChineseTimeParser.RepeatMode
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.Normalizer
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.util.Locale
@@ -28,6 +29,16 @@ class SlotExtractor(
     private val pathRegex = Regex("""/(?:[A-Za-z0-9_.\-~]+/)*[A-Za-z0-9_.\-~]+""")
     private val urlRegex = Regex("""https?://\S+|\bwww\.[A-Za-z0-9.\-]+\S*""")
     private val numberIdRegex = Regex("""(?:id|编号|序号)\s*[:：]?\s*(\d+)""", RegexOption.IGNORE_CASE)
+    private val trainTimeRangeRegex =
+        Regex("""(\d{1,2}):(\d{2})\s*[-~—–至到]\s*(\d{1,2}):(\d{2})""")
+    private val trainRouteRegex = Regex(
+        """(?:从|由)?([\p{IsHan}A-Za-z0-9·]{2,15}?)(?:到|至|去)([\p{IsHan}A-Za-z0-9·]{2,15}?)(?=\s|的|$|[，,.;；])""",
+    )
+    private val trainNounRegex = Regex(
+        """(?:的)?(?:火车票余票|高铁票余票|动车票余票|火车余票|车票余票|火车票|高铁票|动车票|城际票|车票|余票|车次)""",
+    )
+    private val trainIsoDateRegex = Regex("""(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})""")
+    private val trainMonthDayRegex = Regex("""(\d{1,2})月(\d{1,2})[日号]?""")
 
     fun extract(userText: String, route: AssistantRoute): SlotExtraction {
         val text = AssistantRouteMatcher.normalizeTextPreservingCase(userText)
@@ -539,6 +550,90 @@ class SlotExtractor(
         return t.replace(Regex("""\s+"""), " ").trim().ifBlank { text.take(60) }
     }
 
+    /**
+     * [T-android-train-quote] 「明天北京南到上海虹桥的车票」→ from/to/date。
+     *
+     * Only deterministic pieces are taken: an explicit departure window, a
+     * recognizable date, and the first `X到Y` span after command words and
+     * ticket nouns are removed. Station validation belongs to the tool, so an
+     * unparseable sentence simply leaves the required slots missing and the
+     * router sends it to the cloud.
+     */
+    private fun extractTrain(text: String, args: JSONObject) {
+        trainTimeRangeRegex.find(text)?.let { match ->
+            args.put(
+                "time_range",
+                "${match.groupValues[1]}:${match.groupValues[2]}-" +
+                    "${match.groupValues[3]}:${match.groupValues[4]}",
+            )
+        }
+        if (text.contains("有票") || text.contains("可售")) {
+            args.put("only_available", true)
+        }
+
+        val today = nowProvider().toLocalDate()
+        val date = when {
+            text.contains("大后天") -> today.plusDays(3)
+            text.contains("后天") -> today.plusDays(2)
+            text.contains("明天") || text.contains("明日") -> today.plusDays(1)
+            text.contains("今天") || text.contains("今日") -> today
+            else -> trainIsoDateRegex.find(text)?.let { match ->
+                runCatching {
+                    LocalDate.of(
+                        match.groupValues[1].toInt(),
+                        match.groupValues[2].toInt(),
+                        match.groupValues[3].toInt(),
+                    )
+                }.getOrNull()
+            } ?: trainMonthDayRegex.find(text)?.let { match ->
+                runCatching {
+                    val candidate = LocalDate.of(
+                        today.year,
+                        match.groupValues[1].toInt(),
+                        match.groupValues[2].toInt(),
+                    )
+                    // 「1月2日」in November means next year, not a past date.
+                    if (candidate.isBefore(today)) candidate.plusYears(1) else candidate
+                }.getOrNull()
+            }
+        }
+        date?.let { args.put("date", it.toString()) }
+
+        var routing = ChineseTimeParser.stripTimeExpressions(text)
+        var stripped = true
+        while (stripped) {
+            stripped = false
+            for (prefix in TRAIN_QUERY_PREFIXES) {
+                if (routing.startsWith(prefix)) {
+                    routing = routing.removePrefix(prefix).trim()
+                    stripped = true
+                    break
+                }
+            }
+        }
+        routing = routing.replace(trainNounRegex, " ")
+        routing = routing.replace(
+            Regex("""^(?:帮我|给我|请|麻烦|我想|我要|想|要|买|坐)\s*"""),
+            "",
+        ).trim()
+
+        trainRouteRegex.find(routing)?.let { match ->
+            val from = cleanTrainPlace(match.groupValues[1])
+            val to = cleanTrainPlace(match.groupValues[2])
+            if (from.isNotBlank()) args.put("from", from)
+            if (to.isNotBlank()) args.put("to", to)
+        }
+    }
+
+    private fun cleanTrainPlace(raw: String): String {
+        var value = raw.trim()
+        listOf("从", "由", "在").forEach { if (value.startsWith(it)) value = value.removePrefix(it) }
+        listOf("出发", "到站", "到达", "前往", "的票", "的车", "的").forEach {
+            if (value.endsWith(it) && value.length > it.length) value = value.removeSuffix(it)
+        }
+        return value.trim()
+    }
+
     private fun extractAfterTrigger(text: String, triggers: List<String>): String? {
         for (trigger in triggers.sortedByDescending { it.length }) {
             val index = text.indexOf(trigger, ignoreCase = true)
@@ -615,5 +710,12 @@ class SlotExtractor(
 
     companion object {
         private val ISO = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+        /** Command prefixes stripped before looking for the `X到Y` span. */
+        private val TRAIN_QUERY_PREFIXES = listOf(
+            "帮我查一下", "帮我查询", "帮我查", "帮我看看", "帮我",
+            "给我", "请", "麻烦", "查询", "查一下", "查查", "看看", "看一下",
+            "搜一下", "搜索",
+        )
     }
 }
