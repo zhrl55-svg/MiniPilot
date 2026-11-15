@@ -1,5 +1,6 @@
 package com.openminis.app.offload
 
+import android.app.Notification
 import android.content.ComponentName
 import android.content.Context
 import android.provider.Settings
@@ -40,12 +41,53 @@ class MinisNotificationListenerService : NotificationListenerService() {
         // until the listener has actually observed its own post.
         val key = postKey(sbn.packageName, sbn.id)
         postedLatches.remove(key)?.countDown()
+
+        // [T-android-notification-summary] Keep a short in-memory copy so the
+        // `notifications` tool can answer "刚才谁发消息". Memory only.
+        recordToInbox(sbn)
+    }
+
+    private fun recordToInbox(sbn: StatusBarNotification) {
+        if (sbn.packageName == packageName) return
+        val notification = sbn.notification ?: return
+        // Ongoing cards (music, navigation, charging) are not messages.
+        if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
+        val extras = notification.extras ?: return
+        val title = extras.getCharSequence(Notification.EXTRA_TITLE)
+            ?.toString()?.trim().orEmpty().take(MAX_TITLE)
+        val body = buildList {
+            extras.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.let(::add)
+            extras.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.let(::add)
+            extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)?.forEach { add(it.toString()) }
+        }.distinct().joinToString(" ").trim().take(MAX_TEXT)
+        if (title.isBlank() && body.isBlank()) return
+        NotificationInbox.add(
+            NotificationInbox.Entry(
+                packageName = sbn.packageName,
+                appName = appLabel(sbn.packageName),
+                title = title,
+                text = body,
+                postedAt = sbn.postTime,
+            ),
+        )
+    }
+
+    /** Application label ("微信"), falling back to the package name. */
+    private fun appLabel(pkg: String): String = appLabels.getOrPut(pkg) {
+        runCatching {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg, 0)).toString()
+        }.getOrDefault(pkg)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {}
 
     companion object {
         private const val TAG = "NotifListener"
+        private const val MAX_TITLE = 100
+        private const val MAX_TEXT = 500
+
+        /** Resolved app labels, so a burst of posts does not re-hit PackageManager. */
+        private val appLabels = ConcurrentHashMap<String, String>()
 
         @Volatile private var connected: Boolean = false
         @Volatile private var instance: MinisNotificationListenerService? = null
