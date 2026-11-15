@@ -178,7 +178,7 @@ class AssistantRouter(
          * 状态/控制类能力没有自由文本槽：句子里出现「接口 / 方案 / 规则」
          * 这类讨论词汇时，用户是在聊这个能力，不是在调用它。
          */
-        val STATUS_CAPABILITIES = setOf("weather", "device", "media", "calendar")
+        val STATUS_CAPABILITIES = setOf("weather", "device", "media", "calendar", "flashlight")
 
         const val TOPIC_DISCUSSION_MIN_LENGTH = 8
 

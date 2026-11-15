@@ -11483,11 +11483,9 @@ class ChatViewModel(
         sessionId: String,
         toolId: String,
     ): com.openminis.app.assistant.execution.LocalExecutionResult {
-        val lifeCapabilities = setOf(
-            "calendar", "alarm", "reminder", "note", "settings",
-            "scheduled_task", "weather", "device", "media", "contacts", "app_launch",
-        )
-        if (decision.capability in lifeCapabilities) {
+        if (decision.capability in
+            com.openminis.app.assistant.execution.LocalCapabilityExecutor.SUPPORTED_CAPABILITIES
+        ) {
             return com.openminis.app.assistant.execution.LocalCapabilityExecutor(context)
                 .execute(decision, sessionId)
         }

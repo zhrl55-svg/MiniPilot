@@ -1,9 +1,19 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 6
+    const val SEED_VERSION = 7
 
     private val RETIRED_AT_V3 = setOf("life.media")
+
+    /**
+     * [T-local-flashlight] A sentence can mention the torch while discussing
+     * the feature ("我们可以加个手电筒功能"). Those verbs/nouns keep the
+     * flashlight routes from treating the mention as a command.
+     */
+    private val FLASHLIGHT_TOPIC_EXCLUDES = listOf(
+        "加个", "添加", "增加", "支持", "功能", "开发", "实现",
+        "讨论", "方案", "接口", "代码", "原理", "设计",
+    )
 
     private fun r(
         id: String,
@@ -304,6 +314,50 @@ object DefaultAssistantRoutes {
         r(
             "life.device-info", "Device info", "life", "device", "info", 140,
             listOf("设备信息", "手机型号", "系统版本", "device info", "android version"),
+        ),
+        // [T-local-flashlight] Torch on/off/status — NEVER confirms: the LED is
+        // instantly reversible and the user asked for it directly.
+        r(
+            "life.flashlight-on", "Turn on flashlight", "life", "flashlight", "on", 160,
+            listOf(
+                "打开手电筒", "开启手电筒", "开手电筒", "点亮手电筒",
+                "打开闪光灯", "开启闪光灯", "开闪光灯",
+                "turn on flashlight", "turn on torch", "turn on the flashlight",
+                "turn on the torch", "switch on the flashlight", "flashlight on", "torch on",
+            ),
+            patterns = listOf(
+                """(手电筒|闪光灯).{0,6}(打开|开启|点亮|开)""",
+                """(打开|开启|点亮).{0,6}(手电筒|闪光灯)""",
+            ),
+            exclude = FLASHLIGHT_TOPIC_EXCLUDES,
+            examples = listOf("打开手电筒", "turn on the flashlight"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        r(
+            "life.flashlight-off", "Turn off flashlight", "life", "flashlight", "off", 160,
+            listOf(
+                "关闭手电筒", "关掉手电筒", "关手电筒", "熄灭手电筒",
+                "关闭闪光灯", "关掉闪光灯", "关闪光灯", "熄灭闪光灯",
+                "turn off flashlight", "turn off torch", "turn off the flashlight",
+                "turn off the torch", "switch off the flashlight", "flashlight off", "torch off",
+            ),
+            patterns = listOf(
+                """(手电筒|闪光灯).{0,6}(关闭|关掉|关上|熄灭|关)""",
+                """(关闭|关掉|熄灭).{0,6}(手电筒|闪光灯)""",
+            ),
+            exclude = FLASHLIGHT_TOPIC_EXCLUDES,
+            examples = listOf("关掉手电筒", "turn off the flashlight"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        r(
+            "life.flashlight-status", "Flashlight status", "life", "flashlight", "status", 140,
+            listOf("手电筒", "闪光灯", "torch", "flashlight"),
+            patterns = listOf(
+                """(手电筒|闪光灯).*(状态|开着|关了|亮着|开没开)""",
+            ),
+            exclude = FLASHLIGHT_TOPIC_EXCLUDES,
+            examples = listOf("手电筒", "手电筒现在开着吗"),
+            confirm = ConfirmMode.NEVER,
         ),
         r(
             "life.media-pause", "Pause media", "life", "media", "pause", 145,

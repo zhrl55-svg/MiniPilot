@@ -208,6 +208,17 @@ object LocalCapabilityRegistry {
             ),
         ),
         LocalCapability(
+            // [T-local-flashlight] Torch on/off/status. Switching the LED is
+            // instantly reversible and not destructive: LOW risk, no
+            // confirmation card (the routes use ConfirmMode.NEVER).
+            "flashlight", "Flashlight",
+            mapOf(
+                "on" to action("on", false, CapabilityRisk.LOW),
+                "off" to action("off", false, CapabilityRisk.LOW),
+                "status" to action("status", true),
+            ),
+        ),
+        LocalCapability(
             "media", "Media control",
             mapOf(
                 // [T-music-player-top] `play` drives the in-app music player

@@ -149,6 +149,7 @@ class LocalCapabilityExecutor(private val context: Context) {
                 "scheduled_task" -> scheduledTask(decision.action, args, sessionId)
                 "weather" -> weather(decision.action, args, sessionId)
                 "device" -> device(decision.action, args)
+                "flashlight" -> flashlight(decision.action)
                 "media" -> media(decision.action, args, decision.route.label)
                 "contacts" -> contacts(decision.action, args)
                 "app_launch" -> appLaunch(decision.action, args)
@@ -679,6 +680,22 @@ class LocalCapabilityExecutor(private val context: Context) {
         )
     }
 
+    /**
+     * [T-local-flashlight] The torch is driven directly through the camera
+     * service; the controller returns user-facing Chinese so the bubble shows
+     * the real outcome (opened / closed / current state / why it failed).
+     */
+    private fun flashlight(action: String): NativeOffloadResult {
+        val controller = FlashlightController.get(context)
+        val result = when (action) {
+            "on" -> controller.setTorch(true)
+            "off" -> controller.setTorch(false)
+            "status" -> controller.status()
+            else -> FlashlightController.TorchResult(false, "不支持的手电筒操作。")
+        }
+        return NativeOffloadResult(if (result.success) 0 else 1, result.message)
+    }
+
     private suspend fun media(
         action: String,
         args: JSONObject,
@@ -963,6 +980,20 @@ class LocalCapabilityExecutor(private val context: Context) {
     companion object {
         private const val TAG = "LocalCapabilityExecutor"
         private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+        /**
+         * Capabilities served by [execute] — the local life surface. Callers
+         * use this to decide whether a routed decision runs on-device or is
+         * an agent tool (shell/file/memory/...). Keep it in step with the
+         * `when (decision.capability)` below; [FlashlightController] was the
+         * first capability to be forgotten here and surfaced as
+         * "Unknown tool: flashlight" on 2026-11-15.
+         */
+        val SUPPORTED_CAPABILITIES = setOf(
+            "calendar", "alarm", "reminder", "note", "settings",
+            "scheduled_task", "weather", "device", "flashlight",
+            "media", "contacts", "app_launch",
+        )
 
         private val KNOWN_APPS: Map<String, KnownApp> = mapOf(
             "微信" to KnownApp("com.tencent.mm"),
