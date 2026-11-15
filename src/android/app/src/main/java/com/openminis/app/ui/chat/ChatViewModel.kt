@@ -2835,6 +2835,9 @@ class ChatViewModel(
                 // path's hook. Registered BEFORE the prompt so a run that ends
                 // instantly still writes it.
                 registry.setCompletionHook(job.id) { finished ->
+                    // [T-delegate-single-delivery] Same contract as the
+                    // background hook: the callback is the only model-facing
+                    // delivery, so the result is not patched into agentHistory.
                     // [T-subagent-termination] Same as the background hook:
                     // recorded before the callback is built.
                     val termination = recordChildTermination(
@@ -2869,8 +2872,16 @@ class ChatViewModel(
                             else -> ToolBlockStatus.FAILED
                         }
                         withContext(Dispatchers.Main) { writeDelegateBlock(toolId, json, blockStatus) }
-                        persistFinalDelegateResult(toolId, json, finished.state == com.openminis.app.agent.jobs.AgentJobState.DONE)
-                        AppLogger.info(TAG, "[subagent_task] RESUME END job=${finished.id.take(8)} state=${finished.state.wire}")
+                        persistFinalDelegateResult(
+                            toolId, json,
+                            finished.state == com.openminis.app.agent.jobs.AgentJobState.DONE,
+                            patchHistory = false,
+                        )
+                        AppLogger.info(
+                            TAG,
+                            "[subagent_task] RESUME END job=${finished.id.take(8)} state=${finished.state.wire} " +
+                                "delivery=callback (result kept out of agentHistory)",
+                        )
                     }
                 }
                 val outcome = withContext(Dispatchers.Main) { childVm.submitPrompt(hr.resumeNotice()) }
@@ -15781,6 +15792,14 @@ class ChatViewModel(
         // closes the job. Runs BEFORE `then` posts the callback.
         registry.setCompletionHook(jobId) { finished ->
             mirror.cancel()
+            // [T-delegate-single-delivery] Background jobs deliver exactly
+            // once, through the completion callback. The tool_result the
+            // parent's current turn already holds stays at its initial
+            // "running" payload; patching the final result into agentHistory
+            // as well would make the model read it twice — once in the
+            // tool_result, once in the `<agent_callback>` message. The DB row
+            // and the visible tool card are still updated below, so a reload
+            // shows the final state.
             // [T-subagent-termination] Recorded synchronously, before `finish()`
             // runs the callback, so the delivery state starts at `pending` and
             // the callback text can use the same termination note.
@@ -15809,6 +15828,9 @@ class ChatViewModel(
                 val json = hr.resultJson(
                     status, result, resolution.modelLabel, resolution.tierUsed, args.tierRequested,
                     facts.turns, finished.elapsedMs ?: (System.currentTimeMillis() - startedAt), childId, finished.id,
+                    // [T-delegate-single-delivery] The callback is the only
+                    // model-facing delivery for a background job, so the
+                    // payload says a new turn is coming.
                     summary, deliveredAs = "new turn in this conversation",
                     agentName = subAgentWireName,
                     modelOrigin = resolution.origin,
@@ -15834,13 +15856,24 @@ class ChatViewModel(
                     else -> ToolBlockStatus.FAILED
                 }
                 withContext(Dispatchers.Main) { writeDelegateBlock(toolId, json, blockStatus) }
-                persistFinalDelegateResult(toolId, json, finished.state == com.openminis.app.agent.jobs.AgentJobState.DONE)
+                // [T-delegate-single-delivery] DB/UI only: the model-facing
+                // copy of this result is the callback message delivered by
+                // `then`. Patching agentHistory here too was the duplicate.
+                persistFinalDelegateResult(
+                    toolId, json,
+                    finished.state == com.openminis.app.agent.jobs.AgentJobState.DONE,
+                    patchHistory = false,
+                )
                 // [T-agent-port-round2] The final override is deliberately KEPT:
                 // if the parent is mid-turn when the child finishes, its loop
                 // still holds the "running" payload in its private block list
                 // and would republish it at turn end — the merge in
                 // updateAssistantMessage is what keeps the final state on top.
-                AppLogger.info(TAG, "[delegate_task] BACKGROUND END job=${finished.id.take(8)} state=${finished.state.wire}")
+                AppLogger.info(
+                    TAG,
+                    "[delegate_task] BACKGROUND END job=${finished.id.take(8)} state=${finished.state.wire} " +
+                        "delivery=callback (result kept out of agentHistory)",
+                )
             }
         }
 
@@ -15968,11 +16001,31 @@ class ChatViewModel(
     /**
      * [T-agent-result-persist] A background delegate_task returned
      * `status: running` as its tool_result and that is what got persisted.
-     * Rewrite the stored tool_result — the model-facing agentHistory part and
-     * the parent's DB row — so later turns and a reload see the final payload
-     * instead of "running" (shown as Interrupted after a restart).
+     * Rewrite the stored tool_result in the parent's DB row (and, when
+     * [patchHistory] is true, the model-facing agentHistory part) so a reload
+     * sees the final payload instead of "running" (shown as Interrupted after
+     * a restart).
+     *
+     * [T-delegate-single-delivery] Background completion passes
+     * `patchHistory = false`: the callback message is the one model-facing
+     * delivery. The DB row and the visible tool card still show the final
+     * payload, so reload/UI remain correct.
      */
-    private suspend fun persistFinalDelegateResult(toolId: String, content: String, success: Boolean) {
+    private suspend fun persistFinalDelegateResult(
+        toolId: String,
+        content: String,
+        success: Boolean,
+        /**
+         * [T-delegate-single-delivery] False for a background result delivered
+         * through the completion callback. The DB row is still updated (the
+         * transcript card must show the final state after a reload), but the
+         * in-memory agentHistory keeps the initial "running" payload that the
+         * parent's in-flight request already contains. Patching it there too
+         * would make the model see the same result twice — once in the
+         * tool_result and again in the callback message.
+         */
+        patchHistory: Boolean = true,
+    ) {
         // [T-android-stop-sibling-subagent-loop] After the user stopped this
         // batch the result is still recorded (the DB row below, so the
         // transcript stays auditable) but it is withheld from the model-facing
@@ -15981,7 +16034,7 @@ class ChatViewModel(
         // by then the user has started new work.
         val muted = com.openminis.app.agent.jobs.AgentJobRegistry.isDelegationMuted(activeSessionId)
         if (muted) AppLogger.info(TAG, "[delegate_task] final result ${toolId.take(12)} kept out of agentHistory — batch stopped")
-        if (!muted) withContext(Dispatchers.Main) {
+        if (!muted && patchHistory) withContext(Dispatchers.Main) {
             for (i in agentHistory.indices) {
                 val m = agentHistory[i]
                 if (m.contentParts.none { it is AgentContentPart.ToolResult && it.id == toolId }) continue
@@ -16097,6 +16150,12 @@ class ChatViewModel(
             for (job in jobs) if (job.isActive) registry.cancel(job.id, "agent_status cancel by parent model")
         }
         val entries = org.json.JSONArray()
+        // [T-delegate-single-delivery] The exact snapshot the response is
+        // built from. Re-reading the registry after the loop would let a job
+        // that finished in between look "shown" when its result was never in
+        // this response — and its callback would be suppressed without the
+        // model ever seeing the output.
+        val shown = mutableListOf<com.openminis.app.agent.jobs.AgentJob>()
         for (job0 in jobs) {
             val job = registry.job(job0.id) ?: job0
             val missed = registry.missedSteersFor(job.id)
@@ -16140,13 +16199,24 @@ class ChatViewModel(
             }
             if (!job.isActive) job.resultText?.let { d.put("result", it.take(2000)) }
             entries.put(d)
+            shown.add(job)
         }
+        // [T-delegate-single-delivery] The model has just been shown these
+        // finished results; the callback would be a second delivery.
+        val consumedResults = consumeFinishedDelegateResults(shown)
         // [T-sub-agents-queue] Report the backlog too. Without it a model that
         // fanned out five tasks and asked for status saw only the three that
         // started — the queued two were invisible, which invites exactly the
         // re-delegation the queue exists to prevent.
         val queuedWaiting = registry.queuedCount(sid)
-        val baseNote = "Running agents deliver their final result automatically as a new message in this conversation; you do not need to poll for it."
+        val baseNote = if (consumedResults > 0) {
+            "The finished results above have already been delivered; their completion callbacks are " +
+                "suppressed. Running or queued agents still report automatically as new messages — do not " +
+                "re-delegate them."
+        } else {
+            "Running agents deliver their final result automatically as a new message in this conversation; " +
+                "you do not need to poll for it."
+        }
         val out = JSONObject()
             .put("ok", true)
             .put("action", action)
@@ -16162,6 +16232,66 @@ class ChatViewModel(
                 },
             )
         return ToolExecutionResult(out.toString(), true, toolTitle = toolTitle)
+    }
+
+    /**
+     * [T-delegate-single-delivery] A `subagent_task action=status` result that
+     * already carries a finished job's output IS a delivery. Suppress that
+     * job's completion callback and drop any finished-callback prompt already
+     * queued behind the running turn, so the parent does not get the same
+     * result again as a new turn.
+     *
+     * This is the second face of the duplicate seen on device: a model that
+     * ignored "do not poll" called status, read both finished results, wrote
+     * the summary — and then the callbacks still started a reconciliation
+     * turn. Only terminal jobs whose result text was actually included are
+     * consumed; running/queued siblings keep their callback.
+     */
+    private fun consumeFinishedDelegateResults(shown: List<com.openminis.app.agent.jobs.AgentJob>): Int {
+        val consumed = shown
+            .filter { !it.isActive && !it.resultText.isNullOrEmpty() }
+            .map { it.id }
+            .toSet()
+        if (consumed.isEmpty()) return 0
+        // A callback that has not been dispatched yet (the job is terminal, so
+        // normally runThen already ran) must not be armed after this point.
+        consumed.forEach {
+            com.openminis.app.agent.jobs.AgentJobRegistry.setThen(
+                it, com.openminis.app.agent.jobs.AgentJobThen.None,
+            )
+        }
+        // Programmatic callback prompts wait for the running loop to end. Drop
+        // one only when every callback block in it is a finished callback for
+        // a consumed job; a mixed/partial prompt is left alone.
+        val tagRe = Regex("""<agent_callback\b[^>]*>""")
+        val kindRe = Regex("""\bkind="([^"]*)"""")
+        val jobRe = Regex("""\bjob="([^"]*)"""")
+        val drop = mutableListOf<String>()
+        for (q in _promptQueue.value) {
+            if (q.origin != QueuedPromptOrigin.PROGRAMMATIC || !q.text.contains("<agent_callback")) continue
+            var sawFinished = false
+            var allConsumed = true
+            for (tag in tagRe.findAll(q.text)) {
+                val s = tag.value
+                val kind = kindRe.find(s)?.groupValues?.get(1)
+                val id = jobRe.find(s)?.groupValues?.get(1)
+                if (kind != "finished" || id == null || id !in consumed) {
+                    allConsumed = false
+                    break
+                }
+                sawFinished = true
+            }
+            if (sawFinished && allConsumed) drop += q.id
+        }
+        if (drop.isNotEmpty()) {
+            drop.forEach { removeQueuedPrompt(it) }
+        }
+        AppLogger.info(
+            TAG,
+            "[delegate_task] status consumed ${consumed.size} finished result(s) — " +
+                "callbacks suppressed, queued prompts dropped=${drop.size}",
+        )
+        return consumed.size
     }
 
     /**
