@@ -63,6 +63,8 @@
 
 ## 四、建议（本轮未实施）
 
+> 处理决定（2026-11-15）：按需求只复核、不改代码；以下建议留待后续评估再决定是否实施。
+
 按优先级：
 
 1. **给 Guard 的 ask 一个前台渲染位**（最小改动）：在 `ChatScreen` 的 `AssistantToolUse` 分支，把条件从“工具名是 `user_ask`”扩展为“工具名是 `user_ask`，或该块 id 存在 live pending ask”；或让 `ToolCallPill` 在存在 live ask 时改为渲染 `UserAskBlock`。Guard 已经把 `toolCallId` 设为块 id，匹配条件现成。
