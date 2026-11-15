@@ -43,6 +43,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -62,8 +63,9 @@ import kotlin.math.sin
  * 紧凑播放器，样式与交互移植自 pilot 的 `MusicBar`：
  * 一行歌曲 + 一行同步歌词 + 2dp 进度 + 一行控制键，尽量节省纵向空间。
  *
- * 播放时浮在聊天页顶端（[com.openminis.app.ui.chat.ChatScreen]），
- * 消息从下面滚过，半透明卡片的层次感才出得来。
+ * 播放时停靠在聊天页消息列表上方（[com.openminis.app.ui.chat.ChatScreen]），
+ * 占用自己的纵向空间、不覆盖消息正文，所以卡片用不透明底色，
+ * 避免歌词和曲名与背后的聊天文字互相透叠。
  */
 @Composable
 fun MusicPlayerBar(
@@ -101,11 +103,14 @@ fun MusicPlayerBar(
             .padding(horizontal = 10.dp, vertical = 4.dp)
             .clip(cardShape)
             .background(
+                // 不透明底色：播放条停靠在列表上方，卡片背后没有要透出的
+                // 正文；保留半透明会让主色渐变在浅色主题下发灰，文字对比度
+                // 下降。主色只作为左上角的淡染层，先合成到底色上。
                 Brush.linearGradient(
                     listOf(
-                        colors.primary.copy(alpha = 0.28f),
-                        colors.surfaceVariant.copy(alpha = 0.92f),
-                        colors.surface.copy(alpha = 0.98f),
+                        colors.primary.copy(alpha = 0.22f).compositeOver(colors.surface),
+                        colors.surfaceVariant,
+                        colors.surface,
                     ),
                 ),
             )

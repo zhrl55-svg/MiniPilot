@@ -214,7 +214,6 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.focus.focusRequester
-import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
@@ -3931,36 +3930,32 @@ fun ChatScreen(
                 .imePadding()
                 .onGloballyPositioned { chatPaneWidthPx = it.size.width },
         ) {
-            // [T-music-player-top] The mini player floats over the message
-            // list at the top of the chat. It slides in as soon as a track
-            // starts playing - the controls appear where the user is already
-            // looking instead of in a menu. Floating (not docked into the
-            // top bar) is what makes the translucent card read as
-            // translucent: messages pass underneath it while scrolling.
-            androidx.compose.animation.AnimatedVisibility(
+        Column(
+            modifier = Modifier.fillMaxSize(),
+        ) {
+            // [T-music-player-docked] The mini player is a normal child of the
+            // chat column, docked above the message list - NOT a floating
+            // overlay. It used to be drawn on top of the transcript with
+            // zIndex, which covered the first messages; with the translucent
+            // gradient card, the text above and below the bar became hard to
+            // read. Docked, it takes its own vertical slot: the list makes
+            // room for it and no message is ever hidden behind it.
+            // expandVertically/shrinkVertically animate that slot so the
+            // whole list slides instead of jumping when playback starts or
+            // stops.
+            AnimatedVisibility(
                 visible = musicState.hasTrack,
-                // Declared before the list Column, so it needs an explicit
-                // z-order to stay on top of it.
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .zIndex(2f),
-                enter = androidx.compose.animation.slideInVertically(
-                    animationSpec = androidx.compose.animation.core.tween(280),
-                    initialOffsetY = { -it },
-                ) + androidx.compose.animation.fadeIn(),
-                exit = androidx.compose.animation.slideOutVertically(
-                    animationSpec = androidx.compose.animation.core.tween(220),
-                    targetOffsetY = { -it },
-                ) + androidx.compose.animation.fadeOut(),
+                enter = androidx.compose.animation.expandVertically(
+                    expandFrom = Alignment.Top,
+                ) + fadeIn(),
+                exit = androidx.compose.animation.shrinkVertically(
+                    shrinkTowards = Alignment.Top,
+                ) + fadeOut(),
             ) {
                 com.openminis.app.ui.media.music.MusicPlayerBar(
                     onStop = { musicController.stop() },
                 )
             }
-
-        Column(
-            modifier = Modifier.fillMaxSize(),
-        ) {
             // Dismiss keyboard when the USER scrolls the messages. Gated on
             // `isUserDragging` (a real finger drag) rather than
             // `listState.isScrollInProgress` — the latter is also true during
