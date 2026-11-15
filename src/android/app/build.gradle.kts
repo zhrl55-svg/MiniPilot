@@ -37,8 +37,8 @@ android {
         applicationId = "com.openminis.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 44
-        versionName = "1.16"
+        versionCode = 45
+        versionName = "1.17"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -117,7 +117,7 @@ android {
             // Fork channel: this variant is the only one the fork serves, so it
             // checks the fork's own releases instead of upstream's. The release
             // variant keeps pointing at OpenMinis/OpenMinis.
-            buildConfigField("String", "RELEASE_REPO", "\"zhrl55-svg/OpenMinis-dev\"")
+            buildConfigField("String", "RELEASE_REPO", "\"zhrl55-svg/MiniPilot\"")
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
