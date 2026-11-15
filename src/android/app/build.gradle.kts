@@ -37,8 +37,8 @@ android {
         applicationId = "com.openminis.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 37
-        versionName = "1.15"
+        versionCode = 44
+        versionName = "1.16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -114,6 +114,10 @@ android {
             isProfileable = true
             matchingFallbacks += listOf("debug")
             buildConfigField("boolean", "DEV_TOOLS", "true")
+            // Fork channel: this variant is the only one the fork serves, so it
+            // checks the fork's own releases instead of upstream's. The release
+            // variant keeps pointing at OpenMinis/OpenMinis.
+            buildConfigField("String", "RELEASE_REPO", "\"zhrl55-svg/OpenMinis-dev\"")
             signingConfig = signingConfigs.getByName("debug")
         }
         release {
