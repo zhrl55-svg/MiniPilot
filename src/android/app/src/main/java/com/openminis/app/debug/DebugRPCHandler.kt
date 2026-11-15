@@ -174,6 +174,11 @@ class DebugRPCHandler(private val context: Context) {
             "agent.guard.setEnforce" -> AgentDebugMethods.guardSetEnforce(context, params)
             "agent.guard.status" -> AgentDebugMethods.guardStatus(context)
 
+            // Memory index (Phase A acceptance surface).
+            "memory.index.status" -> MemoryDebugMethods.indexStatus(context)
+            "memory.index.rebuild" -> MemoryDebugMethods.indexRebuild(context)
+            "memory.search" -> MemoryDebugMethods.search(context, params)
+
             // Chat (mutate)
             "chat.prompt" -> ChatMutationMethods.prompt(context, params)
             "chat.uiPrompt" -> ChatMutationMethods.uiPrompt(context, params)

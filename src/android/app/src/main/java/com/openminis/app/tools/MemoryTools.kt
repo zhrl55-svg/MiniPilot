@@ -1,6 +1,7 @@
 package com.openminis.app.tools
 
 import com.openminis.app.data.repository.MemoryRepository
+import com.openminis.app.data.repository.memory.MemoryIndexConfig
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -46,7 +47,7 @@ object MemoryTools {
             })
             put("scope", JSONObject().apply {
                 put("type", "string")
-                put("description", "Memory scope to search: 'daily' for daily logs only, 'all' for daily logs + GLOBAL.md.")
+                put("description", "Memory scope to search: 'daily' for daily logs only, 'all' for daily logs + GLOBAL.md + USER.md.")
                 put("enum", JSONArray().apply {
                     put("daily")
                     put("all")
@@ -54,13 +55,19 @@ object MemoryTools {
             })
             put("keywords", JSONObject().apply {
                 put("type", "string")
-                put("description", "Space-separated keywords for fuzzy matching (e.g. 'python preference' or 'API key setup'). All keywords must appear in a line or its surrounding context for a match. Leave empty to return full memory files.")
+                put("description", "Keywords or a short natural-language query (e.g. 'magpie console 401' or 'freeform small window'). Results are ranked across GLOBAL.md, USER.md, and daily logs. Leave empty to return full memory files.")
+            })
+            put("limit", JSONObject().apply {
+                put("type", "integer")
+                put("description", "Maximum number of ranked entries to return (1-10, default 5).")
+                put("minimum", 1)
+                put("maximum", 10)
             })
         }
 
         return JSONObject().apply {
             put("name", "memory_get")
-            put("description", "Retrieve memories from persistent storage. Supports keyword-based fuzzy search across memory files. Returns matching lines with surrounding context. Use this to recall previous knowledge, user preferences, or past notes.")
+            put("description", "Retrieve memories from persistent storage. Ranks entries from GLOBAL.md, USER.md, and daily logs using a hybrid lexical index, then returns the best matching entries with their source file and section. Use this to recall preferences, device/service facts, and past notes.")
             put("input_schema", JSONObject().apply {
                 put("type", "object")
                 put("properties", properties)
@@ -126,9 +133,11 @@ object MemoryTools {
             val obj = JSONObject(inputJson)
             val keywords = obj.optString("keywords", "")
             val scope = obj.optString("scope", "all")
+            val limit = obj.optInt("limit", MemoryIndexConfig.TOP_K)
+                .coerceIn(1, MemoryIndexConfig.MAX_LIMIT)
             val toolTitle = obj.optString("tool_title", "memory_get")
 
-            val result = repository.getMemory(keywords, scope)
+            val result = repository.getMemory(keywords, scope, limit)
             ToolResult(result, true, toolTitle)
         } catch (e: Exception) {
             ToolResult("Error: ${e.message}", false)

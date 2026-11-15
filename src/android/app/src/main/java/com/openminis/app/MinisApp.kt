@@ -610,6 +610,11 @@ class MinisApp : Application(), ImageLoaderFactory {
         )
         mcpRepository = MCPRepository(this)
         memoryRepository = MemoryRepository(java.io.File(filesDir, "minis-global/memory"))
+        // Phase A memory index: build it once off the main thread so the
+        // first memory_get does not pay for parsing/tokenizing the files.
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            memoryRepository.prewarmIndex()
+        }
         webAppShortcutRepository = WebAppShortcutRepository(database.webAppShortcutDao())
 
         // T-android-safemode-lateinit-crash: every repository the UI layer

@@ -16653,9 +16653,14 @@ class ChatViewModel(
         return ToolExecutionResult(result.output, result.success, toolTitle = result.toolTitle)
     }
 
-    private fun executeMemoryGetTool(argsJson: String): ToolExecutionResult {
+    private suspend fun executeMemoryGetTool(argsJson: String): ToolExecutionResult {
         val repo = memoryRepository ?: return ToolExecutionResult("Error: Memory not available", false)
-        val result = MemoryTools.executeMemoryGet(argsJson, repo)
+        // The first call may build the in-memory index (read + tokenize the
+        // memory files). Keep that off the caller's thread; executeTool() is
+        // already suspend.
+        val result = withContext(Dispatchers.IO) {
+            MemoryTools.executeMemoryGet(argsJson, repo)
+        }
         val keywords = try {
             JSONObject(argsJson).optString("keywords", "")
         } catch (_: Exception) { "" }

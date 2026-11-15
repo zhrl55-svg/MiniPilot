@@ -1,6 +1,12 @@
 package com.openminis.app.data.repository
 
 import android.util.Log
+import com.openminis.app.data.repository.memory.MemoryIndexConfig
+import com.openminis.app.data.repository.memory.MemoryIndexRepository
+import com.openminis.app.data.repository.memory.MemoryIndexStatus
+import com.openminis.app.data.repository.memory.MemoryScope
+import com.openminis.app.data.repository.memory.MemorySearchFormatter
+import com.openminis.app.data.repository.memory.MemorySearchResult
 import com.openminis.app.logging.AppLogger
 import java.io.File
 import java.text.SimpleDateFormat
@@ -58,6 +64,10 @@ class MemoryRepository(private val memoryDir: File) {
         memoryDir.mkdirs()
     }
 
+    private val indexRepository = MemoryIndexRepository(memoryDir) { message ->
+        AppLogger.warning(TAG, message)
+    }
+
     // -- memory_write --
 
     /**
@@ -81,6 +91,7 @@ class MemoryRepository(private val memoryDir: File) {
 
         return try {
             file.writeText(newContent)
+            invalidateIndex()
             Log.i(TAG, "Memory written to $fileName (${content.length} chars)")
             "Memory saved to $fileName (${content.length} chars)"
         } catch (e: Exception) {
@@ -92,12 +103,69 @@ class MemoryRepository(private val memoryDir: File) {
     // -- memory_get --
 
     /**
-     * Fuzzy keyword search across memory files.
-     * @param keywords space-separated, case-insensitive, ALL must match
-     * @param scope "daily" (logs only) or "all" (include GLOBAL.md)
-     * @return search results with context lines
+     * Ranked memory search (Phase A). Empty keywords keep the legacy full
+     * dump; otherwise the in-memory index ranks GLOBAL.md, USER.md, and daily
+     * logs. Any index failure falls back to the legacy keyword scan so the
+     * tool never fails because of derived data.
      */
-    fun getMemory(keywords: String, scope: String): String {
+    fun getMemory(
+        keywords: String,
+        scope: String,
+        limit: Int = MemoryIndexConfig.TOP_K,
+    ): String {
+        if (keywords.isBlank()) return legacyGetMemory(keywords, scope)
+        return try {
+            val result = indexRepository.search(
+                query = keywords,
+                scope = MemoryScope.from(scope),
+                limit = limit.coerceIn(1, MemoryIndexConfig.MAX_LIMIT),
+            )
+            if (result.hits.isEmpty()) {
+                legacyGetMemory(keywords, scope)
+            } else {
+                MemorySearchFormatter.format(keywords, result)
+            }
+        } catch (e: Exception) {
+            AppLogger.warning(
+                TAG,
+                "Memory index search failed; falling back to legacy scan: " +
+                    "${e.javaClass.simpleName}: ${e.message}",
+            )
+            legacyGetMemory(keywords, scope)
+        }
+    }
+
+    /** Build the index off the main thread (called after app startup). */
+    fun prewarmIndex() {
+        indexRepository.prewarm()
+    }
+
+    fun indexStatus(): MemoryIndexStatus = indexRepository.status()
+
+    fun rebuildIndex() {
+        indexRepository.rebuild()
+    }
+
+    fun searchIndex(
+        query: String,
+        scope: String = "all",
+        limit: Int = MemoryIndexConfig.TOP_K,
+    ): MemorySearchResult = indexRepository.search(
+        query = query,
+        scope = MemoryScope.from(scope),
+        limit = limit.coerceIn(1, MemoryIndexConfig.MAX_LIMIT),
+    )
+
+    private fun invalidateIndex() {
+        indexRepository.invalidate()
+    }
+
+    /**
+     * Legacy line-window scan. Kept as the fallback for empty queries, no
+     * index hits, and any index failure. Its ALL-keywords-must-match behavior
+     * is intentionally unchanged.
+     */
+    private fun legacyGetMemory(keywords: String, scope: String): String {
         val keywordList = keywords.trim()
             .lowercase()
             .split(Regex("\\s+"))
@@ -395,6 +463,7 @@ class MemoryRepository(private val memoryDir: File) {
 
     fun saveGlobalMd(content: String) {
         File(memoryDir, GLOBAL_FILE).writeText(content)
+        invalidateIndex()
     }
 
     fun readFile(name: String): String {
@@ -404,11 +473,14 @@ class MemoryRepository(private val memoryDir: File) {
 
     fun saveFile(name: String, content: String) {
         File(memoryDir, name).writeText(content)
+        invalidateIndex()
     }
 
     fun deleteFile(name: String): Boolean {
         if (name == GLOBAL_FILE) return false // Cannot delete GLOBAL.md
-        return File(memoryDir, name).delete()
+        val deleted = File(memoryDir, name).delete()
+        if (deleted) invalidateIndex()
+        return deleted
     }
 
     // -- Entry-level operations (used by Session Memory revoke/edit) --
@@ -465,6 +537,7 @@ class MemoryRepository(private val memoryDir: File) {
                 val newContent = content.removeRange(match.range.first, entryEnd)
                 return try {
                     file.writeText(newContent)
+                    invalidateIndex()
                     Log.i(TAG, "Revoked memory entry from $dateStr.md")
                     EntryMutationResult.Success(dateStr)
                 } catch (e: Exception) {
@@ -507,6 +580,7 @@ class MemoryRepository(private val memoryDir: File) {
                 val newFileContent = content.replaceRange(bodyStart, entryEnd, replacement)
                 return try {
                     file.writeText(newFileContent)
+                    invalidateIndex()
                     Log.i(TAG, "Replaced memory entry body in $dateStr.md")
                     EntryMutationResult.Success(dateStr)
                 } catch (e: Exception) {

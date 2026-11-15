@@ -782,6 +782,33 @@ object DebugMethodRegistry {
             example = JSONObject(),
         ),
 
+        // --- Memory index (Phase A acceptance surface) ---
+        MethodSpec(
+            name = "memory.index.status",
+            description = "[T-memory-index] Counts, size, build/query timing, and fingerprint of the in-memory memory index.",
+            params = emptyList(),
+            returns = "{entryCount, globalCount, userCount, dailyCount, chars, buildMs, lastQueryMs, fingerprint}",
+            example = JSONObject(),
+        ),
+        MethodSpec(
+            name = "memory.index.rebuild",
+            description = "[T-memory-index] Force a rebuild from the Markdown memory files and return the new status.",
+            params = emptyList(),
+            returns = "{entryCount, globalCount, userCount, dailyCount, chars, buildMs, fingerprint}",
+            example = JSONObject(),
+        ),
+        MethodSpec(
+            name = "memory.search",
+            description = "[T-memory-index] Ranked search over GLOBAL.md, USER.md, and daily logs. Returns the same top-k the memory_get tool sees.",
+            params = listOf(
+                ParamSpec("query", "string", required = true, description = "Keywords or a short natural-language query."),
+                ParamSpec("scope", "string", required = false, default = "all", description = "daily or all."),
+                ParamSpec("limit", "int", required = false, default = 5, description = "Max entries (1..10)."),
+            ),
+            returns = "[{file, title, kind, date, score, bm25, jaccard, entity, tags:[...]}]",
+            example = ex("query" to "freeform 小窗", "scope" to "all", "limit" to 5),
+        ),
+
         // --- Provider mutate ---
         MethodSpec(
             name = "provider.instances.create",
