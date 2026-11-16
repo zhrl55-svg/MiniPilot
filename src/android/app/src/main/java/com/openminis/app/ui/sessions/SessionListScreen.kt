@@ -997,22 +997,6 @@ fun SessionListScreen(
                         MinisTextButton(onClick = { viewModel.clearSelection() }) {
                             Text(stringResource(R.string.cancel))
                         }
-                    } else {
-                        // [T-update-channels] Beta only: the update badge's
-                        // third layer, derived - no state of its own.
-                        val updateBadge by com.openminis.app.data.UpdateStateStore.hasUpdateBadge.collectAsState()
-                        val updateChannel by com.openminis.app.data.UpdateStateStore.channel.collectAsState()
-                        // [T-android-badge-clip] Badge outside the button's clip.
-                        com.openminis.app.ui.components.BadgedIconButton(
-                            onClick = onSettingsClick,
-                            badge = if (com.openminis.app.data.UpdatePolicy.hasHomeBadge(updateBadge, updateChannel)) {
-                                { Badge() }
-                            } else {
-                                null
-                            },
-                        ) {
-                            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.sessionlist_settings))
-                        }
                     }
                 },
                 actions = {
@@ -1114,6 +1098,23 @@ fun SessionListScreen(
                                     },
                                 )
                             }
+                        }
+                        // Settings sits at the trailing edge, to the right of
+                        // the shell button.
+                        // [T-update-channels] Beta only: the update badge's
+                        // third layer, derived - no state of its own.
+                        val updateBadge by com.openminis.app.data.UpdateStateStore.hasUpdateBadge.collectAsState()
+                        val updateChannel by com.openminis.app.data.UpdateStateStore.channel.collectAsState()
+                        // [T-android-badge-clip] Badge outside the button's clip.
+                        com.openminis.app.ui.components.BadgedIconButton(
+                            onClick = onSettingsClick,
+                            badge = if (com.openminis.app.data.UpdatePolicy.hasHomeBadge(updateBadge, updateChannel)) {
+                                { Badge() }
+                            } else {
+                                null
+                            },
+                        ) {
+                            Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.sessionlist_settings))
                         }
                     }
                 },
