@@ -360,8 +360,13 @@ class SlotExtractor(
         }
         args.put("action", resolved)
         if (resolved == "play") {
-            val query = musicQuery(text)
-            if (query.isNotBlank()) args.put("query", query)
+            // [T-music-slot-semantics] 语义（kind）在抽取层定好，执行层只消费，
+            // 不再拿关键词到执行层 contain() 猜意图。
+            val request = musicRequest(text)
+            args.put("kind", request.kind)
+            if (request.query.isNotBlank()) args.put("query", request.query)
+            if (request.artist.isNotBlank()) args.put("artist", request.artist)
+            if (request.chart.isNotBlank()) args.put("chart", request.chart)
         }
         Regex(
             """(?:会话|session)\s*[:：]?\s*([A-Za-z0-9_.-]+)""",
@@ -372,13 +377,13 @@ class SlotExtractor(
     }
 
     /**
-     * The song the user asked for: everything after the "播放/放一首/想听…"
-     * verb, without the trailing "的歌 / 歌曲 / 音乐".
+     * [T-music-slot-semantics] 把一句点歌拆成语义请求，而不是做字符串手术。
      *
-     * 「播放周杰伦的稻香」→ 周杰伦；「放一首稻香」→ 稻香；「来首歌」→ 空
-     * （空查询表示随便放一首，播放端会走排行榜）。
+     * 只剥白名单触发词（播放/放/来/听/play…），实体一个字都不丢：
+     * 「播放轻音乐」→ genre=轻音乐（不是歌名「轻」）；
+     * 「play music」→ none（走榜单，不是歌名 Music）。
      */
-    private fun musicQuery(text: String): String {
+    private fun musicRequest(text: String): MusicRequest {
         var t = text.trim()
         val triggers = listOf(
             "播放一首", "播放一首儿", "播放一下", "播放", "放一首", "放一首儿", "放个", "放",
@@ -394,12 +399,86 @@ class SlotExtractor(
             }
         }
         t = t.trim().trimStart(':', '：', ',', '，', '.', '。', '!', '！', '?', '？', ' ')
-        // 「放首歌」→ 「」；「放首歌周杰伦」→ 「周杰伦」
-        t = t.replace(Regex("""^一?[首歌]\s*"""), "")
-        t = t.replace(Regex("""(?:的)?(?:歌曲|音乐|曲子|歌)$"""), "")
-        t = t.trim().trimEnd('了', '吧', '呀', '啊')
-        return t.trim().take(40)
+        // 「放首歌」→「」；「放首歌周杰伦」→「周杰伦」
+        t = t.replace(Regex("""^一?[首歌]\s*"""), "").trim()
+        t = t.replace(Regex("""^(?:给我|帮我|帮忙|麻烦)\s*"""), "").trim()
+        t = t.trimEnd('了', '吧', '呀', '啊', '呢', '哦')
+
+        // 泛指目标：没有点具体的东西 → 榜单，不拿 "music" 去搜歌名。
+        if (MusicVocabulary.isGenericTarget(t)) {
+            return MusicRequest(kind = "none")
+        }
+
+        // 榜单意图是白名单整词，不是模糊嗅探。
+        MusicVocabulary.chartOf(t)?.let { chart ->
+            return MusicRequest(kind = "chart", chart = chart)
+        }
+
+        // 流派/场景：整词保留，绝不剥尾部的「音乐」。
+        MusicVocabulary.genreOf(t)?.let { genre ->
+            return MusicRequest(kind = "genre", query = genre)
+        }
+        MusicVocabulary.sceneOf(t)?.let { scene ->
+            return MusicRequest(kind = "scene", query = scene)
+        }
+
+        // 「周杰伦的稻香」→ song=稻香 + artist=周杰伦；「周杰伦的歌」→ artist。
+        splitArtistSong(t)?.let { return it }
+
+        // 普通歌名：尾缀剥离带守卫，剥坏了就保留原串。
+        val original = t
+        val candidate = t.replace(Regex("""(?:的)?(?:歌曲|音乐|曲子|歌)$"""), "").trim()
+        if (candidate.endsWith('的') && candidate.length > 1) {
+            // 「播放周杰伦的」→ 歌手意图，而不是歌名「周杰伦的」。
+            return MusicRequest(kind = "artist", query = candidate.removeSuffix("的").trim())
+        }
+        val stripped = guardedStrip(original) {
+            it.replace(Regex("""(?:的)?(?:歌曲|音乐|曲子|歌)$"""), "")
+        }
+        if (MusicVocabulary.isGenericTarget(stripped) || stripped.isBlank()) {
+            return MusicRequest(kind = "none")
+        }
+        return MusicRequest(kind = "song", query = stripped.take(40))
     }
+
+    /**
+     * 歌手/歌名拆分上提到抽取层：「周杰伦的稻香」→ artist=周杰伦, song=稻香。
+     * 执行层不再自己 substringBefore/AfterLast('的') 猜。
+     */
+    private fun splitArtistSong(t: String): MusicRequest? {
+        val index = t.indexOf('的')
+        if (index <= 0) return null
+        val head = t.substring(0, index).trim()
+        val tail = t.substring(index + 1).trim()
+        if (head.length < 2 || tail.isEmpty()) return null
+        if (tail in ARTIST_TAIL_WORDS) {
+            return MusicRequest(kind = "artist", query = head)
+        }
+        val songPart = tail.replace(Regex("""(?:歌曲|音乐|曲子)$"""), "").trim()
+        if (songPart.length < 2) return null
+        return MusicRequest(kind = "song", query = songPart.take(40), artist = head)
+    }
+
+    /**
+     * [T-music-slot-semantics] 剥离守卫：白名单剥离可以，启发式截断不行。
+     * 剥完为空 / 只剩 1 个字 / 剩下的仍是流派词 → 认为破坏了实体，恢复原串。
+     */
+    private fun guardedStrip(original: String, transform: (String) -> String): String {
+        val stripped = transform(original).trim()
+        return when {
+            stripped.isBlank() -> original.trim()
+            stripped.length == 1 && original.trim().length > 1 -> original.trim()
+            MusicVocabulary.isGenreOrScene(stripped) -> original.trim()
+            else -> stripped
+        }
+    }
+
+    private data class MusicRequest(
+        val kind: String,
+        val query: String = "",
+        val artist: String = "",
+        val chart: String = "",
+    )
 
     private fun extractContacts(text: String, action: String, args: JSONObject) {
         val triggers = if (action == "search") {
@@ -407,11 +486,15 @@ class SlotExtractor(
         } else {
             listOf("打电话给", "拨打", "call", "给")
         }
-        val name = extractAfterTrigger(text, triggers)
+        val rawName = extractAfterTrigger(text, triggers)
             ?.trim()
             ?.trim('。', '.', ',', '，', '!', '！')
-            ?.replace(Regex("""(?:打电话|电话|call)$""", RegexOption.IGNORE_CASE), "")
-            ?.trim()
+        // [T-music-slot-semantics] 剥离守卫：别把联系人名截成一个字或截空。
+        val name = rawName?.let { value ->
+            guardedStrip(value) {
+                it.replace(Regex("""(?:打电话|电话|call)$""", RegexOption.IGNORE_CASE), "")
+            }
+        }
         if (!name.isNullOrBlank()) {
             args.put("name", name)
             args.put("query", name)
@@ -427,11 +510,16 @@ class SlotExtractor(
     }
 
     private fun extractApp(text: String, action: String, args: JSONObject) {
-        val app = extractAfterTrigger(
+        val rawApp = extractAfterTrigger(
             text,
             listOf("打开应用", "启动应用", "启动app", "打开app", "launch app", "打开", "启动", "launch"),
-        )?.replace(Regex("""^(?:应用|app)\s*""", RegexOption.IGNORE_CASE), "")
-            ?.trim()
+        )
+        // [T-music-slot-semantics] 「打开app」→ 原文为空：保留原串而不是截空。
+        val app = rawApp?.let { value ->
+            guardedStrip(value) {
+                it.replace(Regex("""^(?:应用|app)\s*""", RegexOption.IGNORE_CASE), "")
+            }
+        }
         if (!app.isNullOrBlank()) args.put("app", app)
         args.put("action", action)
     }
@@ -476,7 +564,8 @@ class SlotExtractor(
         t = t.replace(Regex("""^(?:一个|个|下|一下)\s*"""), "")
         t = t.replace(Regex("""^(?:a|an|the)\s+""", RegexOption.IGNORE_CASE), "")
         t = t.replace(Regex("""\s+(?:at|on|for)\s*$""", RegexOption.IGNORE_CASE), "")
-        t = t.replace(Regex("""(?:的)?(?:日程|事件)$"""), "")
+        // [T-music-slot-semantics] 尾缀剥离守卫：剥空/只剩一字就保留原串。
+        t = guardedStrip(t) { it.replace(Regex("""(?:的)?(?:日程|事件)$"""), "") }
         return t.trim().trim('，', ',', '。', '.', ':', '：').ifBlank { "日程" }.take(80)
     }
 
@@ -499,9 +588,13 @@ class SlotExtractor(
         var t = ChineseTimeParser.stripTimeExpressions(text)
         listOf("记得提醒我", "提醒我", "提醒一下", "到点提醒", "记得提醒", "remind me to", "remind me", "reminder")
             .forEach { t = t.replace(it, " ", ignoreCase = true) }
-        t = t.replace(Regex("""^(?:要|去|一下|我)\s*"""), "")
-        t = t.replace(Regex("""^in\s+""", RegexOption.IGNORE_CASE), "")
-        t = t.replace(Regex("""^to\s+""", RegexOption.IGNORE_CASE), "")
+        // [T-music-slot-semantics] 前缀剥离守卫：剥空/只剩一字就保留原串。
+        t = guardedStrip(t) { value ->
+            value
+                .replace(Regex("""^(?:要|去|一下|我)\s*"""), "")
+                .replace(Regex("""^in\s+""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""^to\s+""", RegexOption.IGNORE_CASE), "")
+        }
         return t.replace(Regex("""\s+"""), " ").trim()
             .trim('，', ',', '。', '.', ':', '：')
             .ifBlank { "提醒" }
@@ -719,6 +812,9 @@ class SlotExtractor(
 
     companion object {
         private val ISO = java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+        /** 「周杰伦的歌 / 歌曲 / 曲子 / 音乐」→ 歌手意图，不是歌名。 */
+        private val ARTIST_TAIL_WORDS = setOf("歌", "歌曲", "曲子", "音乐")
 
         /** Command prefixes stripped before looking for the `X到Y` span. */
         private val TRAIN_QUERY_PREFIXES = listOf(

@@ -7,8 +7,12 @@ package com.openminis.app.assistant.routing
  */
 object LocalCapabilityRegistry {
 
-    private fun slot(name: String, type: SlotType, required: Boolean = true) =
-        SlotSpec(name, type, required)
+    private fun slot(
+        name: String,
+        type: SlotType,
+        required: Boolean = true,
+        enumValues: List<String> = emptyList(),
+    ) = SlotSpec(name, type, required, enumValues)
 
     private fun action(
         name: String,
@@ -263,9 +267,24 @@ object LocalCapabilityRegistry {
                 // [T-music-player-top] `play` drives the in-app music player
                 // (NetEase catalogue on the buntu host). The query is
                 // optional: a blank query plays the public chart.
+                //
+                // [T-music-slot-semantics] kind 是语义维度，不能再把歌名 /
+                // 歌手 / 流派 / 场景 / 榜单压成同一个字符串。抽取层负责
+                // 判定；抽不出时 needsLlm 让它走已有的模型补齐路径。
                 "play" to action(
                     "play", false,
-                    slots = arrayOf(slot("query", SlotType.QUERY, required = false)),
+                    slots = arrayOf(
+                        slot(
+                            "kind", SlotType.ENUM,
+                            enumValues = listOf("song", "artist", "genre", "scene", "chart", "none"),
+                        ),
+                        slot("query", SlotType.QUERY, required = false),
+                        slot("artist", SlotType.QUERY, required = false),
+                        slot(
+                            "chart", SlotType.ENUM, required = false,
+                            enumValues = listOf("hot", "new", "rising", "recent", "daily", "liked"),
+                        ),
+                    ),
                 ),
                 "pause" to action("pause", false),
                 "resume" to action("resume", false),
@@ -275,6 +294,7 @@ object LocalCapabilityRegistry {
                 "status" to action("status", true),
                 "list" to action("list", true),
             ),
+            needsLlm = true,
         ),
         LocalCapability(
             "contacts", "Contacts",

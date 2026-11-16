@@ -21,6 +21,12 @@ data class MusicTrack(
     val coverUrl: String = "",
 )
 
+/** A searchable artist (`/search?type=100`). */
+data class MusicArtist(val id: Long, val name: String)
+
+/** A searchable playlist (`/search?type=1000`). */
+data class MusicPlaylist(val id: Long, val name: String, val trackCount: Int = 0)
+
 /** The logged-in NetEase account. */
 data class Profile(val userId: Long, val nickname: String)
 
@@ -88,13 +94,82 @@ class NeteaseMusicApi(
     @Volatile
     private var activeBase: String? = null
 
-    /** Search the catalogue. Returns an empty list when nothing matched. */
-    suspend fun search(keywords: String, limit: Int = 20): List<MusicTrack> {
+    /**
+     * Search the catalogue.
+     *
+     * [type] is the upstream NetEase search type: 1 songs, 100 artists,
+     * 1000 playlists. This method always returns tracks, so only type=1
+     * yields rows; the richer artist/playlist entities have their own
+     * wrappers ([searchArtists] / [searchPlaylists]) that keep the name
+     * and track count the reply needs.
+     */
+    suspend fun search(keywords: String, limit: Int = 20, type: Int = 1): List<MusicTrack> {
         val query = keywords.trim()
         if (query.isBlank()) return emptyList()
-        val json = get("/search", mapOf("keywords" to query, "limit" to limit.toString(), "type" to "1"))
-            ?: return emptyList()
+        val json = get(
+            "/search",
+            mapOf("keywords" to query, "limit" to limit.toString(), "type" to type.toString()),
+        ) ?: return emptyList()
         return parseTracks(json.optJSONObject("result")?.optJSONArray("songs"))
+    }
+
+    /** 歌手检索（`type=100`），返回命中歌手及其 id。 */
+    suspend fun searchArtists(keywords: String, limit: Int = 3): List<MusicArtist> {
+        val query = keywords.trim()
+        if (query.isBlank()) return emptyList()
+        val json = get("/search", mapOf("keywords" to query, "limit" to limit.toString(), "type" to "100"))
+            ?: return emptyList()
+        val artists = json.optJSONObject("result")?.optJSONArray("artists") ?: return emptyList()
+        return buildList {
+            for (i in 0 until artists.length()) {
+                val item = artists.optJSONObject(i) ?: continue
+                val id = item.optLong("id", 0L)
+                val name = item.optString("name").trim()
+                if (id > 0L && name.isNotBlank()) add(MusicArtist(id, name))
+            }
+        }
+    }
+
+    /**
+     * 歌单检索（`type=1000`）。流派/场景词（轻音乐、助眠…）走这里：
+     * 同名歌名在 type=1 里是噪声，type=1000 才有正确的落点。
+     */
+    suspend fun searchPlaylists(keywords: String, limit: Int = 5): List<MusicPlaylist> {
+        val query = keywords.trim()
+        if (query.isBlank()) return emptyList()
+        val json = get("/search", mapOf("keywords" to query, "limit" to limit.toString(), "type" to "1000"))
+            ?: return emptyList()
+        val playlists = json.optJSONObject("result")?.optJSONArray("playlists") ?: return emptyList()
+        return buildList {
+            for (i in 0 until playlists.length()) {
+                val item = playlists.optJSONObject(i) ?: continue
+                val id = item.optLong("id", 0L)
+                val name = item.optString("name").trim()
+                if (id > 0L && name.isNotBlank()) {
+                    add(MusicPlaylist(id, name, item.optInt("trackCount", 0)))
+                }
+            }
+        }
+    }
+
+    /** 歌单里的曲目；`/playlist/detail` 没给全时改走 `/playlist/track/all`。 */
+    suspend fun playlistTracks(playlistId: Long, limit: Int = 20): List<MusicTrack> {
+        val detail = get("/playlist/detail", mapOf("id" to playlistId.toString()))
+            ?: return emptyList()
+        val playlist = detail.optJSONObject("playlist") ?: return emptyList()
+        val direct = parseTracks(playlist.optJSONArray("tracks")).take(limit)
+        if (direct.isNotEmpty()) return direct
+        val all = get(
+            "/playlist/track/all",
+            mapOf("id" to playlistId.toString(), "limit" to limit.toString(), "offset" to "0"),
+        ) ?: return emptyList()
+        return parseTracks(all.optJSONArray("songs")).take(limit)
+    }
+
+    /** 歌手热门歌曲（`/artists` 的 `hotSongs`）。 */
+    suspend fun artistHotSongs(artistId: Long, limit: Int = 20): List<MusicTrack> {
+        val json = get("/artists", mapOf("id" to artistId.toString())) ?: return emptyList()
+        return parseTracks(json.optJSONArray("hotSongs")).take(limit)
     }
 
     /** The public chart - the "just play something" list. */

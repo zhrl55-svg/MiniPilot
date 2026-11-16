@@ -747,9 +747,12 @@ class LocalCapabilityExecutor(private val context: Context) {
         val music = com.openminis.app.media.music.MusicPlayerController.get(context)
         return when (action) {
             "play" -> {
+                val kind = args.optString("kind").trim()
                 val query = args.optString("query").trim()
-                val track = music.playQuery(query)
-                if (track == null) {
+                val artist = args.optString("artist").trim()
+                val chart = args.optString("chart").trim()
+                val played = music.playRequest(kind, query, artist, chart)
+                if (played == null) {
                     NativeOffloadResult(
                         1,
                         if (query.isBlank()) {
@@ -759,18 +762,23 @@ class LocalCapabilityExecutor(private val context: Context) {
                         },
                     )
                 } else {
-                    val artist = track.artist.takeIf { it.isNotBlank() }
+                    val track = played.track
+                    val trackArtist = track.artist.takeIf { it.isNotBlank() }
                     // The tool pill shows the song that is really playing -
                     // 「放一首周杰伦的稻香」 resolves to 稻香, not to the
                     // phrase the user typed.
                     args.put("tool_title", "$label: ${track.title}")
+                    val head = if (trackArtist != null) {
+                        "已播放：${track.title} — $trackArtist"
+                    } else {
+                        "已播放：${track.title}"
+                    }
+                    // [T-music-slot-semantics] 回显解析结果：这句话被理解成
+                    // 歌名/歌手/流派/场景/榜单的哪一种，误解 1 秒内可见。
+                    val understood = describeMusicResolution(played, artist)
                     NativeOffloadResult(
                         0,
-                        if (artist != null) {
-                            "已播放：${track.title} — $artist"
-                        } else {
-                            "已播放：${track.title}"
-                        },
+                        if (understood.isBlank()) head else "$head\n（理解为：$understood）",
                     )
                 }
             }
@@ -826,6 +834,40 @@ class LocalCapabilityExecutor(private val context: Context) {
                 null
             }
             else -> null
+        }
+    }
+
+    /**
+     * [T-music-slot-semantics] 把一次点歌的解析结果写成一句可回显的摘要。
+     * 用户应该一眼看出这句话被理解成了「歌名 / 歌手 / 流派 / 场景 / 榜单」。
+     */
+    private fun describeMusicResolution(
+        played: com.openminis.app.media.music.MusicPlayback,
+        requestedArtist: String,
+    ): String {
+        val list = played.contextLabel.takeIf { it.isNotBlank() }
+        val count = played.matchedCount.takeIf { it > 0 }
+        return when (played.kind) {
+            "genre", "scene" -> buildString {
+                append(if (played.kind == "genre") "流派=" else "场景=").append(played.query)
+                if (list != null && list.startsWith("歌单")) {
+                    append(" · 匹配").append(list)
+                    if (count != null) append(" · ").append(count).append(" 首")
+                } else if (list != null) {
+                    append(" · 未匹配到歌单，走").append(list)
+                }
+            }
+            "artist" -> buildString {
+                append("歌手=").append(played.query)
+                if (list != null) append(" · ").append(list)
+                if (count != null) append(" · ").append(count).append(" 首")
+            }
+            "chart" -> list?.let { "榜单=$it" }.orEmpty()
+            "none" -> list?.let { "未指定曲目 · 走$it" }.orEmpty()
+            else -> buildString {
+                append("歌名=").append(played.query)
+                if (requestedArtist.isNotBlank()) append(" · 歌手=").append(requestedArtist)
+            }
         }
     }
 

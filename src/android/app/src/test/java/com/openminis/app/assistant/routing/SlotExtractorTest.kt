@@ -172,4 +172,60 @@ class SlotExtractorTest {
         assertEquals("上证指数现在多少", stock.args.getString("query"))
         assertTrue(stock.missing.isEmpty())
     }
+
+    // ── [T-music-slot-semantics] 端侧点歌语义 ──────────────────────────
+    // 「轻音乐」是流派，不是可丢弃的尾缀；「music」是泛指，不是歌名。
+
+    @Test
+    fun `genre word is kept whole instead of becoming a one character song`() {
+        val out = extract("播放轻音乐", "life.music-play")
+        assertEquals("genre", out.args.getString("kind"))
+        assertEquals("轻音乐", out.args.getString("query"))
+        assertFalse(out.missing.contains("kind"))
+    }
+
+    @Test
+    fun `english generic music request goes to the chart`() {
+        val out = extract("play music", "life.music-play")
+        assertEquals("none", out.args.getString("kind"))
+        assertFalse(out.args.has("query"))
+    }
+
+    @Test
+    fun `artist and song are split in the extraction layer`() {
+        val out = extract("放一首周杰伦的稻香", "life.music-play")
+        assertEquals("song", out.args.getString("kind"))
+        assertEquals("稻香", out.args.getString("query"))
+        assertEquals("周杰伦", out.args.getString("artist"))
+    }
+
+    @Test
+    fun `bare song request has no specific target`() {
+        for (text in listOf("放首歌", "来首歌", "播放音乐", "play a song")) {
+            val out = extract(text, "life.music-play")
+            assertEquals("none", out.args.getString("kind"))
+            assertFalse("unexpected query for $text", out.args.has("query"))
+        }
+    }
+
+    @Test
+    fun `artist request is not searched as a song title`() {
+        val out = extract("播放周杰伦的歌", "life.music-play")
+        assertEquals("artist", out.args.getString("kind"))
+        assertEquals("周杰伦", out.args.getString("query"))
+    }
+
+    @Test
+    fun `scene variant keeps the genre word intact`() {
+        val out = extract("放轻音乐给我听", "life.music-play")
+        assertEquals("genre", out.args.getString("kind"))
+        assertEquals("轻音乐", out.args.getString("query"))
+    }
+
+    @Test
+    fun `chart words map to a chart parameter instead of a song search`() {
+        val out = extract("播放新歌", "life.music-play")
+        assertEquals("chart", out.args.getString("kind"))
+        assertEquals("new", out.args.getString("chart"))
+    }
 }

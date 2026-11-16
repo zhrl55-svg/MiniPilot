@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Locale
 
 /** How the queue moves on when a track ends. */
 enum class PlayMode { SEQUENCE, REPEAT_ALL, REPEAT_ONE }
@@ -48,6 +49,20 @@ data class MusicUiState(
     val progress: Float
         get() = if (durationMs > 0L) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
 }
+
+/**
+ * [T-music-slot-semantics] 一次点歌的解析结果。
+ *
+ * [kind] 来自抽取层（song/artist/genre/scene/chart/none），[contextLabel]
+ * 是实际命中的歌单/榜单/歌手，回复里用它回显「理解为」。
+ */
+data class MusicPlayback(
+    val track: MusicTrack,
+    val kind: String,
+    val query: String,
+    val contextLabel: String = "",
+    val matchedCount: Int = 0,
+)
 
 /**
  * 音乐播放器，逻辑移植自 pilot 的 `MusicPlayer`：
@@ -138,45 +153,159 @@ class MusicPlayerController private constructor(
     suspend fun playHot(): MusicTrack? = playChart(MusicChart.HOT)
 
     /**
-     * 搜索并播放。空查询/「热门」类关键词走榜单；「最近 / 每日推荐 /
-     * 我喜欢 / 新歌 / 飙升」走对应列表——和 pilot 的命令分词一致。
+     * [T-music-slot-semantics] 按抽取层给出的 kind 分派。
      *
-     * @return 实际开始播放的曲目；没有可播放内容时返回 null。
+     * kind 由 SlotExtractor 判定（song/artist/genre/scene/chart/none），
+     * 执行层只消费，不再用 contains("热门") 之类嗅探意图。返回的
+     * [MusicPlayback] 带着解析摘要，回复里直接回显「理解为」。
      */
-    suspend fun playQuery(query: String): MusicTrack? {
+    suspend fun playRequest(
+        kind: String,
+        query: String,
+        artist: String = "",
+        chart: String = "",
+    ): MusicPlayback? {
         val keyword = query.trim()
-        return when {
-            keyword.isBlank() || keyword.contains("热门") || keyword.contains("热歌") ->
-                playHot()
-            keyword.contains("最近") -> playRecent()
-            keyword.contains("每日推荐") || keyword == "推荐" -> playDaily()
-            keyword.contains("我喜欢") || keyword.contains("收藏") -> playLiked()
-            keyword.contains("新歌") -> playChart(MusicChart.NEW)
-            keyword.contains("飙升") -> playChart(MusicChart.RISING)
-            else -> playSearch(keyword)
+        return when (kind.trim().lowercase(Locale.ROOT)) {
+            "genre", "scene" -> playPlaylist(keyword, kind.trim().lowercase(Locale.ROOT))
+            "artist" -> playArtist(keyword)
+            "chart", "none" -> playChartNamed(chart, kind.trim().lowercase(Locale.ROOT), keyword)
+            "song" -> if (keyword.isBlank()) {
+                playChartNamed(chart, "none", keyword)
+            } else {
+                playSearchSong(keyword, artist.trim())
+            }
+            "" -> legacyPlay(keyword)
+            else -> if (keyword.isBlank()) {
+                playChartNamed(chart, "none", "")
+            } else {
+                playSearchSong(keyword, artist.trim())
+            }
         }
     }
 
-    /** 普通关键词：搜索前 20 首，从最佳匹配开始播。 */
-    private suspend fun playSearch(keyword: String): MusicTrack? {
-        // 「周杰伦的稻香」is a song called 稻香 by 周杰伦, not a song called
-        // 周杰伦的稻香. Search the whole phrase AND the part after 的, then
-        // pick the hit that matches the title and the artist best.
-        val head = keyword.substringBefore('的').trim()
-            .takeIf { it.isNotBlank() && it != keyword }
-        val tail = keyword.substringAfterLast('的').trim()
-            .takeIf { it.isNotBlank() && it != keyword }
+    /**
+     * 旧入口，保留给还没有 kind 的调用方。kind 缺省时按旧词表推断；
+     * 助理路径现在总是带 kind，不会再走到字符串嗅探。
+     */
+    suspend fun playQuery(query: String): MusicTrack? = playRequest("", query)?.track
+
+    private suspend fun legacyPlay(keyword: String): MusicPlayback? {
+        if (keyword.isBlank()) return playChartNamed("", "none", "")
+        return when {
+            keyword.contains("热门") || keyword.contains("热歌") ->
+                playChartNamed("hot", "chart", keyword)
+            keyword.contains("最近") -> playChartNamed("recent", "chart", keyword)
+            keyword.contains("每日推荐") || keyword == "推荐" ->
+                playChartNamed("daily", "chart", keyword)
+            keyword.contains("我喜欢") || keyword.contains("收藏") ->
+                playChartNamed("liked", "chart", keyword)
+            keyword.contains("新歌") -> playChartNamed("new", "chart", keyword)
+            keyword.contains("飙升") -> playChartNamed("rising", "chart", keyword)
+            else -> playSearchSong(keyword, "")
+        }
+    }
+
+    /**
+     * 流派/场景 → `type=1000` 歌单，取第一个有曲目的结果。
+     * 歌单检索失败时不拿流派词去搜歌名（那正是歌名《轻》的来路），
+     * 直接退回热歌榜。
+     */
+    private suspend fun playPlaylist(keyword: String, kind: String): MusicPlayback? {
+        if (keyword.isBlank()) return playChartNamed("", kind, keyword)
+        val playlists = runCatching { api.searchPlaylists(keyword, PLAYLIST_SEARCH_LIMIT) }
+            .getOrDefault(emptyList())
+        val playlist = playlists.firstOrNull { it.trackCount > 0 } ?: playlists.firstOrNull()
+        if (playlist != null) {
+            val tracks = runCatching { api.playlistTracks(playlist.id, PLAYLIST_LIMIT) }
+                .getOrDefault(emptyList())
+            if (tracks.isNotEmpty()) {
+                MusicHistoryStore.remember(appContext, tracks)
+                val track = startQueue(tracks, 0)
+                if (track != null) {
+                    return MusicPlayback(
+                        track = track,
+                        kind = kind,
+                        query = keyword,
+                        contextLabel = "歌单《${playlist.name}》",
+                        matchedCount = playlist.trackCount.takeIf { it > 0 } ?: tracks.size,
+                    )
+                }
+            }
+        }
+        return playChartNamed("", kind, keyword)
+    }
+
+    /** 歌手 → `type=100` 找到 artist id，再取热门歌曲。 */
+    private suspend fun playArtist(name: String): MusicPlayback? {
+        if (name.isBlank()) return playChartNamed("", "none", "")
+        val artist = runCatching { api.searchArtists(name, 1) }
+            .getOrDefault(emptyList())
+            .firstOrNull()
+        if (artist != null) {
+            val tracks = runCatching { api.artistHotSongs(artist.id, PLAYLIST_LIMIT) }
+                .getOrDefault(emptyList())
+            if (tracks.isNotEmpty()) {
+                MusicHistoryStore.remember(appContext, tracks)
+                val track = startQueue(tracks, 0)
+                if (track != null) {
+                    return MusicPlayback(
+                        track = track,
+                        kind = "artist",
+                        query = name,
+                        contextLabel = "热门歌曲",
+                        matchedCount = tracks.size,
+                    )
+                }
+            }
+        }
+        return playSearchSong(name, "")
+    }
+
+    /** 榜单 / 固定列表。chart 为空时走热歌榜。 */
+    private suspend fun playChartNamed(chart: String, kind: String, query: String): MusicPlayback? {
+        val resolved = chart.trim().lowercase(Locale.ROOT)
+        val primary: Pair<MusicTrack?, String> = when (resolved) {
+            "new" -> playChart(MusicChart.NEW) to MusicChart.NEW.label
+            "rising" -> playChart(MusicChart.RISING) to MusicChart.RISING.label
+            "recent" -> playRecent() to "最近播放"
+            "daily" -> playDaily() to "每日推荐"
+            "liked" -> playLiked() to "我喜欢的音乐"
+            else -> playHot() to MusicChart.HOT.label
+        }
+        val started = if (primary.first == null && resolved in FALLBACK_CHARTS) {
+            // 未登录时每日推荐 / 我喜欢为空：退回热歌榜，并如实说明。
+            playHot() to MusicChart.HOT.label
+        } else {
+            primary
+        }
+        val track = started.first ?: return null
+        return MusicPlayback(
+            track = track,
+            kind = kind.ifBlank { "none" },
+            query = query,
+            contextLabel = started.second,
+            matchedCount = _state.value.queue.size,
+        )
+    }
+
+    /** 歌名检索：query 是歌名，artist 是抽取层拆出的歌手（可空）。 */
+    private suspend fun playSearchSong(keyword: String, artist: String): MusicPlayback? {
+        val queries = buildList {
+            add(keyword)
+            if (artist.isNotBlank()) add("$artist $keyword")
+        }
         val candidates = mutableListOf<List<MusicTrack>>()
-        candidates += runCatching { api.search(keyword, PLAYLIST_LIMIT) }.getOrDefault(emptyList())
-        if (tail != null && tail != keyword) {
-            candidates += runCatching { api.search(tail, PLAYLIST_LIMIT) }.getOrDefault(emptyList())
+        for (query in queries) {
+            candidates += runCatching { api.search(query, PLAYLIST_LIMIT, type = 1) }
+                .getOrDefault(emptyList())
         }
         var best: MusicTrack? = null
         var bestScore = Int.MIN_VALUE
         var bestQueue: List<MusicTrack> = emptyList()
         for (list in candidates) {
             for (track in list) {
-                val score = score(track, keyword, head, tail)
+                val score = score(track, keyword, artist)
                 if (score > bestScore) {
                     bestScore = score
                     best = track
@@ -191,7 +320,14 @@ class MusicPlayerController private constructor(
         }
         MusicHistoryStore.remember(appContext, bestQueue)
         val index = bestQueue.indexOfFirst { it.id == chosen.id }.coerceAtLeast(0)
-        return startQueue(bestQueue, index)
+        val track = startQueue(bestQueue, index) ?: return null
+        return MusicPlayback(
+            track = track,
+            kind = "song",
+            query = keyword,
+            contextLabel = if (artist.isNotBlank()) "歌手 $artist" else "",
+            matchedCount = bestQueue.size,
+        )
     }
 
     /** 开始一个列表（推荐下拉 / 榜单 / 搜索都用它）。 */
@@ -226,6 +362,10 @@ class MusicPlayerController private constructor(
                 if (_state.value.hasTrack) startCurrent() else return@launch
                 return@launch
             }
+            // An explicit play/pause is the user speaking over the automatic
+            // capture pause, so it must win: otherwise a "暂停播放" command
+            // during a voice turn would be resumed when the turn ends.
+            suspendedForCapture = false
             if (exo.isPlaying) {
                 exo.pause()
                 _state.update { it.copy(isPlaying = false) }
@@ -238,6 +378,7 @@ class MusicPlayerController private constructor(
 
     fun pause() {
         scope.launch {
+            suspendedForCapture = false
             player?.pause()
             _state.update { it.copy(isPlaying = false) }
         }
@@ -245,6 +386,7 @@ class MusicPlayerController private constructor(
 
     fun resume() {
         scope.launch {
+            suspendedForCapture = false
             if (_state.value.track == null) return@launch
             val exo = player
             if (exo == null) {
@@ -315,6 +457,7 @@ class MusicPlayerController private constructor(
     /** Stop and clear the queue - the top bar disappears with it. */
     fun stop() {
         scope.launch {
+            suspendedForCapture = false
             releasePlayer()
             lyrics = emptyList()
             history.clear()
@@ -394,6 +537,9 @@ class MusicPlayerController private constructor(
                 result?.complete(null)
                 return@launch
             }
+            // A new track is an explicit request ("播放…"/"下一首"); it must
+            // not be rewound into the capture bookkeeping of the previous one.
+            suspendedForCapture = false
             consecutiveErrors = 0
             lyrics = emptyList()
             _state.update {
@@ -569,32 +715,29 @@ class MusicPlayerController private constructor(
     }
 
     /**
-     * How well a search hit answers the request.
-     *
-     * The title has to match the song part of the phrase, and the artist has
-     * to match the artist part - that is what separates the original from
-     * the dozens of covers with the same title.
+     * How well a search hit answers the request: the title has to match the
+     * song part, and the artist (when the extractor split one out) has to
+     * match the artist part - that is what separates the original from the
+     * dozens of covers with the same title.
      */
-    private fun score(track: MusicTrack, keyword: String, head: String?, tail: String?): Int {
+    private fun score(track: MusicTrack, keyword: String, artist: String): Int {
         var score = 0
         val title = track.title.trim()
-        val artist = track.artist.trim()
-        if (title == keyword) {
+        val trackArtist = track.artist.trim()
+        if (title.equals(keyword, ignoreCase = true)) {
             score += 6
-        } else if (title.contains(keyword)) {
+        } else if (title.contains(keyword, ignoreCase = true)) {
             score += 3
+        } else if (keyword.contains(title, ignoreCase = true)) {
+            score += 1
         }
-        if (tail != null) {
-            when {
-                title == tail -> score += 5
-                title.contains(tail) -> score += 2
-                tail.contains(title) -> score += 1
+        if (artist.isNotBlank()) {
+            if (trackArtist.contains(artist, ignoreCase = true)) {
+                score += 4
+            } else if (title.equals(keyword, ignoreCase = true)) {
+                // Same title, different artist: probably a cover.
+                score -= 1
             }
-        }
-        if (head != null) {
-            if (artist.contains(head)) score += 3
-            // Same title, different artist: probably a cover.
-            else if (tail != null && title == tail) score -= 1
         }
         return score
     }
@@ -604,6 +747,10 @@ class MusicPlayerController private constructor(
 
         private const val TICK_MS = 400L
         private const val PLAYLIST_LIMIT = 20
+        private const val PLAYLIST_SEARCH_LIMIT = 5
+
+        /** 这些固定列表在未登录时可能为空，空了就退回热歌榜。 */
+        private val FALLBACK_CHARTS = setOf("recent", "daily", "liked")
 
         /** Volume while the assistant is speaking over the song. */
         private const val DUCK_VOLUME = 0.18f
