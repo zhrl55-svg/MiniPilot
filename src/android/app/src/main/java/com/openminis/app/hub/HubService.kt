@@ -135,7 +135,7 @@ class HubService : Service() {
             Hub.Status.OFFLINE -> "未启用"
         }
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Minis 远程")
+            .setContentTitle("MiniPilot 远程")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_sys_upload_done)
             .setOngoing(true)
@@ -150,7 +150,7 @@ class HubService : Service() {
         if (manager.getNotificationChannel(CHANNEL_ID) != null) return
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Minis 远程",
+            "MiniPilot 远程",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
             description = "手机与同一账号下电脑之间的远程通道状态"

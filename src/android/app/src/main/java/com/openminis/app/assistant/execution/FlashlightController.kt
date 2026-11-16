@@ -134,7 +134,7 @@ class FlashlightController private constructor(private val context: Context) {
 
     private fun permissionDenied() = TorchResult(
         false,
-        "没有相机权限，无法控制手电筒。请在系统设置里授予 Minis 相机权限后重试。",
+        "没有相机权限，无法控制手电筒。请在系统设置里授予 MiniPilot 相机权限后重试。",
     )
 
     companion object {

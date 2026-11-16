@@ -97,7 +97,7 @@ Use --compact to emit on a single line; --quiet to strip the envelope.
 Actions return `changed` (a visible UI change was observed within ~1s),
 `settleMs`, and the resolved `target`. Pass --no-verify to skip that wait.
 
-First-run: enable "Minis" under Settings → Accessibility, then `service ping`.
+First-run: enable "MiniPilot" under Settings → Accessibility, then `service ping`.
 """
         private const val SERVICE_HELP = "service status | ping\n"
         private const val UI_HELP = """ui dump | find | info | node | screenshot
@@ -206,12 +206,12 @@ Action groups (tap/input/scroll/gesture/dialog) return `changed` and
                         "Android is blocking the accessibility toggle for this install " +
                             "(\"Restricted setting\" — applies to apps installed from a " +
                             "downloaded APK). Allow it via App info → ⋮ → Allow restricted " +
-                            "settings, then enable Minis under Settings → Accessibility. " +
+                            "settings, then enable MiniPilot under Settings → Accessibility. " +
                             "Settings → Permissions → System Permissions has a one-tap fix " +
                             "when Shizuku is available."
                     } else {
                         "Accessibility permission was revoked (this happens after a force-stop). " +
-                            "Re-enable Minis under Settings → Accessibility, or use Settings → " +
+                            "Re-enable MiniPilot under Settings → Accessibility, or use Settings → " +
                             "Permissions → Integrations to repair it with Shizuku."
                     },
                     exit = 77,
@@ -261,7 +261,7 @@ Action groups (tap/input/scroll/gesture/dialog) return `changed` and
             }
         } catch (e: NotRunning) {
             err(args, "SERVICE_NOT_RUNNING",
-                e.message ?: "Accessibility service is not running. Enable Minis under Settings → Accessibility.",
+                e.message ?: "Accessibility service is not running. Enable MiniPilot under Settings → Accessibility.",
                 exit = 77)
         } catch (e: Throwable) {
             AppLogger.warning(TAG, "uncaught: ${e.javaClass.simpleName} ${e.message}")
@@ -304,7 +304,7 @@ Action groups (tap/input/scroll/gesture/dialog) return `changed` and
                             "Allow it via App info → ⋮ → Allow restricted settings first.\n",
                     )
                 else
-                    NativeOffloadResult(77, "✗ Accessibility service is not running — go to Settings → Accessibility → Minis to enable\n")
+                    NativeOffloadResult(77, "✗ Accessibility service is not running — go to Settings → Accessibility → MiniPilot to enable\n")
             }
             else -> NativeOffloadResult(2, "$TOOL service: unknown action\n$SERVICE_HELP")
         }
@@ -1620,7 +1620,7 @@ Action groups (tap/input/scroll/gesture/dialog) return `changed` and
 
     private fun svcOrThrow(): MinisAccessibilityService =
         MinisAccessibilityService.getInstance()
-            ?: throw NotRunning("Accessibility service is not running. Enable Minis under Settings → Accessibility.")
+            ?: throw NotRunning("Accessibility service is not running. Enable MiniPilot under Settings → Accessibility.")
 
     private fun ok(args: OffloadArgs, data: Any): NativeOffloadResult {
         val body = JSONObject().put("ok", true).put("data", data).toString()

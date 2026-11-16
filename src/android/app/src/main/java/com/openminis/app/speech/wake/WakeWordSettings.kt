@@ -33,7 +33,7 @@ object WakeWordSettings {
     /**
      * Four syllables, all present in the bundled KWS model's token table.
      *
-     * "Minis" itself cannot be used: the model is a Chinese pinyin KWS model,
+     * "MiniPilot" itself cannot be used: the model is a Chinese pinyin KWS model,
      * and ICU's Han-Latin transliterator leaves Latin text untouched, which
      * produces tokens the model has never seen. A Chinese name keeps the
      * dynamic pinyin path (and the built-in fallback) valid.

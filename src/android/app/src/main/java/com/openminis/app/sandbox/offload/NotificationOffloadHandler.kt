@@ -136,7 +136,7 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
                         OffloadPermissionManager.SettingsGateRequest(
                             id = Manifest.permission.POST_NOTIFICATIONS,
                             title = "Notifications are off",
-                            message = "Minis needs notification permission to send notifications. Open Settings to allow it.",
+                            message = "MiniPilot needs notification permission to send notifications. Open Settings to allow it.",
                             settingsAction = Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                             requiresPackageUri = true,
                             positiveLabel = "Open Settings",
@@ -221,7 +221,7 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
         }
         AppLogger.info(TAG, "send (immediate): id=$id title='$title'")
         val oemHint = if (OsCompat.isHuawei || OsCompat.isXiaomi) {
-            "On ${OsCompat.oemLabel()}, banner notifications may be disabled by default — the user can enable them in Settings → Notifications for Minis."
+            "On ${OsCompat.oemLabel()}, banner notifications may be disabled by default — the user can enable them in Settings → Notifications for MiniPilot."
         } else null
         val data = JSONObject()
             .put("id", id)
@@ -502,7 +502,7 @@ class NotificationOffloadHandler(private val context: Context) : NativeOffloadHa
                     OffloadPermissionManager.SettingsGateRequest(
                         id = "notification_access",
                         title = "Notification access needed",
-                        message = "Minis needs Notification access to read the status-bar notifications. Open Settings and enable \"Minis\" under Notification access.",
+                        message = "MiniPilot needs Notification access to read the status-bar notifications. Open Settings and enable \"MiniPilot\" under Notification access.",
                         settingsAction = MinisNotificationListenerService.SETTINGS_ACTION,
                         requiresPackageUri = false,
                         positiveLabel = "Open Settings",

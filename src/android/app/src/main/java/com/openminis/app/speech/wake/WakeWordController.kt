@@ -119,7 +119,7 @@ object WakeWordController {
         VoiceWakeState.update(
             context,
             VoiceWakePhase.ERROR,
-            "后台录音服务未运行，打开 Minis 后会自动恢复",
+            "后台录音服务未运行，打开 MiniPilot 后会自动恢复",
         )
     }
 }

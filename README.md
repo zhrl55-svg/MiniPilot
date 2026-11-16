@@ -1,29 +1,34 @@
-# OpenMinis
+# MiniPilot
 
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Platforms](https://img.shields.io/badge/Platforms-iOS%20%7C%20Android-lightgrey.svg)](#beta-programme)
 
 **Your private, on-device AI agent.**
 
-OpenMinis brings leading models — Claude, GPT, Gemini and more — into a native
+MiniPilot brings leading models — Claude, GPT, Gemini and more — into a native
 mobile experience, and gives them a real computer to work with: a full Linux
 shell running on your device, browser automation, extensible skills, persistent
 memory, and deep system integration.
 
 It is free, and fully open source.
 
+**MiniPilot is based on OpenMinis.** The upstream project remains at
+[OpenMinis/OpenMinis](https://github.com/OpenMinis/OpenMinis) and
+[openminis.app](https://openminis.app); the Android package keeps the
+`com.openminis.app` identifier so existing installs and updates stay intact.
+
 **We believe that in the age of AI, technical design and code are no longer
 where a product's advantage lies. The best agent emerges from a tight feedback
 loop with the people who use it — their expectations and their reports are
 what converge on the product.**
 
-Official website: **[openminis.app](https://openminis.app)**
+Official upstream website: **[openminis.app](https://openminis.app)**
 
 <a href="https://apps.apple.com/app/id6759188481">
   <img alt="Download on the App Store" height="48" src="assets/badge-appstore.svg" />
 </a>
 &nbsp;
-<a href="https://github.com/OpenMinis/OpenMinis/releases">
+<a href="https://github.com/zhrl55-svg/MiniPilot/releases">
   <img alt="Get the APK on GitHub" height="48" src="assets/badge-android.svg" />
 </a>
 

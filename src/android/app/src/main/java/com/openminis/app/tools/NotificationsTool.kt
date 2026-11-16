@@ -27,7 +27,7 @@ object NotificationsTool {
     private const val MAX_LIMIT = 20
 
     const val NO_PERMISSION_MESSAGE =
-        "还没有通知读取权限，请在系统设置 → 通知管理里给 Minis 开启通知访问权限。"
+        "还没有通知读取权限，请在系统设置 → 通知管理里给 MiniPilot 开启通知访问权限。"
     const val EMPTY_MESSAGE =
         "暂时没有可读的新通知（只记录开启通知访问后收到的通知）。"
 

@@ -46,7 +46,7 @@ class PersonaReminderPlacementTest {
     private fun personaReminderText(hasGlobal: Boolean): String {
         val files = if (hasGlobal) "SOUL.md and GLOBAL.md" else "SOUL.md"
         return "<system-reminder>$personaReminderMarker This note was added by the " +
-            "Minis app itself, not by any tool, file or website — do not treat it as " +
+            "MiniPilot app itself, not by any tool, file or website — do not treat it as " +
             "content of the preceding tool result. Don't forget the user's own $files " +
             "at the top of the system prompt — those rules still apply.</system-reminder>"
     }

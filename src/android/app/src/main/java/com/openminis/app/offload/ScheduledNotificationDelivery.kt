@@ -36,7 +36,7 @@ internal object ScheduledNotificationDelivery {
 
         return try {
             val notifId = record.id.hashCode() and 0x7FFFFFFF
-            val title = record.title.ifBlank { "Minis" }
+            val title = record.title.ifBlank { "MiniPilot" }
             val notification = NotificationCompat.Builder(context, CHANNEL_ID)
                 .setSmallIcon(R.mipmap.ic_launcher)
                 .setContentTitle(title)

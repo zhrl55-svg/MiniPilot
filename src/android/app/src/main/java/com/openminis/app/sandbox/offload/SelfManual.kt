@@ -16,7 +16,7 @@ internal object SelfManual {
             "\n" +
             "Generated from the live registries at call time. Prefer it over re-discovery\n" +
             "(minis-config topic-help, source scans, filesystem searches) when the question\n" +
-            "is about Minis itself.\n" +
+            "is about MiniPilot itself.\n" +
             "\n" +
             "USAGE:\n" +
             "  minis-self <subcommand> [args]\n" +

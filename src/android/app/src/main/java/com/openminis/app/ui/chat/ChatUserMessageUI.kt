@@ -925,7 +925,7 @@ private fun ImageGalleryDialog(
     }
 }
 
-// ─── Assistant Message (left-aligned, no bubble, with "Minis" header like iOS) ─
+// ─── Assistant Message (left-aligned, no bubble, with "MiniPilot" header like iOS) ─
 
 // ─── Flattened chat items ────────────────────────────────────────────────────
 // Each message is expanded into a sequence of independent LazyColumn items (header,

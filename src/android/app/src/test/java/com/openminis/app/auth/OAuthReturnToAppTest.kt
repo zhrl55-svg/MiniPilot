@@ -48,8 +48,8 @@ class OAuthReturnToAppTest {
         assertEquals("intent://oauth/return#Intent;scheme=minis;package=com.openminis.app;end", url)
         val page = OAuthCallbackServer.successPage("com.openminis.app")
         assertTrue(page.contains("href=\"$url\""))
-        assertTrue(page.contains(">Return to Minis</a>"))
-        assertTrue(page.contains("Return to Minis to finish signing in."))
+        assertTrue(page.contains(">Return to MiniPilot</a>"))
+        assertTrue(page.contains("Return to MiniPilot to finish signing in."))
         assertTrue("Content-Length is String.length", page.all { it.code < 128 })
         assertFalse("no auto-redirect", page.contains("location.href") || page.contains("http-equiv=\"refresh\""))
         // The deep link lands on nothing: minis://oauth is not a route.
@@ -58,7 +58,7 @@ class OAuthReturnToAppTest {
 
     @Test
     fun `the redirect activity brings MainActivity forward like AppAuth, after any forward, before finish`() {
-        val src = ProductionSources.read("auth/OAuthRedirectActivity.kt")
+        val src = ProductionSources.read("auth/OAuthRedirectActivity.kt").replace("\r\n", "\n")
         val onCreate = src.substringAfter("override fun onCreate(").substringBefore("private fun forwardIfNeeded(")
         val bring = onCreate.indexOf("bringAppForward()\n        finish()")
         assertTrue(onCreate.indexOf("if (uri != null) forwardIfNeeded(uri)") in 0 until bring)

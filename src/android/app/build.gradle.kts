@@ -37,8 +37,8 @@ android {
         applicationId = "com.openminis.app"
         minSdk = 26
         targetSdk = 35
-        versionCode = 47
-        versionName = "1.18"
+        versionCode = 49
+        versionName = "1.20"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -64,7 +64,7 @@ android {
         // prerelease flag and cut a tag at its first '-') see them as version
         // 0 and never offer them. UPDATE_CHANNEL is the channel a fresh
         // install starts on; the user can switch to beta in About.
-        buildConfigField("String", "RELEASE_REPO", "\"OpenMinis/OpenMinis\"")
+        buildConfigField("String", "RELEASE_REPO", "\"zhrl55-svg/MiniPilot\"")
         buildConfigField("String", "UPDATE_CHANNEL", "\"stable\"")
 
         ndk {
@@ -115,8 +115,9 @@ android {
             matchingFallbacks += listOf("debug")
             buildConfigField("boolean", "DEV_TOOLS", "true")
             // Fork channel: this variant is the only one the fork serves, so it
-            // checks the fork's own releases instead of upstream's. The release
-            // variant keeps pointing at OpenMinis/OpenMinis.
+            // checks the fork's own releases. The default RELEASE_REPO above
+            // already points at MiniPilot; keep this explicit override so the
+            // perf variant cannot drift if the default changes again.
             buildConfigField("String", "RELEASE_REPO", "\"zhrl55-svg/MiniPilot\"")
             signingConfig = signingConfigs.getByName("debug")
         }
