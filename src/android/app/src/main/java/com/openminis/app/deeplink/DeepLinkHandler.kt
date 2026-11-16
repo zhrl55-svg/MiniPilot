@@ -206,6 +206,9 @@ object DeepLinkHandler {
                 else DeepLinkAction.OpenSettingsScreen(Routes.MODEL_GROUPS)
             "default-models", "default_models", "model-defaults", "model_defaults" ->
                 DeepLinkAction.OpenSettingsScreen(Routes.MODEL_DEFAULTS)
+            // [T-android-voice-synthesis-settings]
+            "speech-synthesis", "speech_synthesis", "voice-synthesis", "voice_synthesis", "tts" ->
+                DeepLinkAction.OpenSettingsScreen(Routes.VOICE_SYNTHESIS)
             "runtime-models", "runtime_models", "agent-loop-models", "agent_loop_models" ->
                 DeepLinkAction.OpenSettingsScreen(Routes.RUNTIME_MODELS)
             "assistant-settings", "assistant_settings", "agent-runtime", "agent_runtime" ->

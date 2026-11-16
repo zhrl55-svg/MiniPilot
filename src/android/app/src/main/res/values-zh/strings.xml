@@ -162,6 +162,9 @@
     <string name="settings_model_groups_subtitle">用于回退或负载均衡的有序模型路线</string>
     <string name="settings_default_models">默认模型</string>
     <string name="settings_default_models_subtitle">主对话、子任务、语音与视觉</string>
+    <!-- [T-android-voice-synthesis-settings] 系统语音与云端 TTS 模型 -->
+    <string name="settings_voice_synthesis">语音合成</string>
+    <string name="settings_voice_synthesis_current">当前：%1$s</string>
     <string name="settings_agent_runtime_subtitle">工具、技能、记忆、MCP 与运行时模型</string>
     <string name="settings_context_entry_subtitle">时间、电量、位置、通知、屏幕文本</string>
     <string name="settings_section_general">通用</string>
@@ -1315,6 +1318,25 @@
     <string name="model_defaults_sub_desc">标题、摘要等轻量工作；未指定时继承主对话。</string>
     <string name="model_defaults_voice_input_desc">语音输入的转写。</string>
     <string name="model_defaults_voice_output_desc">语音回复的合成。</string>
+    <!-- [T-android-voice-synthesis-settings] 设置 › 语音合成 页面 -->
+    <string name="voice_synthesis_title">语音合成</string>
+    <string name="voice_synthesis_intro">选择朗读回复和选中内容时使用的声音。系统语音在本机运行；云端模型使用已配置的语音供应商。</string>
+    <string name="voice_synthesis_follow_group_header">默认模型组</string>
+    <string name="voice_synthesis_follow_group">跟随「%1$s」</string>
+    <string name="voice_synthesis_follow_group_desc">按「设置 › 默认模型 › 语音输出」中绑定的模型组选择。</string>
+    <string name="voice_synthesis_system_header">系统语音</string>
+    <string name="voice_synthesis_system_footer">使用手机内置的文字转语音引擎，可离线使用。</string>
+    <string name="voice_synthesis_system_label">系统语音</string>
+    <string name="voice_synthesis_auto">自动（跟随文本语言）</string>
+    <string name="voice_synthesis_loading">正在读取系统音色…</string>
+    <string name="voice_synthesis_system_empty">未检测到系统语音引擎</string>
+    <string name="voice_synthesis_system_empty_desc">请在系统设置中安装或启用文字转语音服务。</string>
+    <string name="voice_synthesis_open_system_settings">打开系统文字转语音设置</string>
+    <string name="voice_synthesis_cloud_header">云端模型</string>
+    <string name="voice_synthesis_cloud_footer">云端合成需要联网，并按供应商计费。</string>
+    <string name="voice_synthesis_cloud_empty">还没有可用于语音合成的模型</string>
+    <string name="voice_synthesis_cloud_empty_desc">在「管理提供商」中添加 MiniMax 等语音供应商。</string>
+    <string name="voice_synthesis_add_provider">添加语音供应商</string>
     <string name="model_defaults_vision_desc">主模型无法看图时，由该组读图。</string>
     <string name="model_group_routing_fallback_desc">按顺序尝试模型，一个失败就换下一个。</string>
     <string name="model_group_routing_load_balance_desc">把会话分散到组内各模型。</string>

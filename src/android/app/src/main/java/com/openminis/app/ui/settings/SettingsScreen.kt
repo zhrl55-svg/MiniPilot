@@ -53,6 +53,7 @@ import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.Groups
 import androidx.compose.material.icons.outlined.Handyman
 import androidx.compose.material.icons.outlined.Psychology
+import androidx.compose.material.icons.outlined.RecordVoiceOver
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
@@ -69,6 +70,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -85,17 +87,23 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.openminis.app.BuildConfig
 import com.openminis.app.R
+import com.openminis.app.data.repository.ProviderRepository
+import com.openminis.app.speech.VoiceOutputState
 import com.openminis.app.ui.components.openExternalUrl
 import com.openminis.app.i18n.uppercaseForDisplay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
+    /** [T-android-voice-synthesis-settings] Summary source for the voice row. */
+    providerRepository: ProviderRepository,
     onBack: () -> Unit,
     onProvidersClick: () -> Unit,
     onModelGroupsClick: () -> Unit,
     /** Settings › Default Models: bind a group to each role. */
     onDefaultModelsClick: () -> Unit = {},
+    /** [T-android-voice-synthesis-settings] System voice or cloud TTS model. */
+    onVoiceSynthesisClick: () -> Unit = {},
     onUsageClick: () -> Unit = {},
     /** Settings › Agent Runtime: tools, skills, memory, MCP, runtime models. */
     onAgentRuntimeClick: () -> Unit = {},
@@ -125,6 +133,25 @@ fun SettingsScreen(
     var showMusicSheet by remember { mutableStateOf(false) }
     // [T-android-brave-web-search] Brave Search API key entry.
     var showWebSearchSheet by remember { mutableStateOf(false) }
+
+    // [T-android-voice-synthesis-settings] The row states what will actually
+    // speak next, so "currently MiniMax" is visible without opening the page.
+    // config is collected (not read once) so the summary follows an override
+    // picked on the child screen as soon as the user comes back.
+    val providerConfig by providerRepository.config.collectAsState()
+    val systemVoiceLabel by VoiceOutputState.systemVoiceLabel.collectAsState()
+    LaunchedEffect(Unit) { VoiceOutputState.init(context) }
+    val voiceChoice = remember(providerConfig) {
+        providerRepository.resolveVoiceOutputChoice()
+    }
+    val cloudVoiceLabel = voiceSynthesisSummary(voiceChoice.entry)
+    val systemVoiceText = stringResource(R.string.voice_synthesis_system_label)
+    val voiceSubtitle = if (cloudVoiceLabel != null) {
+        stringResource(R.string.settings_voice_synthesis_current, cloudVoiceLabel)
+    } else {
+        val label = listOfNotNull(systemVoiceText, systemVoiceLabel).joinToString(" · ")
+        stringResource(R.string.settings_voice_synthesis_current, label)
+    }
     Scaffold(
         topBar = {
             TopAppBar(
@@ -148,12 +175,13 @@ fun SettingsScreen(
         ) {
             // -- AI & Assistant --
             //
-            // The three rows that define model behaviour read in dependency
-            // order: a provider supplies models, a group is an ordered route
-            // over models from any provider, and Default Models binds a group
-            // to each role. The Agent Runtime hub holds the nine capability
-            // rows that used to be top-level; they configure one subsystem,
-            // not nine separate choices.
+            // The model rows read in dependency order: a provider supplies
+            // models, a group is an ordered route over models from any
+            // provider, Default Models binds a group to each role, and Speech
+            // Synthesis picks the voice that actually speaks replies. The
+            // Agent Runtime hub holds the nine capability rows that used to be
+            // top-level; they configure one subsystem, not nine separate
+            // choices.
             SettingsSection(
                 title = stringResource(R.string.settings_section_ai_assistant),
                 footer = stringResource(R.string.settings_section_llm_providers_footer),
@@ -178,6 +206,17 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_default_models),
                     subtitle = stringResource(R.string.settings_default_models_subtitle),
                     onClick = onDefaultModelsClick,
+                )
+                // [T-android-voice-synthesis-settings] Which voice speaks
+                // replies: the on-device engine (with a specific voice) or a
+                // cloud TTS model such as MiniMax. Sits right after Default
+                // Models because it is the direct form of that role binding.
+                SettingsItem(
+                    icon = Icons.Outlined.RecordVoiceOver,
+                    iconColor = Color(0xFFAF52DE),
+                    title = stringResource(R.string.settings_voice_synthesis),
+                    subtitle = voiceSubtitle,
+                    onClick = onVoiceSynthesisClick,
                 )
                 SettingsItem(
                     icon = Icons.Outlined.AutoAwesome,

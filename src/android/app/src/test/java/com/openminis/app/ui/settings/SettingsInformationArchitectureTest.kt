@@ -117,4 +117,21 @@ class SettingsInformationArchitectureTest {
             assertTrue("$route has no composable", nav.contains("composable(Routes.$route)"))
         }
     }
+
+    /**
+     * [T-android-voice-synthesis-settings] The system-vs-cloud TTS choice is a
+     * settings destination, not just a chat-capsule sheet. These assertions
+     * keep the entry, the route and the deep link wired together.
+     */
+    @Test
+    fun `speech synthesis is reachable from settings and deep links`() {
+        assertTrue(settings.contains("R.string.settings_voice_synthesis"))
+        assertTrue(settings.contains("onVoiceSynthesisClick"))
+        assertTrue(nav.contains("const val VOICE_SYNTHESIS"))
+        assertTrue(nav.contains("composable(Routes.VOICE_SYNTHESIS)"))
+        assertTrue(
+            ProductionSources.read("deeplink/DeepLinkHandler.kt")
+                .contains("Routes.VOICE_SYNTHESIS"),
+        )
+    }
 }

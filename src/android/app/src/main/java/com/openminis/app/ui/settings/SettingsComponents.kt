@@ -456,7 +456,13 @@ fun SettingsValueRow(
     )
 }
 
-/** Single-choice row (tap to select; shows check on selected). Used for radio-style lists. */
+/**
+ * Single-choice row (tap to select; shows check on selected). Used for radio-style lists.
+ *
+ * [subtitle] carries the secondary line a voice/model choice needs (the
+ * engine voice name or the model id) without forcing callers to reimplement
+ * the radio-row layout. Null keeps the single-line 56dp height.
+ */
 @Composable
 fun SettingsChoiceRow(
     title: String,
@@ -464,6 +470,7 @@ fun SettingsChoiceRow(
     onSelect: () -> Unit,
     leading: (@Composable () -> Unit)? = null,
     showDivider: Boolean = true,
+    subtitle: String? = null,
 ) {
     Column {
         Row(
@@ -480,12 +487,20 @@ fun SettingsChoiceRow(
                 leading()
                 Spacer(Modifier.width(12.dp))
             }
-            Text(
-                title,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.weight(1f),
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                )
+                if (subtitle != null) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             if (selected) {
                 Icon(
                     Icons.Default.Check,

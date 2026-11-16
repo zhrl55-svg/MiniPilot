@@ -102,6 +102,8 @@ object Routes {
     const val MODEL_GROUPS = "model_groups"
     /** Settings › Default Models: bind a group to chat, sub-tasks, voice, vision. */
     const val MODEL_DEFAULTS = "model_defaults"
+    /** [T-android-voice-synthesis-settings] System voice or cloud TTS model. */
+    const val VOICE_SYNTHESIS = "voice_synthesis"
     /** Models and groups the assistant may switch to at runtime (agent loop). */
     const val RUNTIME_MODELS = "runtime_models"
     /** Settings › Agent Runtime hub: tools, skills, memory, MCP, env vars. */
@@ -663,10 +665,12 @@ fun AppNavigation(
 
         composable(Routes.SETTINGS) {
             SettingsScreen(
+                providerRepository = providerRepository,
                 onBack = { navController.safePopBackStack() },
                 onProvidersClick = { navController.safeNavigate(Routes.PROVIDER_LIST) },
                 onModelGroupsClick = { navController.safeNavigate(Routes.MODEL_GROUPS) },
                 onDefaultModelsClick = { navController.safeNavigate(Routes.MODEL_DEFAULTS) },
+                onVoiceSynthesisClick = { navController.safeNavigate(Routes.VOICE_SYNTHESIS) },
                 onUsageClick = { navController.safeNavigate(Routes.USAGE_STATS) },
                 onAgentRuntimeClick = { navController.safeNavigate(Routes.ASSISTANT_SETTINGS) },
                 onContextClick = { navController.safeNavigate(Routes.CONTEXT_SETTINGS) },
@@ -710,6 +714,15 @@ fun AppNavigation(
             ModelDefaultsScreen(
                 providerRepository = providerRepository,
                 onBack = { navController.safePopBackStack() },
+            )
+        }
+
+        // [T-android-voice-synthesis-settings] System voice or cloud TTS model.
+        composable(Routes.VOICE_SYNTHESIS) {
+            com.openminis.app.ui.settings.VoiceSynthesisScreen(
+                providerRepository = providerRepository,
+                onBack = { navController.safePopBackStack() },
+                onAddProvider = { navController.safeNavigate(Routes.ADD_PROVIDER) },
             )
         }
 
