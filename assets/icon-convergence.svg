@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 680" width="1024" height="1024" role="img" aria-labelledby="tg dg">
+  <title id="tg">MiniPilot Convergence icon</title>
+  <desc id="dg">A rounded square app icon with a smooth continuous blue-green-amber gradient compass ring and a blue terminal core at the center.</desc>
+  <defs>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#3b82f6"/>
+      <stop offset="20%" stop-color="#0ea5e9"/>
+      <stop offset="40%" stop-color="#10b981"/>
+      <stop offset="55%" stop-color="#84cc16"/>
+      <stop offset="70%" stop-color="#eab308"/>
+      <stop offset="85%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#facc15"/>
+    </linearGradient>
+    <mask id="ringMask">
+      <circle cx="340" cy="340" r="240" fill="none" stroke="white" stroke-width="22"/>
+    </mask>
+  </defs>
+  <rect x="40" y="40" width="600" height="600" rx="120" fill="#111827"/>
+  <g mask="url(#ringMask)">
+    <rect x="0" y="0" width="680" height="680" fill="url(#ringGrad)"/>
+  </g>
+  <circle cx="340" cy="340" r="170" fill="#1e3a5f"/>
+  <circle cx="340" cy="340" r="170" fill="none" stroke="#3b82f6" stroke-width="6"/>
+  <path d="M250 290 L340 340 L250 390" fill="none" stroke="#10b981" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="360" y1="390" x2="420" y2="390" stroke="#10b981" stroke-width="30" stroke-linecap="round"/>
+  <path d="M455 315 L480 340 L455 365 L430 340 Z" fill="#facc15"/>
+</svg>

@@ -194,6 +194,8 @@ models/
 .tmp_ttfb_bench/
 # 本机排查无线 adb / hub.json 的一次性脚本，不属于 App 源码
 phone_fix.ps1
+# 图标换版前的本地回滚备份（约 22MB，随时可重新生成，不入库）
+assets/icon-backup-*/
 
 # codebase-index cache (machine-local; do not commit)
 .claude/cache/codebase-index/
