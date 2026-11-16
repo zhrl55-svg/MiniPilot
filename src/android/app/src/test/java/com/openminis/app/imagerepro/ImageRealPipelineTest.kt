@@ -117,7 +117,8 @@ class ImageRealPipelineTest {
     }
 
     private fun onDisk(): List<String> = files.walkTopDown().filter { it.isFile }
-        .map { it.relativeTo(files).path.replace(Regex("\\d{4}/\\d{2}/\\d{2}"), "<date>").replace(Regex("[0-9a-f-]{36}"), "<uuid>") + " " + it.length() + "B" }
+        // Normalize Windows separators before matching the slash-based patterns.
+        .map { it.relativeTo(files).path.replace('\\', '/').replace(Regex("\\d{4}/\\d{2}/\\d{2}"), "<date>").replace(Regex("[0-9a-f-]{36}"), "<uuid>") + " " + it.length() + "B" }
         .sorted().toList()
 
     // ── S1' / S3 / S4: user attachments ─────────────────────────────────────

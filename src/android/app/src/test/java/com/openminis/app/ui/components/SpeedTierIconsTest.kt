@@ -66,7 +66,9 @@ class SpeedTierIconsTest {
 
     @Test
     fun `speed strings carry no emoji in any locale`() {
-        val res = java.io.File(ProductionSources.mainRoot()!!.path.substringBefore("/java/") + "/res")
+        // Four parents up from com/openminis/app is src/main; walk File
+        // parents rather than splitting on "/java/" (Windows uses `\`).
+        val res = java.io.File(ProductionSources.mainRoot()!!.parentFile.parentFile.parentFile.parentFile, "res")
         val files = res.listFiles { f -> f.name.startsWith("values") }!!
             .mapNotNull { java.io.File(it, "strings.xml").takeIf { f -> f.exists() } }
         assertTrue(files.size >= 18)
@@ -79,7 +81,7 @@ class SpeedTierIconsTest {
 
     @Test
     fun `fast mode row, tiers and switch read as on ios`() {
-        val res = java.io.File(ProductionSources.mainRoot()!!.path.substringBefore("/java/") + "/res")
+        val res = java.io.File(ProductionSources.mainRoot()!!.parentFile.parentFile.parentFile.parentFile, "res")
         fun strings(dir: String): Map<String, String> =
             Regex("<string name=\"([^\"]+)\">([^<]*)</string>")
                 .findAll(java.io.File(res, "$dir/strings.xml").readText())

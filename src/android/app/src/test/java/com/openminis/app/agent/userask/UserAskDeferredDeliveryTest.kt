@@ -319,7 +319,8 @@ class UserAskDeferredDeliveryTest {
         // A message the user types closes an open deferred card in memory before its request.
         val send = vm.substringAfter("UserAskRecoveryCoordinator.supersedeRecovered(activeSessionId)?.let { parts ->")
         assertTrue(send.substringBefore("if (editingId != null)").contains("supersedeDeferredAsks(activeSessionId)"))
-        // Every live user bubble hides the model's note.
-        assertEquals(3, vm.split("content = userBubbleText(").size - 1)
+        // Every live user bubble hides the model's note: plain send, edit,
+        // queued/headless send and the pasted-text send.
+        assertEquals(4, vm.split("content = userBubbleText(").size - 1)
     }
 }

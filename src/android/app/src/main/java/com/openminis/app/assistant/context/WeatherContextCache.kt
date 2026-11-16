@@ -3,6 +3,7 @@ package com.openminis.app.assistant.context
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.location.Geocoder
 import android.location.Location
 import android.location.LocationManager
 import androidx.core.content.ContextCompat
@@ -16,14 +17,19 @@ import org.json.JSONObject
 import java.util.Locale
 
 /**
- * [T-android-context-injection] Cached weather/location lines for the
+ * [T-android-context-injection] Cached weather/place lines for the
  * per-message context block.
  *
- * A model request must never wait for a network call or a fresh GPS fix.
- * [refreshAsync] warms the cache from the last known location on a background
- * coroutine; [cachedWeatherLine] and [cachedLocationLine] only read the cache.
- * The cache is in memory and disappears with the process — the block is
- * request-only anyway.
+ * A model request must never wait for a network call, a fresh GPS fix or a
+ * reverse geocode. [refreshAsync] warms the cache from the last known location
+ * on a background coroutine; [cachedWeatherLine] and [cachedLocationLine] only
+ * read the cache. The cache is in memory and disappears with the process —
+ * the block is request-only anyway.
+ *
+ * The location line is a readable place name (`甘肃 张掖 甘州区`), resolved
+ * through the system [Geocoder] and cached for the same 30 minutes as the
+ * weather. Raw coordinates are kept as the fallback when the Geocoder is
+ * missing or returns nothing, so the line never silently becomes empty.
  *
  * Weather data comes from the same Open-Meteo path as `android-weather`, so a
  * manual weather query and the injected line cannot disagree about the source.
@@ -36,8 +42,15 @@ object WeatherContextCache {
 
     @Volatile private var weatherLine: String? = null
     @Volatile private var weatherAtMs: Long = 0L
+
+    /** Coordinate fallback used when reverse geocoding has no result. */
     @Volatile private var locationLine: String? = null
     @Volatile private var locationAtMs: Long = 0L
+
+    /** Readable place name; preferred over [locationLine] when fresh. */
+    @Volatile private var placeLine: String? = null
+    @Volatile private var placeAtMs: Long = 0L
+
     @Volatile private var lastAttemptMs: Long = 0L
 
     private val refreshLock = Any()
@@ -48,9 +61,16 @@ object WeatherContextCache {
         return if (now - weatherAtMs <= TTL_MS) line else null
     }
 
+    /** Place name when available, otherwise the coordinate fallback. */
     fun cachedLocationLine(now: Long = System.currentTimeMillis()): String? {
+        cachedPlaceLine(now)?.let { return it }
         val line = locationLine ?: return null
         return if (now - locationAtMs <= TTL_MS) line else null
+    }
+
+    fun cachedPlaceLine(now: Long = System.currentTimeMillis()): String? {
+        val line = placeLine ?: return null
+        return if (now - placeAtMs <= TTL_MS) line else null
     }
 
     /** Warms the cache at app start when either weather or location is on. */
@@ -60,9 +80,9 @@ object WeatherContextCache {
     }
 
     /**
-     * Reads the best last-known fix (never requests a fresh one) and refreshes
-     * the weather line in the background. Rate-limited so a burst of messages
-     * cannot start a burst of requests.
+     * Refreshes only the parts that are enabled and stale (or [force]d), from
+     * the best last-known fix — never a fresh GPS request. Rate-limited so a
+     * burst of messages cannot start a burst of requests.
      */
     fun refreshAsync(context: Context, force: Boolean = false) {
         val now = System.currentTimeMillis()
@@ -73,24 +93,45 @@ object WeatherContextCache {
         val appContext = context.applicationContext
         scope.launch {
             try {
-                // The location lookup is a binder call; keep it off the UI
-                // thread along with the network request.
+                val config = ContextInjectionSettings.load(appContext)
+                val attemptMs = System.currentTimeMillis()
+                val needLocation = config.location &&
+                    (force || cachedLocationLine(attemptMs) == null)
+                val needPlace = config.location &&
+                    (force || cachedPlaceLine(attemptMs) == null)
+                val needWeather = config.weather &&
+                    (force || cachedWeatherLine(attemptMs) == null)
+                if (!needLocation && !needPlace && !needWeather) return@launch
+
+                // The location lookup and the geocoder are binder calls; keep
+                // them off the UI thread along with the network request.
                 val location = lastKnownLocation(appContext) ?: return@launch
-                locationLine = formatLocation(location)
-                locationAtMs = System.currentTimeMillis()
-                val json = WeatherManager.fetchWeatherJson(
-                    location.latitude,
-                    location.longitude,
-                ) ?: return@launch
-                val current = json.optJSONObject("current") ?: return@launch
-                val units = json.optJSONObject("current_units")
-                val line = formatWeather(current, units)
-                if (line.isNotBlank()) {
-                    weatherLine = line
-                    weatherAtMs = System.currentTimeMillis()
+                if (needLocation) {
+                    locationLine = formatCoordinates(location)
+                    locationAtMs = System.currentTimeMillis()
+                }
+                if (needPlace) {
+                    val place = reverseGeocode(appContext, location)
+                    if (!place.isNullOrBlank()) {
+                        placeLine = place
+                        placeAtMs = System.currentTimeMillis()
+                    }
+                }
+                if (needWeather) {
+                    val json = WeatherManager.fetchWeatherJson(
+                        location.latitude,
+                        location.longitude,
+                    ) ?: return@launch
+                    val current = json.optJSONObject("current") ?: return@launch
+                    val units = json.optJSONObject("current_units")
+                    val line = formatWeather(current, units)
+                    if (line.isNotBlank()) {
+                        weatherLine = line
+                        weatherAtMs = System.currentTimeMillis()
+                    }
                 }
             } catch (t: Throwable) {
-                AppLogger.warning(TAG, "weather refresh failed: ${t.message}")
+                AppLogger.warning(TAG, "context refresh failed: ${t.message}")
             }
         }
     }
@@ -126,7 +167,40 @@ object WeatherContextCache {
         return best
     }
 
-    private fun formatLocation(location: Location): String =
+    private fun reverseGeocode(context: Context, location: Location): String? {
+        if (!Geocoder.isPresent()) return null
+        val geocoder = Geocoder(context, Locale.getDefault())
+        val addresses = try {
+            @Suppress("DEPRECATION")
+            geocoder.getFromLocation(location.latitude, location.longitude, 1)
+        } catch (_: Throwable) {
+            null
+        } ?: return null
+        val address = addresses.firstOrNull() ?: return null
+        return formatPlace(
+            adminArea = address.adminArea,
+            locality = address.locality,
+            district = address.subLocality ?: address.subAdminArea,
+        ) ?: address.featureName?.trim()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
+     * `甘肃 张掖 甘州区` — province → city → district, without the 省/市
+     * suffixes. Duplicates are dropped (municipalities repeat the city name).
+     * Null when every component is empty.
+     */
+    fun formatPlace(adminArea: String?, locality: String?, district: String?): String? {
+        val parts = listOfNotNull(
+            // Municipalities repeat the city in adminArea ("北京市"), so the
+            // province slot must drop 市 as well as 省.
+            adminArea?.trim()?.removeSuffix("省")?.removeSuffix("市"),
+            locality?.trim()?.removeSuffix("市"),
+            district?.trim()?.removeSuffix("市"),
+        ).filter { it.isNotBlank() }.distinct()
+        return if (parts.isEmpty()) null else parts.joinToString(" ")
+    }
+
+    private fun formatCoordinates(location: Location): String =
         String.format(
             Locale.US,
             "%.5f, %.5f",

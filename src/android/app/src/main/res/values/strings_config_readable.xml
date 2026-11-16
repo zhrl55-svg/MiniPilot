@@ -28,6 +28,7 @@
     <string name="cfgr_api_key">API Key</string>
     <string name="cfgr_api_key_from_the_environment_variable_x">API key from the environment variable $%1$s</string>
     <string name="cfgr_api_key_provided_value_hidden">API key provided (value hidden)</string>
+    <string name="cfgr_add_assistant_route_x_x_x">Add assistant route “%1$s” → %2$s/%3$s</string>
     <string name="cfgr_add_custom_model_x_to_x">Add custom model %1$s to “%2$s”</string>
     <string name="cfgr_add_provider_x_x">Add provider “%1$s” (%2$s)</string>
     <string name="cfgr_add_thinking_rule_x_to_x">Add thinking rule “%1$s” to “%2$s”</string>
@@ -39,6 +40,8 @@
     <string name="cfgr_app_language">App language</string>
     <string name="cfgr_append_v1_suffix">Append /v1 suffix</string>
     <string name="cfgr_applies_to">Applies to</string>
+    <string name="cfgr_assistant_directory_routes">Assistant directory routes</string>
+    <string name="cfgr_assistant_route_x_x">Assistant route “%1$s” – %2$s</string>
     <string name="cfgr_audio_input">Audio input</string>
     <string name="cfgr_audio_output">Audio output</string>
     <string name="cfgr_auto_focus_input_after_reply">Auto-focus input after reply</string>
@@ -46,6 +49,7 @@
     <string name="cfgr_automatic_system">Automatic (system)</string>
     <string name="cfgr_azure_openai_mode">Azure OpenAI mode</string>
     <string name="cfgr_background_notifications">Background notifications</string>
+    <string name="cfgr_background_voice_wake">Background voice wake</string>
     <string name="cfgr_base_url_x">Base URL: %1$s</string>
     <string name="cfgr_chinese">Chinese</string>
     <string name="cfgr_container_dns_mode">Container DNS mode</string>
@@ -63,6 +67,7 @@
     <string name="cfgr_default_primary_group">Default primary group</string>
     <string name="cfgr_default_sub_group">Default sub group</string>
     <string name="cfgr_default_thinking_level">Default thinking level</string>
+    <string name="cfgr_delete_assistant_route_x">Delete assistant route “%1$s”</string>
     <string name="cfgr_delete_custom_model_x">Delete custom model %1$s</string>
     <string name="cfgr_delete_environment_variable_x_its_value_is_remov">Delete environment variable $%1$s (its value is removed from Keychain)</string>
     <string name="cfgr_delete_group_x_x_models">Delete group “%1$s” (%2$s models)</string>
@@ -114,6 +119,7 @@
     <string name="cfgr_note">Note</string>
     <string name="cfgr_off">Off</string>
     <string name="cfgr_on">On</string>
+    <string name="cfgr_on_device_assistant_mode">On-device assistant mode</string>
     <string name="cfgr_only_when_the_provider_rejects">Only when the provider rejects</string>
     <string name="cfgr_pdf_input">PDF input</string>
     <string name="cfgr_primary_model_current_session">Primary model (current session)</string>
@@ -148,6 +154,7 @@
     <string name="cfgr_video_input">Video input</string>
     <string name="cfgr_video_output">Video output</string>
     <string name="cfgr_visibility">Visibility</string>
+    <string name="cfgr_voice_status_floating_ball">Voice status floating ball</string>
     <string name="cfgr_xhigh">XHigh</string>
     <string name="cfgr_added_x">added %1$s</string>
     <string name="cfgr_confirm_before_stopping">Confirm before stopping</string>
@@ -165,6 +172,7 @@
     <string name="cfgr_user_interaction_tool_user_ask">User interaction tool (user_ask)</string>
     <string name="cfgr_question_timeout_minutes">Question timeout (minutes)</string>
     <string name="cfgr_wait_indefinitely">Wait indefinitely</string>
+    <string name="cfgr_wake_word">Wake word</string>
     <string name="cfgr_notify_about_questions_in_the_background">Notify about questions in the background</string>
     <string name="cfgr_browser_use_tool">Browser Use tool</string>
     <string name="cfgr_sub_agents_tool">Sub Agents tool</string>

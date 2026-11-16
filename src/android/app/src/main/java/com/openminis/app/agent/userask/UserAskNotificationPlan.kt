@@ -98,15 +98,41 @@ object UserAskNotificationPlan {
     }
 
     /**
-     * The question to post a notification for now, or null. Posts only for a
-     * pending, unexpired ask while the app is away, and only once per question:
-     * going to the background again does not re-alert (iOS 07fbac2c1).
+     * The question to post a notification for now, or null.
+     *
+     * A notification is suppressed only when its card is actually on screen:
+     * the app is in the foreground AND the ask belongs to the chat the user is
+     * looking at ([isActiveSession]). An ask from another session must notify
+     * even while the app is open - its card is not visible anywhere, and
+     * suppressing it made the question time out unseen (2026-11-16, sessions
+     * A/B). Only once per question: switching away and back does not re-alert
+     * (iOS 07fbac2c1).
      */
-    fun indexToPost(ask: PendingAsk, appInForeground: Boolean, enabled: Boolean, nowMs: Long): Int? {
-        if (!enabled || appInForeground) return null
+    fun indexToPost(
+        ask: PendingAsk,
+        appInForeground: Boolean,
+        isActiveSession: Boolean,
+        enabled: Boolean,
+        nowMs: Long,
+    ): Int? {
+        if (!enabled || (appInForeground && isActiveSession)) return null
         if (ask.state != UserAskState.PENDING || ask.isExpired(nowMs)) return null
         val i = notifiedIndex(ask) ?: return null
         return i.takeIf { it != ask.notifiedIndex }
+    }
+
+    /**
+     * [T-android-user-ask-notify] The notification title: the action label
+     * plus the session the question belongs to, so the user knows which chat
+     * to open when the ask came from another one. The session title is
+     * preferred; a session without one (untitled, or a recovered ask) falls
+     * back to the first 8 characters of its id - enough to tell two rows
+     * apart without putting a UUID in the shade.
+     */
+    fun notificationTitle(label: String, ask: PendingAsk): String {
+        val session = ask.sessionTitle?.trim()?.takeIf { it.isNotBlank() }
+            ?: ask.sessionId.take(8)
+        return "$label · $session"
     }
 
     /** Sound only on the ask's first notification; moving to the next question is quiet. */

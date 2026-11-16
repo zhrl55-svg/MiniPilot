@@ -311,8 +311,15 @@ class CtxFixJWireShaTest(private val id: String) {
         )
     }
 
-    private fun hash(body: org.json.JSONObject, root: String) =
-        ImageRealFixtures.sha256(body.toString().replace(root, "<ROOT>"))
+    private fun hash(body: org.json.JSONObject, root: String): String {
+        // JSON escapes backslashes, so on Windows the temp root appears as
+        // C:\\Users\\... — normalize the escaped form too (they are identical
+        // on Unix), or the full temp path survives into the hash.
+        val escapedRoot = root.replace("\\", "\\\\")
+        return ImageRealFixtures.sha256(
+            body.toString().replace(escapedRoot, "<ROOT>").replace(root, "<ROOT>"),
+        )
+    }
 
     private fun bodies(): Map<String, String> {
         val out = linkedMapOf<String, String>()

@@ -21,6 +21,7 @@ import com.openminis.app.agent.userask.UserAskNotificationPlan.Layout
 import com.openminis.app.agent.userask.UserAskSettings
 import com.openminis.app.agent.userask.UserAskState
 import com.openminis.app.logging.AppLogger
+import com.openminis.app.ui.chat.ChatViewModelStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -31,18 +32,20 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * [T-android-user-ask-notify] Posts a notification for a user_ask question
- * asked while the app is in the background (or the screen is off), answerable
- * from the notification - iOS UserAskCenter.postNotification /
- * handleNotificationResponse.
+ * whose card the user cannot see: the app is in the background (or the screen
+ * is off), or the question belongs to a session other than the chat on screen
+ * ([T-android-user-ask-active-session]). Answerable from the notification -
+ * iOS UserAskCenter.postNotification / handleNotificationResponse.
  *
- * Driven by UserAskCenter.asks and the process lifecycle, so every rule is one
- * reconciliation pass:
- *  - a pending ask with the app away posts its open question, once per question
- *    (PendingAsk.notifiedIndex), with sound only on the first;
+ * Driven by UserAskCenter.asks, the process lifecycle and the on-screen
+ * session, so every rule is one reconciliation pass:
+ *  - a pending ask whose card is not on screen (app away, or another session)
+ *    posts its open question, once per question (PendingAsk.notifiedIndex),
+ *    with sound only on the first;
  *  - an ask that resolves (answered, timed out, Stop, a new user message) or is
  *    forgotten loses its notification;
- *  - coming back to the app clears the notifications - the card is on screen -
- *    without re-alerting on the next trip to the background.
+ *  - returning to the ask's own chat clears its notification - the card is on
+ *    screen - without re-alerting on the next trip away.
  *
  * Gated by the user_ask "Notify when in the background" setting and by the
  * notification permission; without either it silently posts nothing.
@@ -69,29 +72,46 @@ object UserAskNotifier {
         ensureChannel()
         val foreground = ProcessLifecycleOwner.get().lifecycle.currentStateFlow
             .map { it.isAtLeast(Lifecycle.State.STARTED) }
+        // [T-android-user-ask-active-session] Switching chats re-evaluates the
+        // same way backgrounding does: a question in the chat the user just
+        // left must notify, and the one they switched to must not.
+        val activeSession = ChatViewModelStore.activeSessionFlow
         scope.launch {
-            combine(UserAskCenter.asks, foreground) { asks, fg -> asks to fg }
-                .collect { (asks, fg) -> runCatching { sync(asks, fg) }.onFailure {
-                    AppLogger.warning(TAG, "[UserAsk] notifier sync failed: ${it.javaClass.simpleName}: ${it.message}")
-                } }
+            combine(UserAskCenter.asks, foreground, activeSession) { asks, fg, active ->
+                Triple(asks, fg, active)
+            }
+                .collect { (asks, fg, active) ->
+                    runCatching { sync(asks, fg, active) }.onFailure {
+                        AppLogger.warning(TAG, "[UserAsk] notifier sync failed: ${it.javaClass.simpleName}: ${it.message}")
+                    }
+                }
         }
     }
 
-    private fun sync(asks: Map<String, PendingAsk>, appInForeground: Boolean) {
-        // Resolved or forgotten: its notification goes.
+    private fun sync(
+        asks: Map<String, PendingAsk>,
+        appInForeground: Boolean,
+        activeSessionId: String?,
+    ) {
+        // Resolved, forgotten, or the card is on screen right now: its
+        // notification goes. "On screen" is session-scoped, not app-scoped -
+        // an ask in another session is invisible even while the app is open.
         for (rid in posted.keys.toList()) {
             val a = asks[rid]
-            if (a == null || a.state != UserAskState.PENDING) cancelAll(rid)
-        }
-        if (appInForeground) {
-            // The card is on screen; the notification would only go stale.
-            for (rid in posted.keys.toList()) cancelAll(rid)
-            return
+            val visible = a != null && appInForeground && a.sessionId == activeSessionId
+            if (a == null || a.state != UserAskState.PENDING || visible) cancelAll(rid)
         }
         val enabled = UserAskSettings.notifyInBackground(app)
+        if (!enabled) return
         val now = System.currentTimeMillis()
         for (a in asks.values) {
-            val i = UserAskNotificationPlan.indexToPost(a, appInForeground = false, enabled = enabled, nowMs = now) ?: continue
+            val i = UserAskNotificationPlan.indexToPost(
+                ask = a,
+                appInForeground = appInForeground,
+                isActiveSession = a.sessionId == activeSessionId,
+                enabled = enabled,
+                nowMs = now,
+            ) ?: continue
             post(a, sound = UserAskNotificationPlan.alertsWithSound(a))
             // Marked even when nothing could be posted (permission off), so the
             // question is not retried on every change of the ask.
@@ -163,8 +183,9 @@ object UserAskNotifier {
         )
         val b = NotificationCompat.Builder(app, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification_question)
-            .setContentTitle(ask.sessionTitle?.takeIf { it.isNotBlank() } ?: label)
-            .setSubText(label)
+            // Label + session: with several chats open the notification must
+            // say which one asked (fallback: first 8 chars of the session id).
+            .setContentTitle(UserAskNotificationPlan.notificationTitle(label, ask))
             .setContentText(c.body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(c.body))
             .setContentIntent(openChat(ask))

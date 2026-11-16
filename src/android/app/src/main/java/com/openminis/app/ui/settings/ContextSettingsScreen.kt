@@ -10,6 +10,8 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Place
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.TextFields
+import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,9 +26,10 @@ import com.openminis.app.R
 import com.openminis.app.ui.components.SectionDesign
 
 /**
- * [T-android-context-injection] The seven per-source switches for the
- * request-only device context block. Seven rows were too much for the main
- * settings list — they are one opt-in area, not seven separate destinations.
+ * [T-android-context-injection] The nine per-source switches for the
+ * request-only device context block. They are one area, not nine separate
+ * destinations. Notification titles is a second-level switch: it only has an
+ * effect while Recent notifications is on.
  */
 @Composable
 fun ContextSettingsScreen(onBack: () -> Unit) {
@@ -67,6 +70,14 @@ fun ContextSettingsScreen(onBack: () -> Unit) {
                 onCheckedChange = { on -> setContextConfig(contextConfig.copy(battery = on)) },
             )
             SettingsSwitchRow(
+                icon = Icons.Outlined.Wifi,
+                iconColor = Color(0xFF00C7BE),
+                title = stringResource(R.string.settings_context_network),
+                subtitle = stringResource(R.string.settings_context_network_subtitle),
+                checked = contextConfig.network,
+                onCheckedChange = { on -> setContextConfig(contextConfig.copy(network = on)) },
+            )
+            SettingsSwitchRow(
                 icon = Icons.Outlined.Cloud,
                 iconColor = Color(0xFF5AC8FA),
                 title = stringResource(R.string.settings_context_weather),
@@ -80,7 +91,15 @@ fun ContextSettingsScreen(onBack: () -> Unit) {
                 title = stringResource(R.string.settings_context_location),
                 subtitle = stringResource(R.string.settings_context_location_subtitle),
                 checked = contextConfig.location,
-                onCheckedChange = { on -> setContextConfig(contextConfig.copy(location = on)) },
+                onCheckedChange = { on ->
+                    setContextConfig(contextConfig.copy(location = on))
+                    // Warm the place name so the readable location (instead of
+                    // raw coordinates) is ready for the next request.
+                    if (on) {
+                        com.openminis.app.assistant.context.WeatherContextCache
+                            .refreshAsync(context)
+                    }
+                },
             )
             SettingsSwitchRow(
                 icon = Icons.Outlined.Notifications,
@@ -89,6 +108,17 @@ fun ContextSettingsScreen(onBack: () -> Unit) {
                 subtitle = stringResource(R.string.settings_context_notifications_subtitle),
                 checked = contextConfig.notifications,
                 onCheckedChange = { on -> setContextConfig(contextConfig.copy(notifications = on)) },
+            )
+            SettingsSwitchRow(
+                icon = Icons.Outlined.TextFields,
+                iconColor = Color(0xFFAF52DE),
+                title = stringResource(R.string.settings_context_notification_titles),
+                subtitle = stringResource(R.string.settings_context_notification_titles_subtitle),
+                checked = contextConfig.notificationTitles,
+                onCheckedChange = { on ->
+                    setContextConfig(contextConfig.copy(notificationTitles = on))
+                },
+                enabled = contextConfig.notifications,
             )
             SettingsSwitchRow(
                 icon = Icons.Outlined.Apps,

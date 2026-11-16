@@ -114,7 +114,9 @@ class SiteCookieCleanerTest {
 
     @Test
     fun `the failure text exists in every locale`() {
-        val res = java.io.File(ProductionSources.mainRoot()!!.path.substringBefore("/java/") + "/res")
+        // Four parents up from com/openminis/app is src/main; walk File
+        // parents rather than splitting on "/java/" (Windows uses `\`).
+        val res = java.io.File(ProductionSources.mainRoot()!!.parentFile.parentFile.parentFile.parentFile, "res")
         val dirs = res.listFiles { f -> f.isDirectory && f.name.startsWith("values") && java.io.File(f, "strings.xml").exists() }!!
         val withKey = dirs.filter { java.io.File(it, "strings.xml").readText().contains("name=\"browser_settings_clear_cookies_for\"") }
         assertTrue(withKey.size >= 18)

@@ -7498,11 +7498,15 @@ class ChatViewModel(
      * The rest of the prompt is not model-specific on Android.
      */
     private fun systemPromptFor(provider: LLMProvider, prompt: String?): String? {
-        val prefix = com.openminis.app.auth.ClaudeOAuthManager.ANTHROPIC_OAUTH_IDENTIFIER_PROMPT
-        if (prompt == null || prefix.isEmpty()) return prompt
-        val bare = if (prompt.startsWith(prefix)) prompt.removePrefix(prefix).trimStart('\n') else prompt
+        if (prompt == null) return null
         val oauth = (provider as? com.openminis.app.provider.anthropic.AnthropicProvider)?.isOAuth == true
-        return if (oauth) "$prefix\n\n$bare" else bare
+        // Read the private OAuth identifier only for OAuth: API-key requests
+        // must not throw when the build has no value (open-source checkout).
+        if (!oauth) return prompt
+        val prefix = com.openminis.app.auth.ClaudeOAuthManager.ANTHROPIC_OAUTH_IDENTIFIER_PROMPT
+        if (prefix.isEmpty()) return prompt
+        val bare = if (prompt.startsWith(prefix)) prompt.removePrefix(prefix).trimStart('\n') else prompt
+        return "$prefix\n\n$bare"
     }
 
     private fun isBoundToAbandonedModel(): Boolean =
@@ -17680,7 +17684,8 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             // appended here, never written into agentHistory. Helpers keep
             // their focused identity prompt and do not receive user device
             // data. All sources are opt-in in Settings › Agent Runtime;
-            // time/battery/weather are on by default, the rest are off.
+            // time/battery/network/weather/current-app are on by default,
+            // location/notifications/notification-titles/screen-text are off.
             if (helperConfig == null) {
                 val deviceContext =
                     com.openminis.app.assistant.context.ContextAssembler

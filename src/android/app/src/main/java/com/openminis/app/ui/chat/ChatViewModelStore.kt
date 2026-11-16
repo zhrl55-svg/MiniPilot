@@ -3,6 +3,9 @@ package com.openminis.app.ui.chat
 import android.util.Log
 import androidx.lifecycle.ViewModelStore
 import androidx.lifecycle.ViewModelStoreOwner
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * Process-level cache of ChatViewModels keyed by sessionId. Mirrors iOS
@@ -533,9 +536,23 @@ object ChatViewModelStore {
     val activeSessionId: String?
         get() = activeSessionIdInternal?.let { resolveKey(it) }
 
+    /**
+     * [T-android-user-ask-active-session] [activeSessionId] as a flow, for
+     * consumers outside the UI that must re-evaluate when the user switches
+     * chats. `UserAskNotifier` is the first: a user_ask from another session
+     * must notify even while the app is in the foreground, and "another
+     * session" only changes here.
+     *
+     * Emits the RESOLVED id (what [activeSessionId] returns), because
+     * `PendingAsk.sessionId` is the persisted session id, not a draft id.
+     */
+    private val _activeSessionFlow = MutableStateFlow<String?>(null)
+    val activeSessionFlow: StateFlow<String?> = _activeSessionFlow.asStateFlow()
+
     @Synchronized
     fun setActiveSession(sessionId: String?) {
         activeSessionIdInternal = sessionId
+        _activeSessionFlow.value = sessionId?.let { resolveKey(it) }
     }
 
     /**
@@ -550,6 +567,7 @@ object ChatViewModelStore {
         val current = activeSessionIdInternal ?: return
         if (resolveKey(current) != resolveKey(sessionId)) return
         activeSessionIdInternal = null
+        _activeSessionFlow.value = null
     }
 
     @Synchronized
@@ -571,6 +589,9 @@ object ChatViewModelStore {
         // Invalidate anything resolving through the alias map — see
         // [aliasGeneration].
         aliasGeneration.intValue++
+        // A promoted draft can be the chat on screen: publish the resolved id
+        // so flow consumers see the persisted session, not the draft id.
+        _activeSessionFlow.value = activeSessionId
         Log.d(TAG, "rename store $fromSessionId -> $toSessionId (alias kept)")
     }
 

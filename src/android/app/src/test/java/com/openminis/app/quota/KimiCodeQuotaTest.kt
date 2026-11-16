@@ -362,7 +362,12 @@ class KimiCodeQuotaTest {
     // ── Android-only additions ──────────────────────────────────────────────
 
     @Test fun `DEV_TOOLS is a compile-time false in release, so the override cannot run there`() {
-        val gradle = java.io.File(ProductionSources.mainRoot()!!.path.substringBefore("/src/main/") + "/build.gradle.kts").readText()
+        // Walk up to the module root instead of splitting on "/src/main/":
+        // a Windows checkout has backslashes and substringBefore never matches.
+        val gradleFile = generateSequence(ProductionSources.mainRoot()) { it.parentFile }
+            .map { java.io.File(it, "build.gradle.kts") }
+            .first { it.isFile }
+        val gradle = gradleFile.readText()
         assertTrue("50 defaultConfig: DEV_TOOLS false", gradle.contains("buildConfigField(\"boolean\", \"DEV_TOOLS\", \"false\")"))
         val release = gradle.substringAfter("        release {").substringBefore("\n        }\n")
         assertFalse("51 release does not turn DEV_TOOLS on", release.contains("DEV_TOOLS"))

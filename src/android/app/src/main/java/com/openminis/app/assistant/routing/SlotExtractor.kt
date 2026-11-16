@@ -701,7 +701,15 @@ class SlotExtractor(
         }
         date?.let { args.put("date", it.toString()) }
 
-        var routing = ChineseTimeParser.stripTimeExpressions(text)
+        // An explicit window ("08:00-10:00") is already captured as
+        // time_range; leaving it in the routing text lets the from/to regex
+        // start inside the clock ("00从张掖西"). Remove the whole window BEFORE
+        // stripTimeExpressions: that pass strips "08:00" alone (the boundary
+        // before "10:00" is lost against the following Han character) and
+        // leaves a "-10:00" that still poisons the route regex.
+        var routing = ChineseTimeParser.stripTimeExpressions(
+            text.replace(trainTimeRangeRegex, " "),
+        )
         var stripped = true
         while (stripped) {
             stripped = false

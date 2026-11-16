@@ -26,7 +26,9 @@ class SafePickerLaunchGuardTest {
     /** file (relative) -> picker launcher names declared in it */
     private fun pickers(): Map<String, List<String>> = root.walkTopDown()
         .filter { it.isFile && it.extension == "kt" }
-        .associate { f -> f.relativeTo(root).path to pickerContract.findAll(f.readText()).map { it.groupValues[1] }.toList() }
+        // relativeTo().path uses the platform separator; the expected map (and
+        // the repo's canonical form) is forward-slashed.
+        .associate { f -> f.relativeTo(root).path.replace(File.separatorChar, '/') to pickerContract.findAll(f.readText()).map { it.groupValues[1] }.toList() }
         .filterValues { it.isNotEmpty() }
 
     @Test

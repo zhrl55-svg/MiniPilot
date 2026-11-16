@@ -28,6 +28,7 @@
     <string name="cfgr_api_key">API Key</string>
     <string name="cfgr_api_key_from_the_environment_variable_x">API Key 取自環境變量 $%1$s</string>
     <string name="cfgr_api_key_provided_value_hidden">已提供 API Key（內容已隱藏）</string>
+    <string name="cfgr_add_assistant_route_x_x_x">新增助理路由「%1$s」→ %2$s/%3$s</string>
     <string name="cfgr_add_custom_model_x_to_x">為「%2$s」新增自訂模型 %1$s</string>
     <string name="cfgr_add_provider_x_x">新增服務商「%1$s」（%2$s）</string>
     <string name="cfgr_add_thinking_rule_x_to_x">為「%2$s」新增思考規則「%1$s」</string>
@@ -39,6 +40,8 @@
     <string name="cfgr_app_language">應用語言</string>
     <string name="cfgr_append_v1_suffix">追加 /v1 後綴</string>
     <string name="cfgr_applies_to">套用對象</string>
+    <string name="cfgr_assistant_directory_routes">助理目錄路由</string>
+    <string name="cfgr_assistant_route_x_x">助理路由「%1$s」– %2$s</string>
     <string name="cfgr_audio_input">音頻輸入</string>
     <string name="cfgr_audio_output">音頻輸出</string>
     <string name="cfgr_auto_focus_input_after_reply">回覆後自動聚焦輸入框</string>
@@ -46,6 +49,7 @@
     <string name="cfgr_automatic_system">自動（跟隨系統）</string>
     <string name="cfgr_azure_openai_mode">Azure OpenAI 模式</string>
     <string name="cfgr_background_notifications">背景通知</string>
+    <string name="cfgr_background_voice_wake">背景語音喚醒</string>
     <string name="cfgr_base_url_x">介面位址：%1$s</string>
     <string name="cfgr_chinese">中文</string>
     <string name="cfgr_container_dns_mode">容器 DNS 模式</string>
@@ -63,6 +67,7 @@
     <string name="cfgr_default_primary_group">新會話預設主分組</string>
     <string name="cfgr_default_sub_group">新會話預設副分組</string>
     <string name="cfgr_default_thinking_level">預設思考強度</string>
+    <string name="cfgr_delete_assistant_route_x">刪除助理路由「%1$s」</string>
     <string name="cfgr_delete_custom_model_x">刪除自訂模型 %1$s</string>
     <string name="cfgr_delete_environment_variable_x_its_value_is_remov">刪除環境變量 $%1$s（其值會從鑰匙圈中移除）</string>
     <string name="cfgr_delete_group_x_x_models">刪除分組「%1$s」（含 %2$s 個模型）</string>
@@ -114,6 +119,7 @@
     <string name="cfgr_note">備註</string>
     <string name="cfgr_off">關閉</string>
     <string name="cfgr_on">開啟</string>
+    <string name="cfgr_on_device_assistant_mode">端側助理模式</string>
     <string name="cfgr_only_when_the_provider_rejects">僅在服務商拒絕時</string>
     <string name="cfgr_pdf_input">PDF 輸入</string>
     <string name="cfgr_primary_model_current_session">目前會話主模型</string>
@@ -148,6 +154,7 @@
     <string name="cfgr_video_input">影片輸入</string>
     <string name="cfgr_video_output">影片輸出</string>
     <string name="cfgr_visibility">可見性</string>
+    <string name="cfgr_voice_status_floating_ball">語音狀態懸浮球</string>
     <string name="cfgr_xhigh">極高</string>
     <string name="cfgr_added_x">新增 %1$s</string>
     <string name="cfgr_confirm_before_stopping">停止前確認</string>
@@ -165,6 +172,7 @@
     <string name="cfgr_user_interaction_tool_user_ask">使用者互動工具（user_ask）</string>
     <string name="cfgr_question_timeout_minutes">提問逾時（分鐘）</string>
     <string name="cfgr_wait_indefinitely">一直等</string>
+    <string name="cfgr_wake_word">喚醒詞</string>
     <string name="cfgr_notify_about_questions_in_the_background">背景時為問題發通知</string>
     <string name="cfgr_browser_use_tool">Browser Use 工具</string>
     <string name="cfgr_sub_agents_tool">子 Agent 工具</string>

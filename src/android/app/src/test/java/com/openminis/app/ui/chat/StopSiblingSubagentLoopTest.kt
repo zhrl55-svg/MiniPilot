@@ -60,7 +60,7 @@ class StopSiblingSubagentLoopTest {
         val persist = vm.substringAfter("private suspend fun persistFinalDelegateResult(")
             .substringBefore("private fun executeAgentStatus(")
         val muted = persist.indexOf("val muted = com.openminis.app.agent.jobs.AgentJobRegistry.isDelegationMuted(activeSessionId)")
-        val rewrite = persist.indexOf("if (!muted) withContext(Dispatchers.Main) {")
+        val rewrite = persist.indexOf("if (!muted && patchHistory) withContext(Dispatchers.Main) {")
         val dbWrite = persist.indexOf("chatRepository.updateMessageParts(row.id, arr.toString())")
         assertTrue(muted >= 0 && rewrite > muted)
         assertTrue("the DB row is still written", dbWrite > rewrite)

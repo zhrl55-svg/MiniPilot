@@ -36,12 +36,19 @@ object ProductionSources {
         return null
     }
 
-    /** Read one production file by its path relative to `com/openminis/app`. */
+    /**
+     * Read one production file by its path relative to `com/openminis/app`.
+     *
+     * Line endings are normalized to LF: the guards below match multi-line
+     * snippets written with `\n`, while a Windows checkout (core.autocrlf)
+     * stores CRLF. The repository's canonical form is LF, so this compares
+     * against the same text CI sees.
+     */
     fun read(relPath: String): String {
         val root = mainRoot() ?: error("production source root not found from ${File("").absolutePath}")
         val f = File(root, relPath)
         require(f.isFile) { "production source missing: ${f.absolutePath}" }
-        return f.readText()
+        return f.readText().replace("\r\n", "\n")
     }
 
     /** Every `.kt` file under `src/main`, for whole-tree symbol scans. */

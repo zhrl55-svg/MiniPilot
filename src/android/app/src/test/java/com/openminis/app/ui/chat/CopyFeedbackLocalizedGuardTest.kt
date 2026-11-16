@@ -53,9 +53,10 @@ class CopyFeedbackLocalizedGuardTest {
         val literal = Regex(""""(Copy|Copied|Copy code|Copied!)"|"Copied: |"Copied to """)
         val allowed = setOf("sessions/SessionDuplicateTitle.kt")
         val hits = ui.walkTopDown().filter { it.isFile && it.extension == "kt" }
-            .filterNot { it.relativeTo(ui).path in allowed }
+            .filterNot { it.relativeTo(ui).path.replace(File.separatorChar, '/') in allowed }
             .flatMap { f ->
-                code(f).lines().filter { literal.containsMatchIn(it) }.map { "${f.relativeTo(ui).path}: ${it.trim()}" }
+                code(f).lines().filter { literal.containsMatchIn(it) }
+                    .map { "${f.relativeTo(ui).path.replace(File.separatorChar, '/')}: ${it.trim()}" }
             }.toList()
         assertTrue("hard-coded copy feedback (use a string resource): $hits", hits.isEmpty())
     }

@@ -348,7 +348,8 @@ class UserAskCoreTest {
         val ios = com.openminis.app.ProductionSources.mainRoot()?.let { root ->
             var dir: java.io.File? = root
             repeat(8) { dir = dir?.parentFile }   // .../src/android/app/src/main/java/com/openminis/app -> .../src
-            java.io.File(dir, "ios/Agent/Chat/UserAskCore.swift").takeIf { it.exists() }?.readText()
+            java.io.File(dir, "ios/Agent/Chat/UserAskCore.swift").takeIf { it.exists() }
+                ?.readText()?.replace("\r\n", "\n")
         } ?: return   // iOS sources absent (Android-only checkout)
         val block = ios.substringAfter("static let toolDescription = \"\"\"\n").substringBefore("\n    \"\"\"")
         val swift = block.lines().joinToString("\n") { it.removePrefix("    ") }

@@ -97,18 +97,38 @@ class UserAskNotificationTest {
 
     // ── One notification per question ──────────────────────────────────────
 
-    @Test fun `posts only while away, enabled and pending`() {
+    @Test fun `posts while away or for another session, only when enabled and pending`() {
         val a = ask(pick(2))
-        assertEquals(0, UserAskNotificationPlan.indexToPost(a, appInForeground = false, enabled = true, nowMs = now))
-        assertNull(UserAskNotificationPlan.indexToPost(a, appInForeground = true, enabled = true, nowMs = now))
-        assertNull(UserAskNotificationPlan.indexToPost(a, appInForeground = false, enabled = false, nowMs = now))
-        assertNull("expired", UserAskNotificationPlan.indexToPost(a, false, true, now + 5 * 60_000L))
-        assertNull("resolved", UserAskNotificationPlan.indexToPost(a.resolveTimedOut()!!, false, true, now))
+        assertEquals(0, UserAskNotificationPlan.indexToPost(a, appInForeground = false, isActiveSession = false, enabled = true, nowMs = now))
+        assertNull("the card is on screen",
+            UserAskNotificationPlan.indexToPost(a, appInForeground = true, isActiveSession = true, enabled = true, nowMs = now))
+        assertEquals("another session is not on screen",
+            0, UserAskNotificationPlan.indexToPost(a, appInForeground = true, isActiveSession = false, enabled = true, nowMs = now))
+        assertNull(UserAskNotificationPlan.indexToPost(a, appInForeground = false, isActiveSession = false, enabled = false, nowMs = now))
+        assertNull("expired",
+            UserAskNotificationPlan.indexToPost(a, false, false, true, now + 5 * 60_000L))
+        assertNull("resolved",
+            UserAskNotificationPlan.indexToPost(a.resolveTimedOut()!!, false, false, true, now))
+    }
+
+    @Test fun `switching chats flips the same ask from suppressed to posted`() {
+        val a = ask(pick(2))
+        // First pass: its own chat is on screen, so the card is visible.
+        assertNull(UserAskNotificationPlan.indexToPost(a, appInForeground = true, isActiveSession = true, enabled = true, nowMs = now))
+        // The user switches to another chat: same ask, same app state, now posts.
+        assertEquals(0, UserAskNotificationPlan.indexToPost(a, appInForeground = true, isActiveSession = false, enabled = true, nowMs = now))
     }
 
     @Test fun `a question alerts once - going to the background again does not re-post`() {
         val a = ask(pick(2)).copy(notifiedIndex = 0)
-        assertNull(UserAskNotificationPlan.indexToPost(a, appInForeground = false, enabled = true, nowMs = now))
+        assertNull(UserAskNotificationPlan.indexToPost(a, appInForeground = false, isActiveSession = false, enabled = true, nowMs = now))
+    }
+
+    @Test fun `the notification title names the session, falling back to its id`() {
+        val titled = ask(pick(2)).copy(sessionTitle = "  open-box  ")
+        assertEquals("Needs your answer · open-box", UserAskNotificationPlan.notificationTitle("Needs your answer", titled))
+        val untitled = ask(pick(2)).copy(sessionId = "5f2c28ce-cac1-47fc-b49a-f71af599aa11", sessionTitle = "   ")
+        assertEquals("需要你授权 · 5f2c28ce", UserAskNotificationPlan.notificationTitle("需要你授权", untitled))
     }
 
     @Test fun `the next question of a multi-question ask posts again, quietly`() {
@@ -116,7 +136,7 @@ class UserAskNotificationTest {
         assertTrue(UserAskNotificationPlan.alertsWithSound(first))
         val (next, o) = UserAskNotificationPlan.apply(first.copy(notifiedIndex = 0), 0, "opt:1", null, now)
         assertEquals(Outcome.ADVANCED, o)
-        assertEquals(1, UserAskNotificationPlan.indexToPost(next, false, true, now))
+        assertEquals(1, UserAskNotificationPlan.indexToPost(next, false, false, true, now))
         assertFalse(UserAskNotificationPlan.alertsWithSound(next))
     }
 

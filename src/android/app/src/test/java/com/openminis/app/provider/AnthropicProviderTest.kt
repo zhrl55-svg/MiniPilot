@@ -629,6 +629,13 @@ class AnthropicProviderTest {
 
     @Test
     fun `OAuth request omits redact-thinking beta so thinking text is not blanked`() = runBlocking {
+        // The OAuth identifier is a private build-time property; the public
+        // checkout builds with it empty and the provider then refuses OAuth
+        // by design (ClaudeOAuthManager.ANTHROPIC_OAUTH_IDENTIFIER_PROMPT).
+        org.junit.Assume.assumeTrue(
+            "ANTHROPIC_OAUTH_IDENTIFIER_PROMPT not configured in this checkout",
+            com.openminis.app.BuildConfig.ANTHROPIC_OAUTH_IDENTIFIER_PROMPT.isNotEmpty(),
+        )
         // Mirrors iOS 958ee16c (T-anthropic-redact-thinking). The Claude-Code
         // mimicry beta set must NOT carry `redact-thinking-2026-02-12`; with it,
         // the server blanks thinking text (signature only) even though the model

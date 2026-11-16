@@ -455,7 +455,11 @@ object AppLogger {
     private fun appendLine(date: String, text: String) {
         statLines.incrementAndGet()
         val w = getWriter(date)
-        w.println(text)
+        // Explicit LF, not println: println uses the platform separator, and
+        // the size accounting below assumes exactly one byte per newline
+        // (on Windows CRLF would let the file outgrow the cap).
+        w.print(text)
+        w.print('\n')
         w.flush()
         bytesSinceSizeCheck += text.length + 1
         if (bytesSinceSizeCheck >= SIZE_CHECK_EVERY_BYTES) {
@@ -493,7 +497,19 @@ object AppLogger {
                     }
                 }
             }
-            if (!tmp.renameTo(file)) tmp.delete()
+            // Files.move, not File.renameTo: on Windows renameTo cannot
+            // replace an existing file and silently returns false, so the
+            // cap would never take effect there (the temp file was deleted
+            // and the log kept growing).
+            try {
+                java.nio.file.Files.move(
+                    tmp.toPath(),
+                    file.toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING,
+                )
+            } catch (e: Exception) {
+                if (!tmp.renameTo(file)) tmp.delete()
+            }
         } catch (e: Exception) {
             tmp.delete()
             Log.w(TAG, "log truncate failed: ${e.message}")

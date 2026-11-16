@@ -111,10 +111,10 @@ class UserAskDeferredTtlTest {
 
     @Test fun `each question alerts once, an expired card never`() {
         val a = deferred()
-        assertEquals(0, UserAskNotificationPlan.indexToPost(a, appInForeground = false, enabled = true, nowMs = t0 + min))
+        assertEquals(0, UserAskNotificationPlan.indexToPost(a, appInForeground = false, isActiveSession = false, enabled = true, nowMs = t0 + min))
         assertNull("already notified for this question",
-            UserAskNotificationPlan.indexToPost(a.copy(notifiedIndex = 0), appInForeground = false, enabled = true, nowMs = t0 + 2 * min))
-        assertNull("past its lifetime", UserAskNotificationPlan.indexToPost(a, appInForeground = false, enabled = true, nowMs = t0 + 61 * min))
+            UserAskNotificationPlan.indexToPost(a.copy(notifiedIndex = 0), appInForeground = false, isActiveSession = false, enabled = true, nowMs = t0 + 2 * min))
+        assertNull("past its lifetime", UserAskNotificationPlan.indexToPost(a, appInForeground = false, isActiveSession = false, enabled = true, nowMs = t0 + 61 * min))
         assertTrue("the first alert has sound", UserAskNotificationPlan.alertsWithSound(a))
     }
 }

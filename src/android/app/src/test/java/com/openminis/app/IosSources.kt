@@ -34,7 +34,10 @@ object IosSources {
 
     private val texts = HashMap<File, String>()
 
-    fun text(f: File): String = synchronized(texts) { texts.getOrPut(f) { f.readText() } }
+    /** LF-normalized so literal/byte guards behave the same on a CRLF checkout. */
+    fun text(f: File): String = synchronized(texts) {
+        texts.getOrPut(f) { f.readText().replace("\r\n", "\n") }
+    }
 
     /**
      * The source of the ONE app file that contains [declaration] (e.g.

@@ -330,7 +330,17 @@ val stageDebugSkillAssets by tasks.registering(Exec::class) {
     if (skillDir.isDirectory) inputs.dir(skillDir)
     if (script.isFile) inputs.file(script)
     outputs.dir(layout.projectDirectory.dir("src/debug/assets/debug-skill"))
-    commandLine("bash", script.absolutePath)
+    // On Windows a bare "bash" can resolve to WSL's launcher (which cannot
+    // read D:/ paths) and MSYS bash eats backslashes in an unquoted argument
+    // (D:\... -> D:..., exit 127). Prefer Git Bash and pass a forward-slash
+    // path; MINIS_BASH overrides the lookup.
+    val gitBash = listOfNotNull(
+        System.getenv("MINIS_BASH"),
+        "C:/Program Files/Git/bin/bash.exe",
+        "C:/Program Files (x86)/Git/bin/bash.exe",
+        System.getProperty("user.home")?.let { "$it/AppData/Local/hermes/git/bin/bash.exe" },
+    ).map { it.replace('\\', '/') }.firstOrNull { File(it).isFile } ?: "bash"
+    commandLine(gitBash, script.absolutePath.replace('\\', '/'))
 }
 tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") && (it.name.contains("Debug") || it.name.contains("Perf")) }
     .configureEach { dependsOn(stageDebugSkillAssets) }

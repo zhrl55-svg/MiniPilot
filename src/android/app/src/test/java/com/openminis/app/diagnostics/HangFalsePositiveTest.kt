@@ -23,7 +23,8 @@ class HangFalsePositiveTest {
     private fun src(path: String): String {
         val f = File(path)
         assertTrue("missing ${f.absolutePath}", f.exists())
-        return f.readText()
+        // CRLF -> LF: guards below match multi-line snippets written with \n.
+        return f.readText().replace("\r\n", "\n")
     }
 
     @Test

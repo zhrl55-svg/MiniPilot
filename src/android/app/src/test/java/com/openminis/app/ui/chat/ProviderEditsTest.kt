@@ -17,6 +17,9 @@ class ProviderEditsTest {
         providerType = ProviderType.openAI,
         credentialType = ProviderCredential.apiKey,
         useResponsesAPI = responses,
+        // Fixed: the default is System.currentTimeMillis(), so two calls that
+        // straddle a millisecond compare as different instances.
+        createdAt = 0L,
     )
 
     @Test

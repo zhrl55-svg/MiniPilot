@@ -12,7 +12,9 @@ import java.io.File
 class MarkdownPreviewLinksTest {
     private val doc = File("/data/s/workspace/proj/README.md")
 
-    private fun relative(path: String) = MarkdownPreviewLinkTarget.Relative(File(path))
+    // absoluteFile: the resolver rebases on document.absoluteFile.parentFile,
+    // which on Windows prefixes the drive ("D:\data\..." vs "\data\...").
+    private fun relative(path: String) = MarkdownPreviewLinkTarget.Relative(File(path).absoluteFile)
 
     @Test
     fun relativePathsResolveAgainstTheDocumentFolder() {

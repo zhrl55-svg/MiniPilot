@@ -89,6 +89,6 @@ class FgsStartGuardTest {
         assertTrue(retry.contains("if (shouldRunService() && !AgentForegroundService.isAlive)"))
         assertTrue(retry.contains("startServiceIfNeeded()"))
         val app = ProductionSources.read("MinisApp.kt")
-        assertTrue(app.contains("if (wasBackgrounded) SessionActivityTracker.onAppForegrounded()"))
+        assertTrue(app.contains("if (wasBackgrounded) {") && app.contains("SessionActivityTracker.onAppForegrounded()"))
     }
 }

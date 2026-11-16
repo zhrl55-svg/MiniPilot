@@ -26,7 +26,9 @@ class BackupRestoreCopyTest {
         assertFalse(screen.contains("R.string.backup_restore_footer)"))
         assertFalse(screen.contains("R.string.backup_creds_restored"))
         assertFalse(screen.contains("R.string.backup_creds_kept"))
-        val res = File(ProductionSources.mainRoot()!!.path.substringBefore("/java/") + "/res")
+        // Four parents up from com/openminis/app is src/main; walk File
+        // parents rather than splitting on "/java/" (Windows uses `\`).
+        val res = File(ProductionSources.mainRoot()!!.parentFile.parentFile.parentFile.parentFile, "res")
         val en = File(res, "values/strings_backup_restore.xml").readText()
         assertTrue(en.contains("the backup\\'s version is used, even if the one on this device is newer"))
         assertTrue(en.contains("That includes API keys"))

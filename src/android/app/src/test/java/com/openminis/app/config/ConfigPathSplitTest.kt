@@ -196,9 +196,13 @@ class ConfigPathSplitTest {
         while (dir != null && !File(dir, "src/ios").isDirectory) dir = dir.parentFile
         requireNotNull(dir) { "repo root with src/ios not found" }
     }
-    private fun ios(rel: String) = File(repoRoot, "src/ios/$rel").readText()
+    // LF-normalized: the parity guards match multi-line snippets written with
+    // \n, while a Windows checkout (core.autocrlf) stores CRLF.
+    private fun ios(rel: String) =
+        File(repoRoot, "src/ios/$rel").readText().replace("\r\n", "\n")
     private fun android(rel: String) =
-        File(repoRoot, "src/android/app/src/main/java/com/openminis/app/$rel").readText()
+        File(repoRoot, "src/android/app/src/main/java/com/openminis/app/$rel")
+            .readText().replace("\r\n", "\n")
 
     /**
      * A source line with every string interpolation replaced by `{}`. Done on

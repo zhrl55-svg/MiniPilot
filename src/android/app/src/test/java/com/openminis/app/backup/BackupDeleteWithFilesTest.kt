@@ -112,7 +112,8 @@ class BackupDeleteWithFilesTest {
     private fun src(path: String): String {
         val f = File(path)
         assertTrue("missing source: $path", f.exists())
-        return f.readText()
+        // CRLF -> LF: the guards below match multi-line snippets written with \n.
+        return f.readText().replace("\r\n", "\n")
     }
 
     private val navSrc by lazy {

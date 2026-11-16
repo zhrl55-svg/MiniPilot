@@ -100,8 +100,9 @@ class SettingsInformationArchitectureTest {
             assertTrue("$row missing from the Agent Runtime hub", assistant.contains(row))
         }
         for (row in listOf(
-            "contextConfig.time", "contextConfig.battery", "contextConfig.weather",
-            "contextConfig.location", "contextConfig.notifications",
+            "contextConfig.time", "contextConfig.battery", "contextConfig.network",
+            "contextConfig.weather", "contextConfig.location",
+            "contextConfig.notifications", "contextConfig.notificationTitles",
             "contextConfig.currentApp", "contextConfig.screenText",
         )) {
             assertTrue("$row missing from Message context", contextPage.contains(row))
