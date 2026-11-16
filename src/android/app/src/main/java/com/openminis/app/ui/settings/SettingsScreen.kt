@@ -57,6 +57,7 @@ import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.Star
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -93,70 +94,32 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onProvidersClick: () -> Unit,
     onModelGroupsClick: () -> Unit,
+    /** Settings › Default Models: bind a group to each role. */
+    onDefaultModelsClick: () -> Unit = {},
+    onUsageClick: () -> Unit = {},
+    /** Settings › Agent Runtime: tools, skills, memory, MCP, runtime models. */
+    onAgentRuntimeClick: () -> Unit = {},
+    /** Settings › General › Message context. */
+    onContextClick: () -> Unit = {},
+    onAppearanceClick: () -> Unit = {},
     onRootfsClick: () -> Unit = {},
     onBackupClick: () -> Unit = {},
-    onEnvVarsClick: () -> Unit = {},
+    onSharedFoldersClick: () -> Unit = {},
+    onMountedFoldersClick: () -> Unit = {},
     /** [T-net-android-phase2] Settings › Network › Network Routing. */
     onNetworkClick: () -> Unit = {},
     /** [FEAT-261021-04] The other rows of the Network section. */
     onTailscaleClick: () -> Unit = {},
     onProxiesClick: () -> Unit = {},
     onContainerDnsClick: () -> Unit = {},
-    onSkillsClick: () -> Unit = {},
-    onTerminalClick: () -> Unit = {},
-    onMemoryClick: () -> Unit = {},
-    onAssistantRoutesClick: () -> Unit = {},
-    /** [T-p2-agent-settings] Settings › Agents (delegation on/off), below Memory. */
-    onAgentsClick: () -> Unit = {},
-    onAgentToolsClick: () -> Unit = {},
-    // [T-mcp-integration-android] MCP Integrations page, listed directly below
-    // Memory. Default no-op for callers that haven't wired the route yet.
-    onMcpClick: () -> Unit = {},
-    // [T-soul-md] Soul settings page lives between Skills and Memory in the
-    // Agent Runtime section; default no-op for callers that haven't wired
-    // the route yet.
-    onSoulClick: () -> Unit = {},
     onPermissionsClick: () -> Unit = {},
-    onUsageClick: () -> Unit = {},
-    onAppearanceClick: () -> Unit = {},
-    onLogsClick: () -> Unit = {},
-    // T219-2: Mount External Folders entry. Default no-op for any caller
-    // that hasn't wired the route yet.
-    onMountedFoldersClick: () -> Unit = {},
-    // T235: Shared Folders entry (Shared / Skills / Memory). Default no-op
-    // for back-compat with callers wired before T235.
-    onSharedFoldersClick: () -> Unit = {},
-    // T50: Background & Notifications screen (battery optimisation +
-    // OEM autostart guidance). Default no-op so older callers/tests
-    // don't need to be retrofitted.
     onBackgroundClick: () -> Unit = {},
-    // [T-android-voice-wake] Jumps straight to the voice-wake section of
-    // the background screen (the wake word was buried there).
     onVoiceWakeClick: () -> Unit = {},
-    // Hook accepted for forward-compat with AppNavigation's About route. The
-    // About row below still has a TODO onClick in HEAD; future settings-bucket
-    // work will wire this through.
+    onLogsClick: () -> Unit = {},
     onAboutClick: () -> Unit = {},
 ) {
     val context = LocalContext.current
     var showFeedbackSheet by remember { mutableStateOf(false) }
-    // [T-local-assistant] 助理模式（端侧直连）。默认关 —— 端侧是加速器，
-    // 不是主链路；打开后只有规则命中且端侧抽全参数的那批指令走端侧。
-    var localAssistantMode by remember {
-        mutableStateOf(com.openminis.app.llm.mnn.LocalAssistantPrefs.isEnabled(context))
-    }
-    // [T-android-context-injection] Per-source switches for the request-only
-    // device context block. Defaults live in ContextInjectionSettings.
-    var contextConfig by remember {
-        mutableStateOf(
-            com.openminis.app.assistant.context.ContextInjectionSettings.load(context),
-        )
-    }
-    val setContextConfig: (com.openminis.app.assistant.context.ContextInjectionSettings.Config) -> Unit =
-        { updated ->
-            contextConfig = updated
-            com.openminis.app.assistant.context.ContextInjectionSettings.save(context, updated)
-        }
     // [T-music-player-top] The music settings sheet (NetEase login + proxy
     // address) is hosted here so it does not need a navigation route.
     var showMusicSheet by remember { mutableStateOf(false) }
@@ -183,9 +146,16 @@ fun SettingsScreen(
                 .padding(padding)
                 .verticalScroll(rememberScrollState()),
         ) {
-            // -- LLM Providers --
+            // -- AI & Assistant --
+            //
+            // The three rows that define model behaviour read in dependency
+            // order: a provider supplies models, a group is an ordered route
+            // over models from any provider, and Default Models binds a group
+            // to each role. The Agent Runtime hub holds the nine capability
+            // rows that used to be top-level; they configure one subsystem,
+            // not nine separate choices.
             SettingsSection(
-                title = stringResource(R.string.settings_section_llm_providers),
+                title = stringResource(R.string.settings_section_ai_assistant),
                 footer = stringResource(R.string.settings_section_llm_providers_footer),
             ) {
                 SettingsItem(
@@ -203,6 +173,20 @@ fun SettingsScreen(
                     onClick = onModelGroupsClick,
                 )
                 SettingsItem(
+                    icon = Icons.Outlined.Star,
+                    iconColor = Color(0xFFFF9500),
+                    title = stringResource(R.string.settings_default_models),
+                    subtitle = stringResource(R.string.settings_default_models_subtitle),
+                    onClick = onDefaultModelsClick,
+                )
+                SettingsItem(
+                    icon = Icons.Outlined.AutoAwesome,
+                    iconColor = Color(0xFF5E5CE6),
+                    title = stringResource(R.string.settings_section_agent_runtime),
+                    subtitle = stringResource(R.string.settings_agent_runtime_subtitle),
+                    onClick = onAgentRuntimeClick,
+                )
+                SettingsItem(
                     icon = Icons.Outlined.BarChart,
                     iconColor = Color(0xFF007AFF),
                     title = stringResource(R.string.settings_token_usage),
@@ -212,196 +196,22 @@ fun SettingsScreen(
                 )
             }
 
-            // -- Appearance --
-            SettingsSection(title = stringResource(R.string.settings_section_appearance)) {
+            // -- General --
+            SettingsSection(title = stringResource(R.string.settings_section_general)) {
                 SettingsItem(
                     icon = Icons.Outlined.Palette,
                     iconColor = Color(0xFF5856D6),
                     title = stringResource(R.string.settings_section_appearance),
                     subtitle = stringResource(R.string.settings_appearance_subtitle),
                     onClick = onAppearanceClick,
-                    showDivider = false,
-                )
-            }
-
-            // -- Agent Runtime --
-            // [T-android-settings-runtime-order] Row order matches iOS
-            // (ContentView.swift, Section "Agent Runtime"): Agent Tools, Sub
-            // Agents, Skills, Soul, Memory, MCP, Environment Variables.
-            //
-            // The order is not alphabetical or historical — it runs from what
-            // the agent may DO (tools, and who it may hand work to) to what it
-            // is made OF (skills, identity, memory) and finally to what it
-            // connects to (MCP, env). Android had grown its own order simply by
-            // appending each row as it landed, which put the two capability
-            // switches in the middle of the identity rows.
-            SettingsSection(title = stringResource(R.string.settings_section_agent_runtime)) {
-                // [T-tools-granular-switches] Which optional tools the agent may use.
-                SettingsItem(
-                    icon = Icons.Outlined.Handyman,
-                    iconColor = Color(0xFF5E5CE6),
-                    title = stringResource(R.string.settings_agent_tools),
-                    subtitle = stringResource(R.string.settings_agent_tools_subtitle),
-                    onClick = onAgentToolsClick,
                 )
                 SettingsItem(
-                    icon = Icons.Outlined.Groups,
-                    iconColor = com.openminis.app.ui.chat.HelperAccentStatic,
-                    title = stringResource(R.string.settings_agents),
-                    subtitle = stringResource(R.string.settings_agents_subtitle),
-                    onClick = onAgentsClick,
-                )
-                SettingsItem(
-                    icon = Icons.Outlined.Extension,
-                    iconColor = Color(0xFF007AFF),
-                    title = stringResource(R.string.settings_skills),
-                    subtitle = stringResource(R.string.settings_skills_subtitle),
-                    onClick = onSkillsClick,
-                )
-                // [T-soul-md] Between Skills and Memory, as on iOS.
-                SettingsItem(
-                    icon = Icons.Outlined.AutoAwesome,
-                    iconColor = Color(0xFFFF9500),
-                    title = stringResource(R.string.settings_soul),
-                    subtitle = stringResource(R.string.settings_soul_subtitle),
-                    onClick = onSoulClick,
-                )
-                SettingsItem(
-                    icon = Icons.Outlined.Psychology,
-                    iconColor = Color(0xFF5856D6),
-                    title = stringResource(R.string.settings_memory),
-                    subtitle = stringResource(R.string.settings_memory_subtitle),
-                    onClick = onMemoryClick,
-                )
-                // [T-mcp-integration-android] MCP Integrations — below Memory.
-                // [T-android-mcp-icon-distinct] Dashboard (2x2 block grid) instead of
-                // Extension so MCP no longer shares the Skills row's puzzle-piece icon —
-                // the grid reads as "multiple composed blocks/servers". teal unchanged.
-                SettingsItem(
-                    icon = Icons.Outlined.Dashboard,
-                    iconColor = Color(0xFF30B0C7),
-                    title = stringResource(R.string.settings_mcp),
-                    subtitle = stringResource(R.string.settings_mcp_subtitle),
-                    onClick = onMcpClick,
-                )
-                SettingsItem(
-                    icon = Icons.Outlined.Terminal,
-                    iconColor = Color(0xFF34C759),
-                    title = stringResource(R.string.settings_env_vars),
-                    subtitle = stringResource(R.string.settings_env_vars_subtitle),
-                    onClick = onEnvVarsClick,
-                )
-                // [T-local-assistant] 助理模式：端侧直连。放在这一节的最后
-                // （Agent 运行时能力的末尾），一行开关，关掉就完全回到云端。
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.Bolt,
-                    iconColor = Color(0xFF5856D6),
-                    title = stringResource(R.string.settings_assistant_mode),
-                    subtitle = stringResource(R.string.settings_assistant_mode_subtitle),
-                    checked = localAssistantMode,
-                    onCheckedChange = { on ->
-                        localAssistantMode = on
-                        com.openminis.app.llm.mnn.LocalAssistantPrefs.setEnabled(context, on)
-                    },
-                    showDivider = true,
-                )
-                SettingsItem(
-                    icon = Icons.Outlined.Tune,
-                    iconColor = Color(0xFF5856D6),
-                    title = stringResource(R.string.settings_assistant_routes),
-                    subtitle = stringResource(R.string.settings_assistant_routes_subtitle),
-                    onClick = onAssistantRoutesClick,
-                    showDivider = false,
-                )
-            }
-
-            // -- Message context --
-            // [T-android-context-injection] Appended to the model system
-            // prompt per request, never persisted into chat history. Time,
-            // battery and weather are on by default; everything that can carry
-            // personal content is opt-in.
-            SettingsSection(
-                title = stringResource(R.string.settings_section_message_context),
-                footer = stringResource(R.string.settings_context_footer),
-            ) {
-                SettingsSwitchRow(
                     icon = Icons.Outlined.Schedule,
-                    iconColor = Color(0xFF5856D6),
-                    title = stringResource(R.string.settings_context_time),
-                    subtitle = stringResource(R.string.settings_context_time_subtitle),
-                    checked = contextConfig.time,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(time = on))
-                    },
-                )
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.BatteryFull,
-                    iconColor = Color(0xFF34C759),
-                    title = stringResource(R.string.settings_context_battery),
-                    subtitle = stringResource(R.string.settings_context_battery_subtitle),
-                    checked = contextConfig.battery,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(battery = on))
-                    },
-                )
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.Cloud,
                     iconColor = Color(0xFF5AC8FA),
-                    title = stringResource(R.string.settings_context_weather),
-                    subtitle = stringResource(R.string.settings_context_weather_subtitle),
-                    checked = contextConfig.weather,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(weather = on))
-                    },
+                    title = stringResource(R.string.settings_section_message_context),
+                    subtitle = stringResource(R.string.settings_context_entry_subtitle),
+                    onClick = onContextClick,
                 )
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.Place,
-                    iconColor = Color(0xFFFF9500),
-                    title = stringResource(R.string.settings_context_location),
-                    subtitle = stringResource(R.string.settings_context_location_subtitle),
-                    checked = contextConfig.location,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(location = on))
-                    },
-                )
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.Notifications,
-                    iconColor = Color(0xFFFF3B30),
-                    title = stringResource(R.string.settings_context_notifications),
-                    subtitle = stringResource(R.string.settings_context_notifications_subtitle),
-                    checked = contextConfig.notifications,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(notifications = on))
-                    },
-                )
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.Apps,
-                    iconColor = Color(0xFF007AFF),
-                    title = stringResource(R.string.settings_context_current_app),
-                    subtitle = stringResource(R.string.settings_context_current_app_subtitle),
-                    checked = contextConfig.currentApp,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(currentApp = on))
-                    },
-                )
-                SettingsSwitchRow(
-                    icon = Icons.Outlined.Description,
-                    iconColor = Color(0xFF8E8E93),
-                    title = stringResource(R.string.settings_context_screen_text),
-                    subtitle = stringResource(R.string.settings_context_screen_text_subtitle),
-                    checked = contextConfig.screenText,
-                    onCheckedChange = { on ->
-                        setContextConfig(contextConfig.copy(screenText = on))
-                    },
-                    showDivider = false,
-                )
-            }
-
-            // -- Music --
-            // [T-music-player-top] The in-app player streams from the NetEase
-            // proxy on the buntu host. Scanning the QR code logs the phone
-            // in - without it most well-known songs have no stream URL.
-            SettingsSection(title = stringResource(R.string.settings_section_music)) {
                 SettingsItem(
                     icon = Icons.Outlined.MusicNote,
                     iconColor = Color(0xFFE0342E),
@@ -445,9 +255,9 @@ fun SettingsScreen(
                 )
             }
 
-            // -- Network -- [FEAT-261021-04, iOS c77be4fb6] its own section below
-            // Storage: Network Routing, Tailscale, Proxies and the Shell
-            // Container DNS (until now only on the Rootfs page).
+            // -- Network -- [FEAT-261021-04, iOS c77be4fb6] Its own section
+            // below Storage: Network Routing, Tailscale, Proxies, the Shell
+            // Container DNS and the Brave Search key.
             SettingsSection(title = stringResource(R.string.network_title)) {
                 SettingsItem(
                     icon = Icons.Outlined.Lan,
@@ -489,41 +299,26 @@ fun SettingsScreen(
                 )
             }
 
-            // -- Permissions --
-            SettingsSection(title = stringResource(R.string.settings_section_permissions)) {
+            // -- Device & Permissions --
+            // Three one-row sections (Permissions, Background, Voice wake)
+            // collapse into one scannable group.
+            SettingsSection(title = stringResource(R.string.settings_section_device)) {
                 SettingsItem(
                     icon = Icons.Outlined.Shield,
                     iconColor = Color(0xFF007AFF),
                     title = stringResource(R.string.settings_section_permissions),
                     subtitle = stringResource(R.string.settings_permissions_subtitle),
                     onClick = onPermissionsClick,
-                    showDivider = false,
                 )
-            }
-
-            // -- Background & Notifications (T50) --
-            SettingsSection(
-                title = stringResource(R.string.bg_section_header),
-                footer = stringResource(R.string.bg_section_footer),
-            ) {
                 SettingsItem(
                     icon = Icons.Outlined.BatteryFull,
                     iconColor = Color(0xFFFF9500),
                     title = stringResource(R.string.bg_section_header),
                     subtitle = stringResource(R.string.bg_section_subtitle),
                     onClick = onBackgroundClick,
-                    showDivider = false,
                 )
-            }
-
-            // -- Logs --
-            // [T-android-voice-wake] Voice wake gets its own top-level row:
-            // it used to live only inside the background screen, below the
-            // battery rows, and nobody found it.
-            SettingsSection(
-                title = stringResource(R.string.settings_voice_wake_section),
-                footer = stringResource(R.string.settings_voice_wake_entry_footer),
-            ) {
+                // [T-android-voice-wake] Voice wake used to be buried inside
+                // the background screen; it stays a direct row here.
                 SettingsItem(
                     icon = Icons.Outlined.Mic,
                     iconColor = Color(0xFF34C759),
@@ -534,21 +329,17 @@ fun SettingsScreen(
                 )
             }
 
-            SettingsSection(title = stringResource(R.string.settings_section_logs)) {
+            // -- About & Support --
+            SettingsSection(title = stringResource(R.string.settings_section_support)) {
+                // [T-update-channels] The update badge's Settings layer.
+                val updateBadge by com.openminis.app.data.UpdateStateStore.hasUpdateBadge.collectAsState()
                 SettingsItem(
                     icon = Icons.Outlined.Description,
                     iconColor = Color(0xFF007AFF),
                     title = stringResource(R.string.settings_section_logs),
                     subtitle = stringResource(R.string.settings_logs_subtitle),
                     onClick = onLogsClick,
-                    showDivider = false,
                 )
-            }
-
-            // -- About --
-            SettingsSection(title = stringResource(R.string.settings_section_about)) {
-                // [T-update-channels] The update badge's Settings layer.
-                val updateBadge by com.openminis.app.data.UpdateStateStore.hasUpdateBadge.collectAsState()
                 SettingsItem(
                     icon = Icons.Outlined.Info,
                     iconColor = Color(0xFF007AFF),
@@ -721,7 +512,7 @@ private fun buildBugReportUrl(): String {
     // since URLEncoder turns spaces into '+' which GitHub also accepts but
     // the spec calls for the literal "[Bug] " form.
     val title = java.net.URLEncoder.encode("[Bug] ", "UTF-8")
-    return "https://github.com/OpenMinis/OpenMinis/issues/new" +
+    return "https://github.com/zhrl55-svg/MiniPilot/issues/new" +
         "?template=bug_report.md" +
         "&title=$title" +
         "&body=$encodedBody"
@@ -744,7 +535,7 @@ private fun buildFeedbackMailto(): String {
 
         Screenshot (optional): Please attach a screenshot if relevant.
     """.trimIndent()
-    val subject = java.net.URLEncoder.encode("Minis Feedback", "UTF-8")
+    val subject = java.net.URLEncoder.encode("MiniPilot Feedback", "UTF-8")
     val encodedBody = java.net.URLEncoder.encode(body, "UTF-8")
     return "mailto:dev@openminis.app?subject=$subject&body=$encodedBody"
 }
@@ -753,7 +544,7 @@ private fun buildFeedbackMailto(): String {
  * A grouped settings section with header and optional footer, matching iOS grouped List sections.
  */
 @Composable
-private fun SettingsSection(
+internal fun SettingsSection(
     title: String,
     footer: String? = null,
     content: @Composable () -> Unit,
@@ -802,7 +593,7 @@ private fun SettingsSection(
  * Styled to match iOS settings rows with SF Symbol-like colored circle icons.
  */
 @Composable
-private fun SettingsItem(
+internal fun SettingsItem(
     icon: ImageVector,
     iconColor: Color,
     title: String,

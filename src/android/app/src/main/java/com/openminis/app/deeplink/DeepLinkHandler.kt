@@ -204,6 +204,14 @@ object DeepLinkHandler {
             "model-groups", "model_groups" ->
                 if (arg != null) DeepLinkAction.OpenSettingsScreen(Routes.modelGroupDetail(arg))
                 else DeepLinkAction.OpenSettingsScreen(Routes.MODEL_GROUPS)
+            "default-models", "default_models", "model-defaults", "model_defaults" ->
+                DeepLinkAction.OpenSettingsScreen(Routes.MODEL_DEFAULTS)
+            "runtime-models", "runtime_models", "agent-loop-models", "agent_loop_models" ->
+                DeepLinkAction.OpenSettingsScreen(Routes.RUNTIME_MODELS)
+            "assistant-settings", "assistant_settings", "agent-runtime", "agent_runtime" ->
+                DeepLinkAction.OpenSettingsScreen(Routes.ASSISTANT_SETTINGS)
+            "context", "message-context", "message_context" ->
+                DeepLinkAction.OpenSettingsScreen(Routes.CONTEXT_SETTINGS)
             "usage", "usage-stats", "usage_stats" ->
                 DeepLinkAction.OpenSettingsScreen(Routes.USAGE_STATS)
             "skills" -> DeepLinkAction.OpenSettingsScreen(Routes.SKILLS)

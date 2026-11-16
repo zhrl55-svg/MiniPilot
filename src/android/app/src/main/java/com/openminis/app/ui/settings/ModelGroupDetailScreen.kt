@@ -127,6 +127,9 @@ fun ModelGroupDetailScreen(
     var quotaSheetInstanceId by remember { mutableStateOf<String?>(null) }
 
     val lazyListState = rememberLazyListState()
+    // Snackbar text is resolved in composition; onFocusChanged is not a
+    // composable context and cannot call stringResource itself.
+    val nameSavedMessage = stringResource(R.string.model_group_detail_name_saved)
     val reorderState = rememberReorderableLazyListState(lazyListState) { from, to ->
         // from.index / to.index are LazyColumn global indices (include header items).
         // Use the item key (entryId string) to find the correct position in memberIds.
@@ -181,7 +184,7 @@ fun ModelGroupDetailScreen(
                                 if (!focusState.isFocused && name.isNotBlank() && name != group.name) {
                                     providerRepository.updateGroup(group.copy(name = name))
                                     coroutineScope.launch {
-                                        snackbarHostState.showSnackbar("Name saved")
+                                        snackbarHostState.showSnackbar(nameSavedMessage)
                                     }
                                 }
                             },
@@ -195,8 +198,8 @@ fun ModelGroupDetailScreen(
                 SettingsSection(
                     header = stringResource(R.string.model_group_detail_routing_strategy),
                     footer = when (strategy) {
-                        RoutingStrategy.fallback -> "Try models in order. If one fails, advance to the next."
-                        RoutingStrategy.loadBalance -> "Distribute sessions across models in the group."
+                        RoutingStrategy.fallback -> stringResource(R.string.model_group_routing_fallback_desc)
+                        RoutingStrategy.loadBalance -> stringResource(R.string.model_group_routing_load_balance_desc)
                     },
                 ) {
                     SettingsChoiceRow(
@@ -225,8 +228,8 @@ fun ModelGroupDetailScreen(
                     SettingsSection(
                         header = stringResource(R.string.model_group_detail_fallback_trigger),
                         footer = when (fallbackStrategy) {
-                            FallbackStrategy.default -> "Fall back on rate limits (429) and server errors (5xx) only."
-                            FallbackStrategy.always -> "Fall back on any error, including network and auth failures."
+                            FallbackStrategy.default -> stringResource(R.string.model_group_fallback_trigger_default_desc)
+                            FallbackStrategy.always -> stringResource(R.string.model_group_fallback_trigger_always_desc)
                         },
                     ) {
                         SettingsChoiceRow(
@@ -270,7 +273,7 @@ fun ModelGroupDetailScreen(
                             .padding(horizontal = 16.dp),
                     ) {
                         Text(
-                            "No models in this group.",
+                            stringResource(R.string.model_group_detail_no_models),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(vertical = 12.dp),
@@ -367,7 +370,7 @@ fun ModelGroupDetailScreen(
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             Text(instanceLabel ?: "")
                                             Text(
-                                                if (providerDisabled) " · Provider disabled"
+                                                if (providerDisabled) " · " + stringResource(R.string.model_group_detail_provider_disabled)
                                                 else " · " + stringResource(R.string.model_not_listed_by_provider),
                                                 color = MaterialTheme.colorScheme.error,
                                                 style = MaterialTheme.typography.bodySmall,

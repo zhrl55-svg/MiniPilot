@@ -27,6 +27,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +44,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -50,6 +52,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.openminis.app.i18n.uppercaseForDisplay
+import com.openminis.app.ui.components.SectionDesign
 
 /**
  * Shared primitives for settings pages. Grouped-card layout (iOS inset-grouped style).
@@ -519,4 +522,64 @@ fun SettingsCardBlock(
             .fillMaxWidth(),
         content = content,
     )
+}
+
+// ─── Lazy-list card helpers ───────────────────────────────────────────────────
+//
+// SectionCard / SectionDivider are Column-scoped, but reorderable sections need
+// every row to stay a top-level LazyColumn item (ReorderableLazyListState only
+// sees direct items). These helpers paint the same inset-card visual per row.
+
+/** Small colored badge label (e.g. "Primary", "Sub", "Group"). */
+@Composable
+internal fun BadgeLabel(text: String, color: Color) {
+    Box(
+        modifier = Modifier
+            .clip(RoundedCornerShape(4.dp))
+            .background(color.copy(alpha = 0.12f))
+            .padding(horizontal = 6.dp, vertical = 2.dp),
+    ) {
+        Text(
+            text = text,
+            style = MaterialTheme.typography.labelSmall,
+            color = color,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = 11.sp,
+        )
+    }
+}
+
+@Composable
+internal fun Modifier.cardRow(isFirst: Boolean, isLast: Boolean): Modifier {
+    val shape = when {
+        isFirst && isLast -> SectionDesign.CardShape
+        isFirst -> RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)
+        isLast -> RoundedCornerShape(bottomStart = 12.dp, bottomEnd = 12.dp)
+        else -> RectangleShape
+    }
+    return this
+        .padding(horizontal = SectionDesign.ScreenHorizontalPadding)
+        .clip(shape)
+        .background(SectionDesign.cardColor())
+        .padding(
+            top = if (isFirst) SectionDesign.CardInnerVerticalPadding else 0.dp,
+            bottom = if (isLast) SectionDesign.CardInnerVerticalPadding else 0.dp,
+        )
+}
+
+/** Divider between two [cardRow] rows, painted on the card surface. */
+@Composable
+internal fun SectionDividerInsetCard() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = SectionDesign.ScreenHorizontalPadding)
+            .background(SectionDesign.cardColor()),
+    ) {
+        HorizontalDivider(
+            modifier = Modifier.padding(start = SectionDesign.DividerStartInset),
+            thickness = SectionDesign.DividerThickness,
+            color = SectionDesign.dividerColor(),
+        )
+    }
 }

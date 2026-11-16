@@ -42,6 +42,10 @@ import com.openminis.app.ui.settings.AddProviderScreen
 import com.openminis.app.ui.settings.ModelEntryDetailScreen
 import com.openminis.app.ui.settings.ModelGroupDetailScreen
 import com.openminis.app.ui.settings.ModelGroupsScreen
+import com.openminis.app.ui.settings.ModelDefaultsScreen
+import com.openminis.app.ui.settings.RuntimeModelsScreen
+import com.openminis.app.ui.settings.AssistantSettingsScreen
+import com.openminis.app.ui.settings.ContextSettingsScreen
 import com.openminis.app.ui.settings.ProviderDetailScreen
 import com.openminis.app.ui.settings.ProviderListScreen
 import com.openminis.app.ui.sandbox.FileBrowserScreen
@@ -96,6 +100,14 @@ object Routes {
     /** [T-android-provider-voice] Read-only shadow Voice Service detail. */
     const val SHADOW_VOICE_DETAIL = "voice_service/{instanceId}"
     const val MODEL_GROUPS = "model_groups"
+    /** Settings › Default Models: bind a group to chat, sub-tasks, voice, vision. */
+    const val MODEL_DEFAULTS = "model_defaults"
+    /** Models and groups the assistant may switch to at runtime (agent loop). */
+    const val RUNTIME_MODELS = "runtime_models"
+    /** Settings › Agent Runtime hub: tools, skills, memory, MCP, env vars. */
+    const val ASSISTANT_SETTINGS = "assistant_settings"
+    /** Settings › General › Message context switches. */
+    const val CONTEXT_SETTINGS = "context_settings"
     const val MODEL_GROUP_DETAIL = "model_group/{groupId}"
     const val ADD_MODELS_TO_GROUP = "add_models_to_group/{groupId}"
     /** T185: picker that adds model *entries* to the agent-loop set. */
@@ -654,30 +666,59 @@ fun AppNavigation(
                 onBack = { navController.safePopBackStack() },
                 onProvidersClick = { navController.safeNavigate(Routes.PROVIDER_LIST) },
                 onModelGroupsClick = { navController.safeNavigate(Routes.MODEL_GROUPS) },
+                onDefaultModelsClick = { navController.safeNavigate(Routes.MODEL_DEFAULTS) },
+                onUsageClick = { navController.safeNavigate(Routes.USAGE_STATS) },
+                onAgentRuntimeClick = { navController.safeNavigate(Routes.ASSISTANT_SETTINGS) },
+                onContextClick = { navController.safeNavigate(Routes.CONTEXT_SETTINGS) },
+                onAppearanceClick = { navController.safeNavigate(Routes.APPEARANCE) },
                 onRootfsClick = { navController.safeNavigate(Routes.STORAGE) },
                 onBackupClick = { navController.safeNavigate(Routes.BACKUP) },
-                onEnvVarsClick = { navController.safeNavigate(Routes.ENV_VARS) },
+                onSharedFoldersClick = { navController.safeNavigate(Routes.SHARED_FOLDERS) },
+                onMountedFoldersClick = { navController.safeNavigate(Routes.MOUNTED_FOLDERS) },
                 onNetworkClick = { navController.safeNavigate(Routes.NETWORK) },
                 onTailscaleClick = { navController.safeNavigate(Routes.NETWORK_TAILSCALE) },
                 onProxiesClick = { navController.safeNavigate(Routes.NETWORK_PROXIES) },
                 onContainerDnsClick = { navController.safeNavigate(Routes.CONTAINER_DNS) },
-                onSkillsClick = { navController.safeNavigate(Routes.SKILLS) },
-                onTerminalClick = { navController.safeNavigate(Routes.terminal()) },
-                onMemoryClick = { navController.safeNavigate(Routes.MEMORY) },
-                onAssistantRoutesClick = { navController.safeNavigate(Routes.ASSISTANT_ROUTES) },
-                onAgentsClick = { navController.safeNavigate(Routes.AGENTS) },
-                onAgentToolsClick = { navController.safeNavigate(Routes.AGENT_TOOLS) },
-                onMcpClick = { navController.safeNavigate(Routes.MCP) },
-                onSoulClick = { navController.safeNavigate(Routes.SOUL) },
                 onPermissionsClick = { navController.safeNavigate(Routes.PERMISSIONS) },
-                onUsageClick = { navController.safeNavigate(Routes.USAGE_STATS) },
-                onAppearanceClick = { navController.safeNavigate(Routes.APPEARANCE) },
                 onBackgroundClick = { navController.safeNavigate(Routes.background()) },
                 onVoiceWakeClick = { navController.safeNavigate(Routes.background(voiceWake = true)) },
                 onLogsClick = { navController.safeNavigate(Routes.LOGS) },
                 onAboutClick = { navController.safeNavigate(Routes.ABOUT) },
-                onMountedFoldersClick = { navController.safeNavigate(Routes.MOUNTED_FOLDERS) },
-                onSharedFoldersClick = { navController.safeNavigate(Routes.SHARED_FOLDERS) },
+            )
+        }
+
+        composable(Routes.ASSISTANT_SETTINGS) {
+            AssistantSettingsScreen(
+                onBack = { navController.safePopBackStack() },
+                onAgentToolsClick = { navController.safeNavigate(Routes.AGENT_TOOLS) },
+                onAgentsClick = { navController.safeNavigate(Routes.AGENTS) },
+                onSkillsClick = { navController.safeNavigate(Routes.SKILLS) },
+                onSoulClick = { navController.safeNavigate(Routes.SOUL) },
+                onMemoryClick = { navController.safeNavigate(Routes.MEMORY) },
+                onMcpClick = { navController.safeNavigate(Routes.MCP) },
+                onEnvVarsClick = { navController.safeNavigate(Routes.ENV_VARS) },
+                onAssistantRoutesClick = { navController.safeNavigate(Routes.ASSISTANT_ROUTES) },
+                onRuntimeModelsClick = { navController.safeNavigate(Routes.RUNTIME_MODELS) },
+            )
+        }
+
+        composable(Routes.CONTEXT_SETTINGS) {
+            ContextSettingsScreen(onBack = { navController.safePopBackStack() })
+        }
+
+        composable(Routes.MODEL_DEFAULTS) {
+            ModelDefaultsScreen(
+                providerRepository = providerRepository,
+                onBack = { navController.safePopBackStack() },
+            )
+        }
+
+        composable(Routes.RUNTIME_MODELS) {
+            RuntimeModelsScreen(
+                providerRepository = providerRepository,
+                onBack = { navController.safePopBackStack() },
+                onAddModels = { navController.safeNavigate(Routes.ADD_MODELS_TO_AGENT_LOOP) },
+                onAddGroups = { navController.safeNavigate(Routes.ADD_GROUPS_TO_AGENT_LOOP) },
             )
         }
 
@@ -988,12 +1029,6 @@ fun AppNavigation(
                 onGroupClick = { groupId ->
                     navController.safeNavigate(Routes.modelGroupDetail(groupId))
                 },
-                onAddAgentLoopModels = {
-                    navController.safeNavigate(Routes.ADD_MODELS_TO_AGENT_LOOP)
-                },
-                onAddAgentLoopGroups = {
-                    navController.safeNavigate(Routes.ADD_GROUPS_TO_AGENT_LOOP)
-                },
             )
         }
 
@@ -1045,16 +1080,15 @@ fun AppNavigation(
             )
         }
 
-        // T182: AgentLoopModels is no longer a standalone screen. The
-        // picker now lives as the last section inside ModelGroupsScreen
-        // (mirrors iOS Views/Providers/ModelGroupsView.swift L77-79's
-        // `AgentLoopModelsSection`). Routes.AGENT_LOOP_MODELS is left
-        // declared for back-compat with any deep-link string we may
-        // have shipped to early users; safePopBackStack lands them on
-        // the prior screen if it ever fires.
+        // T182: AgentLoopModels is no longer a standalone screen; its rows now
+        // live on RuntimeModelsScreen. The legacy route string is kept for
+        // back-compat with deep links shipped to early users and redirects to
+        // the new page instead of silently popping.
         composable(Routes.AGENT_LOOP_MODELS) {
             androidx.compose.runtime.LaunchedEffect(Unit) {
-                navController.safePopBackStack()
+                navController.navigate(Routes.RUNTIME_MODELS) {
+                    popUpTo(Routes.AGENT_LOOP_MODELS) { inclusive = true }
+                }
             }
         }
 

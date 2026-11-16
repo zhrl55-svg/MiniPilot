@@ -40,9 +40,9 @@ class NetworkSettingsSectionTest {
         val s = ProductionSources.read("ui/settings/SettingsScreen.kt")
         val storage = s.indexOf("// -- Storage --")
         val network = s.indexOf("// -- Network --")
-        val permissions = s.indexOf("// -- Permissions --")
-        assertTrue(storage in 0 until network && network < permissions)
-        val section = s.substring(network, permissions)
+        val device = s.indexOf("// -- Device & Permissions --")
+        assertTrue(storage in 0 until network && network < device)
+        val section = s.substring(network, device)
         for (cb in listOf("onNetworkClick", "onTailscaleClick", "onProxiesClick", "onContainerDnsClick")) {
             assertTrue(cb, section.contains("onClick = $cb"))
         }
@@ -71,6 +71,7 @@ class NetworkSettingsSectionTest {
     fun onlyRoutedProvidersAreListedAndOthersAreAddedInBulk() {
         // [PAR-261021-01, iOS 1b4e8bc8a]
         val s = ProductionSources.read("ui/settings/NetworkSettingsScreen.kt")
+            .replace("\r\n", "\n")
         assertTrue(s.contains("val routed = providers.filter { settings.providerRoutes.containsKey(it.id) }"))
         assertTrue(s.contains("routed.forEachIndexed { i, p ->"))
         assertTrue(s.contains("if (unrouted.isNotEmpty()) SettingsRow("))
