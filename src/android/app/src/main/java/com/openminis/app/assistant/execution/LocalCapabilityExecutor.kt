@@ -506,26 +506,90 @@ class LocalCapabilityExecutor(private val context: Context) {
         }
 
         val outputs = mutableListOf<String>()
-        var ok = true
+        var commandOk = true
         for (argv in command) {
             val r = ShizukuManager.runProcess(argv)
             if (r.exitCode != 0) {
-                ok = false
+                commandOk = false
                 outputs += "${argv.joinToString(" ")}: ${r.combined}"
                 break
             }
         }
-        if (!ok) {
+
+        // [T-settings-verify-state] `svc bluetooth/wifi` 在部分机型上改动
+        // 已经生效，进程却被系统 kill（实测退出码 137），只看退出码会把
+        // 成功判成失败，还会因此多弹一次设置页。以系统里读回的状态为准。
+        val applied = settingApplied(target, value)
+        if (applied == true) {
+            return NativeOffloadResult(
+                0,
+                JSONObject()
+                    .put("changed", true)
+                    .put("target", target)
+                    .put("value", value)
+                    .put("verified", true)
+                    .toString(2),
+            )
+        }
+        if (!commandOk || applied == false) {
             openSettings(target)
+            val reason = if (commandOk) "设置未生效，已打开对应设置页。" else "设置修改失败，已打开对应设置页。"
             return NativeOffloadResult(
                 1,
-                "设置修改失败，已打开对应设置页。\n${outputs.joinToString("\n")}",
+                if (outputs.isEmpty()) reason else "$reason\n${outputs.joinToString("\n")}",
             )
         }
         return NativeOffloadResult(
             0,
             JSONObject().put("changed", true).put("target", target).put("value", value).toString(2),
         )
+    }
+
+    /**
+     * 读回 [target] 的当前状态，确认改动是否真的生效。
+     *
+     * @return true 已到目标值；false 明确没到；null 无法读回（或该目标不做
+     *   读回校验）。状态是异步落盘的，第一次读不到时短暂轮询再下结论。
+     */
+    private fun settingApplied(target: String, value: String): Boolean? {
+        val expected = when (target) {
+            "wifi" -> Triple("global", "wifi_on", if (value == "off") "0" else "1")
+            "bluetooth" -> Triple("global", "bluetooth_on", if (value == "off") "0" else "1")
+            "airplane" -> Triple("global", "airplane_mode_on", if (value == "off") "0" else "1")
+            "rotation" -> Triple("system", "accelerometer_rotation", if (value == "off") "0" else "1")
+            "screen_timeout" -> Triple(
+                "system", "screen_off_timeout",
+                value.toIntOrNull()?.let { (it * 1000).toString() } ?: return null,
+            )
+            // zen_mode: 0 = 关闭，非 0 = 某种勿扰档位，具体档位不校验。
+            "dnd" -> Triple("global", "zen_mode", "")
+            "brightness" -> Triple(
+                "system", "screen_brightness",
+                value.removeSuffix("%").toIntOrNull()
+                    ?.let { (it.coerceIn(0, 100) * 255 / 100).toString() }
+                    ?: return null,
+            )
+            else -> return null
+        }
+        val (namespace, key, wanted) = expected
+        repeat(READBACK_ATTEMPTS) { attempt ->
+            val result = ShizukuManager.runProcess(arrayOf("settings", "get", namespace, key))
+            if (result.exitCode == 0) {
+                val current = result.stdout.trim()
+                val matched = when (target) {
+                    "dnd" -> if (value == "off") {
+                        current.isEmpty() || current == "null" || current == "0"
+                    } else {
+                        current.isNotEmpty() && current != "null" && current != "0"
+                    }
+                    else -> current == wanted
+                }
+                if (matched) return true
+            }
+            if (attempt < READBACK_ATTEMPTS - 1) Thread.sleep(READBACK_INTERVAL_MS)
+        }
+        // 亮度可能被厂商换算成别的刻度：读回不一致时不下「失败」结论。
+        return if (target == "brightness") null else false
     }
 
     private fun openSettings(target: String): NativeOffloadResult {
@@ -1026,6 +1090,10 @@ class LocalCapabilityExecutor(private val context: Context) {
     companion object {
         private const val TAG = "LocalCapabilityExecutor"
         private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+        /** 设置读回校验的轮询次数与间隔（状态异步落盘，给系统一点时间）。 */
+        private const val READBACK_ATTEMPTS = 6
+        private const val READBACK_INTERVAL_MS = 400L
 
         /**
          * Capabilities served by [execute] — the local life surface. Callers
