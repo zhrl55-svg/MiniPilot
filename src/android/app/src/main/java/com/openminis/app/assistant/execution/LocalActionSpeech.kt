@@ -116,12 +116,49 @@ object LocalActionSpeech {
      * 用于拦截键盘输入和语音唤醒：待确认时用户可能说「确认」，也可能开始
      * 一句新请求（「确认一下明天的日程」）。前者应当落到卡片上，后者必须
      * 照常发给模型，所以只接受短回答或整句确认词。
+     *
+     * [strict] 用于高风险动作：含糊的语气词（嗯/好/对）不算回答，免得
+     * 环境音或半句话把它们送进确认卡。
      */
-    fun isDirectAnswer(text: String): Boolean {
+    fun isDirectAnswer(text: String, strict: Boolean = false): Boolean {
         val normalized = normalize(text)
         if (normalized.isEmpty()) return false
-        if (normalized in CONFIRM_EXACT || normalized in CANCEL_EXACT) return true
-        return normalized.length <= 6 && decision(text) != VoiceConfirmationDecision.UNCLEAR
+        if (normalized in CANCEL_EXACT) return true
+        if (normalized in CONFIRM_EXACT && !strict) return true
+        if (normalized in STRICT_CONFIRM_EXACT) return true
+        val decision = if (strict) decisionStrict(text) else decision(text)
+        return normalized.length <= 6 && decision != VoiceConfirmationDecision.UNCLEAR
+    }
+
+    /**
+     * 高风险写操作的确认解析：只接受明确的同意词。
+     *
+     * WHY: 普通卡片里「嗯」「好」「对」是自然的应答，但删除、改系统设置、
+     * 拨号这类动作不能靠语气词落地 —— 远场识别经常从环境音或半句话里
+     * 产出「嗯」。实测过一次「说取消却被识别成嗯 → 蓝牙被关闭」，所以
+     * 高风险动作含糊时必须走「没听清」重问，绝不能执行。
+     */
+    fun decisionStrict(text: String): VoiceConfirmationDecision {
+        val normalized = normalize(text)
+        if (normalized.isEmpty()) return VoiceConfirmationDecision.UNCLEAR
+
+        val cancel = normalized in CANCEL_EXACT ||
+            CANCEL_CONTAINS.any { normalized.contains(it) }
+        var remainder = normalized
+        if (cancel) {
+            CANCEL_CONTAINS.sortedByDescending { it.length }.forEach {
+                remainder = remainder.replace(it, "")
+            }
+        }
+        // 与 decision() 一致：两侧都命中时判为歧义，不让任一方赢。
+        val confirm = normalized in STRICT_CONFIRM_EXACT ||
+            (remainder.isNotEmpty() && STRICT_CONFIRM_CONTAINS.any { remainder.contains(it) })
+        return when {
+            cancel && confirm -> VoiceConfirmationDecision.UNCLEAR
+            cancel -> VoiceConfirmationDecision.CANCEL
+            confirm -> VoiceConfirmationDecision.CONFIRM
+            else -> VoiceConfirmationDecision.UNCLEAR
+        }
     }
 
     /**
@@ -294,8 +331,25 @@ object LocalActionSpeech {
     )
 
     private val CONFIRM_EXACT = setOf(
-        "好", "嗯", "对", "是", "是的", "好的", "可以", "确定", "确认", "执行",
+        "好", "对", "是", "是的", "好的", "可以", "确定", "确认", "执行",
         "yes", "y", "ok", "okay", "sure", "confirm",
+    )
+
+    /**
+     * 高风险动作的明确同意词。
+     *
+     * 「嗯」已从普通肯定词里移除：它只是语气词，却是远场识别最常见的
+     * 幻觉输出之一，不能代表知情同意。
+     */
+    private val STRICT_CONFIRM_EXACT = setOf(
+        "确定", "确认", "执行", "同意", "没问题", "就这么办",
+        "yes", "okay", "sure", "confirm",
+    )
+
+    private val STRICT_CONFIRM_CONTAINS = setOf(
+        "确认", "确定", "执行吧", "执行", "同意", "没问题", "就这么办",
+        "yesplease", "yesdoit", "okay", "confirm", "doit", "goahead",
+        "proceed", "runit", "surething",
     )
 
     private val CONFIRM_CONTAINS = setOf(

@@ -1,6 +1,8 @@
 package com.openminis.app.ui.chat.voice
 
 import android.content.Context
+import android.media.AudioManager
+import android.media.ToneGenerator
 import com.openminis.app.R
 import com.openminis.app.assistant.execution.LocalActionSpeech
 import com.openminis.app.assistant.execution.VoiceConfirmationDecision
@@ -70,6 +72,29 @@ class LocalActionVoiceConfirmer(context: Context) {
     }
 
     /**
+     * [T-confirm-listening-cue] “The microphone is open NOW” cue.
+     *
+     * The prompt already ends with “请说确认或取消”, so users answer
+     * immediately — during the prompt tail / echo guard, while the mic is
+     * still closed. The first answer is then lost and people repeat, which
+     * the recogniser merges into “确认确认”. A short tone right before the
+     * mic opens gives an unambiguous turn-taking signal (and survives the
+     * screen being off / the card not being looked at).
+     *
+     * Talked prompts cannot do this job: the recogniser would transcribe
+     * the cue itself. A non-speech tone is ignored by the ASR.
+     */
+    private var tone: ToneGenerator? = null
+
+    private fun cueListening() {
+        runCatching {
+            val generator = tone ?: ToneGenerator(AudioManager.STREAM_MUSIC, CUE_VOLUME)
+                .also { tone = it }
+            generator.startTone(ToneGenerator.TONE_PROP_BEEP, CUE_MS)
+        }
+    }
+
+    /**
      * 开始一次语音确认。回调在主线程触发；[onDecision] 为 true 表示用户确认，
      * [onChoice] 带回多候选时选中的候选 id（单候选不会调用）。
      */
@@ -126,6 +151,8 @@ class LocalActionVoiceConfirmer(context: Context) {
         stop()
         scope.cancel()
         runCatching { tts.shutdown() }
+        runCatching { tone?.release() }
+        tone = null
         announcementPlayer?.let {
             VoiceOutputState.unregisterPlayer(it)
             runCatching { it.shutdown() }
@@ -290,15 +317,16 @@ class LocalActionVoiceConfirmer(context: Context) {
             // 输入框的动态光效会提示正在聆听。
             AppLogger.info(TAG, "voice confirmation: prompt not spoken; listening anyway")
             _phase.value = VoiceConfirmPhase.LISTENING
-            if (!handle(listenOnce(LISTEN_WINDOW_MS), onDecision)) {
+            if (!handle(listenOnce(LISTEN_WINDOW_MS), onDecision, action.destructive)) {
                 AppLogger.info(TAG, "voice confirmation: no usable answer, leaving the card open")
             }
             return
         }
         // 让扬声器的尾音散掉再开麦，否则识别器会把刚播报的「确认」当成回答。
+        // 700ms 足够覆盖尾音衰减；更长只会把用户的第一句回答挡在麦克风外。
         delay(ECHO_GUARD_MS)
         _phase.value = VoiceConfirmPhase.LISTENING
-        if (handle(listenOnce(LISTEN_WINDOW_MS), onDecision)) return
+        if (handle(listenOnce(LISTEN_WINDOW_MS), onDecision, action.destructive)) return
 
         // 第一遍没听清：再问一次。仍然不明白就把卡片留给手指。
         AppLogger.info(TAG, "voice confirmation: retry prompt")
@@ -306,7 +334,7 @@ class LocalActionVoiceConfirmer(context: Context) {
         if (speak(resources.getString(R.string.assistant_voice_confirm_retry))) {
             delay(ECHO_GUARD_MS)
             _phase.value = VoiceConfirmPhase.LISTENING
-            if (!handle(listenOnce(LISTEN_WINDOW_MS), onDecision)) {
+            if (!handle(listenOnce(LISTEN_WINDOW_MS), onDecision, action.destructive)) {
                 AppLogger.info(TAG, "voice confirmation: no usable answer, leaving the card open")
             }
         }
@@ -359,10 +387,16 @@ class LocalActionVoiceConfirmer(context: Context) {
     ): Boolean {
         com.openminis.app.llm.mnn.AssistantFastPath.trace(
             appContext,
-            "voice: heard ${heard?.take(40) ?: "null"}",
+            "voice: heard ${heard?.take(40) ?: "null"} strict=${action.destructive}",
         )
         if (heard.isNullOrBlank()) return false
-        if (LocalActionSpeech.decision(heard) == VoiceConfirmationDecision.CANCEL) {
+        val strict = action.destructive
+        val decision = if (strict) {
+            LocalActionSpeech.decisionStrict(heard)
+        } else {
+            LocalActionSpeech.decision(heard)
+        }
+        if (decision == VoiceConfirmationDecision.CANCEL) {
             AppLogger.info(TAG, "voice choice: cancel 「${heard.take(40)}」")
             onDecision(false)
             return true
@@ -375,9 +409,7 @@ class LocalActionVoiceConfirmer(context: Context) {
             return true
         }
         // 「确认」没带序号：只有唯一候选时无歧义。
-        if (action.choices.size == 1 &&
-            LocalActionSpeech.decision(heard) == VoiceConfirmationDecision.CONFIRM
-        ) {
+        if (action.choices.size == 1 && decision == VoiceConfirmationDecision.CONFIRM) {
             onChoice(action.choices.first().id)
             return true
         }
@@ -386,13 +418,22 @@ class LocalActionVoiceConfirmer(context: Context) {
     }
 
     /** @return true 表示已经做出确认/取消决定。 */
-    private fun handle(heard: String?, onDecision: (Boolean) -> Unit): Boolean {
+    private fun handle(
+        heard: String?,
+        onDecision: (Boolean) -> Unit,
+        strict: Boolean = false,
+    ): Boolean {
         com.openminis.app.llm.mnn.AssistantFastPath.trace(
             appContext,
-            "voice: heard ${heard?.take(40) ?: "null"}",
+            "voice: heard ${heard?.take(40) ?: "null"} strict=$strict",
         )
         if (heard.isNullOrBlank()) return false
-        return when (LocalActionSpeech.decision(heard)) {
+        val decision = if (strict) {
+            LocalActionSpeech.decisionStrict(heard)
+        } else {
+            LocalActionSpeech.decision(heard)
+        }
+        return when (decision) {
             VoiceConfirmationDecision.CONFIRM -> {
                 AppLogger.info(TAG, "voice confirmation: confirm 「${heard.take(40)}」")
                 onDecision(true)
@@ -452,6 +493,10 @@ class LocalActionVoiceConfirmer(context: Context) {
         // 就开麦会和它抢麦克风（和 HoldToTalkController 的做法一致）。
         // stopEngine 会 join 采集线程，放到 IO 上，避免卡主线程。
         withContext(Dispatchers.IO) { WakeWordService.pauseForInAppCapture() }
+        // Cue only after the wake engine has released the microphone: that
+        // hand-off can take ~1s, and a cue played before it would still leave
+        // the user's answer outside the recording.
+        cueListening()
         try {
             SpeechRecognitionManager.startRecording(
                 onPartialOrFinal = { text, isFinal ->
@@ -497,13 +542,23 @@ class LocalActionVoiceConfirmer(context: Context) {
         private const val ANNOUNCE_TIMEOUT_MS = 60_000L
 
         /** 播报提示后的聆听窗口：一句话足够；超时后主动 stop 转写。 */
-        private const val LISTEN_WINDOW_MS = 5_000L
+        // 3.5s, not 5s: the on-device engine only emits its final after
+        // stopRecording, so this window is dead listening time the user
+        // spends waiting — and repeating the answer. The cue tells them when
+        // the mic opens; a miss falls through to the retry prompt anyway.
+        private const val LISTEN_WINDOW_MS = 3_500L
 
         /** stop 之后等待端侧模型出字的时间。 */
         private const val TRANSCRIBE_WINDOW_MS = 8_000L
 
         /** 播报结束到开麦之间的静默，避开扬声器尾音。 */
-        private const val ECHO_GUARD_MS = 1_500L
+        // 1.5s was longer than the physical speaker tail needed; it also
+        // swallowed a quick “确认” spoken right after the prompt.
+        private const val ECHO_GUARD_MS = 700L
+
+        /** 开麦提示音：短、非语音，识别器不会把它当成回答。 */
+        private const val CUE_MS = 120
+        private const val CUE_VOLUME = 55
 
         /** 执行完成播报前的缓冲：让唤醒确认的短应答先说完。 */
         private const val ANNOUNCE_DELAY_MS = 1_200L

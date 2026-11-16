@@ -110,6 +110,17 @@ class HoldToTalkController(private val context: Context) {
     /** True while the wake service is holding the microphone back for us. */
     private var wakePaused = false
 
+    /**
+     * [T-music-pause-on-voice] True while this hold parked the music player.
+     *
+     * The raw capture below bypasses [SpeechRecognitionManager], which is
+     * where the music normally gets suspended, so the pair has to be driven
+     * here. Kept symmetric with the wake hand-off: pause after the wake
+     * service yields the microphone (its own conversation may resume music
+     * while aborting), resume as soon as the capture closes.
+     */
+    private var playbackSuspended = false
+
     /** Set when the finger was lifted before the microphone was open. */
     private var stopRequested = false
 
@@ -182,6 +193,9 @@ class HoldToTalkController(private val context: Context) {
         // capture is open, so the service cannot infer the hand-off itself.
         WakeWordService.pauseForInAppCapture()
         wakePaused = true
+        // After the wake hand-off (aborting its conversation can resume
+        // music): park the song for our own microphone window.
+        suspendPlaybackForCapture()
         if (!withContext(Dispatchers.IO) { recorder.start() }) {
             // The background wake service hands the microphone back within a
             // frame or two — retry once instead of losing the hold.
@@ -192,6 +206,7 @@ class HoldToTalkController(private val context: Context) {
             if (currentSession != session || stopRequested || !retried) {
                 AppLogger.info(TAG, "麦克风启动失败")
                 resumeWake()
+                resumePlaybackAfterCapture()
                 state = State.IDLE
                 return
             }
@@ -204,6 +219,7 @@ class HoldToTalkController(private val context: Context) {
             capture = null
             recorder.stop()
             resumeWake()
+            resumePlaybackAfterCapture()
             state = State.IDLE
             return
         }
@@ -274,6 +290,22 @@ class HoldToTalkController(private val context: Context) {
     private fun stopCapture() {
         capture?.stop()
         capture = null
+        // The microphone is closed, so the song can come back. Done here
+        // rather than in each caller: stop/cancel/release/sleep all funnel
+        // through this method, and a missed resume would leave music muted.
+        resumePlaybackAfterCapture()
+    }
+
+    private fun suspendPlaybackForCapture() {
+        if (playbackSuspended) return
+        playbackSuspended = true
+        runCatching { com.openminis.app.speech.VoiceOutputState.suspendAllForCapture() }
+    }
+
+    private fun resumePlaybackAfterCapture() {
+        if (!playbackSuspended) return
+        playbackSuspended = false
+        runCatching { com.openminis.app.speech.VoiceOutputState.resumeAllAfterCapture() }
     }
 
     /** Hand the microphone back to the wake service (idempotent). */

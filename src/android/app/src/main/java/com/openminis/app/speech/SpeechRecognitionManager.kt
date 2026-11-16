@@ -52,11 +52,20 @@ object SpeechRecognitionManager {
      *
      * FINISHING deliberately does NOT resume: the engine is still delivering
      * the final result and the mic may still be hot.
+     *
+     * Only resume what this manager suspended: offline transcription
+     * ([transcribeAudio]) also drives STARTING → IDLE, and used to release a
+     * suspension owned by the wake conversation, bringing the music back in
+     * the middle of the conversation.
      */
+    @Volatile
+    private var playbackSuspended = false
+
     private fun setState(next: RecognitionState) {
         val prev = _state.value
         _state.value = next
-        if (next == RecognitionState.IDLE && prev != RecognitionState.IDLE) {
+        if (next == RecognitionState.IDLE && prev != RecognitionState.IDLE && playbackSuspended) {
+            playbackSuspended = false
             VoiceOutputState.resumeAllAfterCapture()
         }
     }
@@ -400,6 +409,7 @@ object SpeechRecognitionManager {
         // Ordering matters: this runs before STARTING is published, so playback
         // is already stopping by the time the recognizer warms up, rather than
         // racing the first audio frames.
+        playbackSuspended = true
         VoiceOutputState.suspendAllForCapture()
 
         setState(RecognitionState.STARTING)

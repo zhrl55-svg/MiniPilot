@@ -370,6 +370,15 @@ class WakeWordService : Service() {
     @Volatile
     private var bargeInBusy = false
 
+    /**
+     * [T-music-pause-on-voice] True while the conversation parked the music
+     * player. The player itself remembers whether it was actually playing,
+     * so a resume without a matching pause is a no-op; this flag only makes
+     * the service's own suspend/resume pairs symmetric.
+     */
+    @Volatile
+    private var playbackSuspendedForConversation = false
+
     private val voiceprint by lazy { WakeVoiceprintGate(this) }
 
     /**
@@ -449,6 +458,8 @@ class WakeWordService : Service() {
         overlay?.hide()
         overlay = null
         releaseWakeLock()
+        // A destroyed service must not leave the music parked forever.
+        resumePlaybackAfterConversation()
         if (WakeWordSettings.enabled.value) {
             // The service died while the feature is still on. Android 14+
             // refuses a microphone foreground service that is started from
@@ -859,6 +870,9 @@ class WakeWordService : Service() {
         if (conversationState != ConversationState.IDLE) return
         conversationState = ConversationState.LISTENING
         conversationDeadline = SystemClock.elapsedRealtime() + CONVERSATION_WINDOW_MS
+        // [T-music-pause-on-voice] 音乐会被麦克风录进去，也会盖住「我在」和
+        // 用户的请求：整段语音对话期间暂停，回到待命时再恢复。
+        suspendPlaybackForConversation()
         // Every cycle starts with a clean echo window — the previous cycle's
         // acknowledgement must not make this cycle's first sentence look
         // like the assistant talking to itself.
@@ -1430,6 +1444,7 @@ class WakeWordService : Service() {
         conversationState = ConversationState.IDLE
         removeVad()
         removeBargeInVad()
+        resumePlaybackAfterConversation()
         engine?.setDetecting(true)
         publish(VoiceWakePhase.WAITING, "等待唤醒词「${WakeWordSettings.wakeWord.value}」")
         AppLogger.info(TAG, "8 秒内没有通过声纹的语音，回到待命")
@@ -1442,9 +1457,26 @@ class WakeWordService : Service() {
         conversationState = ConversationState.IDLE
         removeVad()
         removeBargeInVad()
+        resumePlaybackAfterConversation()
         if (wasReplying) stopSpeakingNow()
         engine?.setDetecting(true)
         AppLogger.info(TAG, "结束语音对话：$reason")
+    }
+
+    /** Park the music player for the duration of the voice conversation. */
+    private fun suspendPlaybackForConversation() {
+        if (playbackSuspendedForConversation) return
+        playbackSuspendedForConversation = true
+        runCatching { VoiceOutputState.suspendAllForCapture() }
+        AppLogger.info(TAG, "语音对话开始，暂停音乐")
+    }
+
+    /** The conversation ended however it ended: give the music back. */
+    private fun resumePlaybackAfterConversation() {
+        if (!playbackSuspendedForConversation) return
+        playbackSuspendedForConversation = false
+        runCatching { VoiceOutputState.resumeAllAfterCapture() }
+        AppLogger.info(TAG, "语音对话结束，恢复音乐")
     }
 
 

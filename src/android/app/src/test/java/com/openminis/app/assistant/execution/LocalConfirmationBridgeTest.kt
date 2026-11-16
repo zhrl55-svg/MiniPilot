@@ -75,4 +75,28 @@ class LocalConfirmationBridgeTest {
         assertFalse(called)
         assertTrue(LocalConfirmationBridge.hasPending())
     }
+
+    @Test
+    fun `a destructive card ignores bare fillers`() {
+        var confirmed = false
+        LocalConfirmationBridge.register(
+            id = "pending",
+            sessionId = "session-a",
+            strict = true,
+            confirm = { confirmed = true },
+            cancel = {},
+        )
+
+        // 远场幻觉最常见的就是这种语气词；它们不能执行高风险动作。
+        assertNull(LocalConfirmationBridge.resolve("嗯"))
+        assertNull(LocalConfirmationBridge.resolve("好"))
+        assertTrue(LocalConfirmationBridge.hasPending())
+
+        assertEquals(
+            LocalConfirmationBridge.Resolution.CONFIRM,
+            LocalConfirmationBridge.resolve("确认"),
+        )
+        shadowOf(Looper.getMainLooper()).idle()
+        assertTrue(confirmed)
+    }
 }

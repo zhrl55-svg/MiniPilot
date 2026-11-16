@@ -810,6 +810,30 @@ object SessionActivityTracker {
     }
 
     /**
+     * [T-wake-current-chat] The chat session the UI is showing right now, or
+     * null when the user is not inside a chat.
+     *
+     * Driven by MainActivity from the navigation back stack (the same place
+     * that maintains presence). The wake conversation reads it so a spoken
+     * command issued while the user is looking at a chat is appended to THAT
+     * chat instead of being routed into the separate 语音对话 session — which
+     * looked like a brand-new conversation opening under the user.
+     *
+     * Unlike presence this deliberately tracks the visible route only; the
+     * wake path also checks that the app is in the foreground before using
+     * it, so a stale value from a backgrounded chat cannot leak a command
+     * into the wrong session.
+     */
+    private val _visibleChatSession = MutableStateFlow<String?>(null)
+    val visibleChatSession: StateFlow<String?> = _visibleChatSession.asStateFlow()
+
+    fun setVisibleChatSession(sessionId: String?) {
+        if (_visibleChatSession.value == sessionId) return
+        _visibleChatSession.value = sessionId
+        Log.d(TAG, "Visible chat session: $sessionId")
+    }
+
+    /**
      * T166: marks the user as present in a chat (composer is mounted,
      * messages list is rendering). Idempotent. Starts the foreground
      * service the first time presence is recorded so the process holds

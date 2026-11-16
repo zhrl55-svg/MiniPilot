@@ -9519,11 +9519,21 @@ class ChatViewModel(
 
     fun sendMessage(text: String) {
         // 确认卡挂着时，一句短「确认/取消」（键盘或按住说话）应当落到卡片上，
-        // 而不是变成一条新的聊天消息。
-        if (_pendingLocalAction.value != null &&
-            com.openminis.app.assistant.execution.LocalActionSpeech.isDirectAnswer(text)
+        // 而不是变成一条新的聊天消息。高风险动作只认明确同意词：含糊的
+        // 「嗯/好」不能把删除、改设置、拨号这类操作执行掉。
+        val pendingCard = _pendingLocalAction.value
+        if (pendingCard != null &&
+            com.openminis.app.assistant.execution.LocalActionSpeech.isDirectAnswer(
+                text,
+                strict = pendingCard.destructive,
+            )
         ) {
-            when (com.openminis.app.assistant.execution.LocalActionSpeech.decision(text)) {
+            val decision = if (pendingCard.destructive) {
+                com.openminis.app.assistant.execution.LocalActionSpeech.decisionStrict(text)
+            } else {
+                com.openminis.app.assistant.execution.LocalActionSpeech.decision(text)
+            }
+            when (decision) {
                 com.openminis.app.assistant.execution.VoiceConfirmationDecision.CONFIRM -> {
                     confirmLocalAction(source = "text")
                     return
@@ -9975,9 +9985,29 @@ class ChatViewModel(
                         // 返回 false 表示「这条不该走端侧」，照旧走云端：
                         // 规则没命中、抽参不完整、ABI 不支持、模型缺失、
                         // 或有附件（端侧不处理图片/文件）。
-                        val handledLocally = if (!headless && promptAttachments.isEmpty()) {
+                        val fastPathSessionId = realSessionId.ifEmpty { activeSessionId }
+                        // [T-voice-wake-local-control] A headless turn has no
+                        // card to tap — UNLESS the user is looking at this very
+                        // chat. Wake commands route into the visible chat, so
+                        // the card can be shown there and answered by voice or
+                        // tap; other headless turns (background / scheduled)
+                        // still send write actions to the cloud instead of
+                        // waiting for a card nobody can see.
+                        val visibleChatId = com.openminis.app.service.SessionActivityTracker
+                            .visibleChatSession.value
+                            ?.let { com.openminis.app.ui.chat.ChatViewModelStore.resolvePersistedId(it) }
+                        val appForeground =
+                            (context.applicationContext as? com.openminis.app.MinisApp)
+                                ?.isAppForeground() == true
+                        val allowConfirmation = !headless ||
+                            (appForeground && visibleChatId != null && visibleChatId == fastPathSessionId)
+                        val handledLocally = if (promptAttachments.isEmpty()) {
                             runCatching {
-                                runLocalAssistantFastPath(trimmed, realSessionId.ifEmpty { activeSessionId })
+                                runLocalAssistantFastPath(
+                                    trimmed,
+                                    fastPathSessionId,
+                                    allowConfirmation = allowConfirmation,
+                                )
                             }.getOrElse { t ->
                                 AppLogger.warning(TAG_STREAM, "[T-mnn-local] fast path threw: ${t.javaClass.simpleName}: ${t.message}")
                                 false
@@ -11158,6 +11188,7 @@ class ChatViewModel(
     private suspend fun runLocalAssistantFastPath(
         userText: String,
         sessionId: String,
+        allowConfirmation: Boolean = true,
     ): Boolean {
         val fastPath = com.openminis.app.llm.mnn.AssistantFastPath
         if (sessionId.isEmpty()) {
@@ -11275,6 +11306,19 @@ class ChatViewModel(
                 needsModelExtraction = false,
                 missingSlots = emptySet(),
             )
+        }
+
+        // [T-voice-wake-local-control] A headless turn (the wake conversation)
+        // has no confirmation card to tap. Writes that demand confirmation
+        // must fall through to the cloud rather than wait for a UI that may
+        // not be showing; everyday no-confirm controls — media transport,
+        // the torch, device status — still run locally and instantly.
+        if (local.needsConfirmation && !allowConfirmation) {
+            fastPath.trace(
+                context,
+                "skip: headless-needs-confirmation ${local.capability}/${local.action}",
+            )
+            return false
         }
 
         if (!com.openminis.app.llm.mnn.LocalAssistantRouter.isSafe(
@@ -11569,6 +11613,7 @@ class ChatViewModel(
         com.openminis.app.assistant.execution.LocalConfirmationBridge.register(
             id = pending.id,
             sessionId = sessionId,
+            strict = pending.destructive,
             confirm = { confirmLocalAction(source = "voice-wake") },
             cancel = { cancelLocalAction(source = "voice-wake") },
         )

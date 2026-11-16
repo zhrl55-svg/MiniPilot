@@ -592,6 +592,9 @@ class MainActivity : ComponentActivity() {
                                     SessionActivityTracker.setPresent(sid)
                                 }
                                 currentChatSessionId = sid
+                                // [T-wake-current-chat] The wake conversation
+                                // targets the chat the user is looking at.
+                                SessionActivityTracker.setVisibleChatSession(sid)
                             }
                         }
                     }
@@ -681,6 +684,9 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         currentChatSessionId?.let { SessionActivityTracker.setAbsent(it) }
         currentChatSessionId = null
+        // [T-wake-current-chat] No UI is showing a chat any more; the wake
+        // conversation must fall back to the persistent voice session.
+        SessionActivityTracker.setVisibleChatSession(null)
         super.onDestroy()
     }
 

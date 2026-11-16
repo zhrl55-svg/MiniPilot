@@ -4,8 +4,10 @@ import android.content.Context
 import com.openminis.app.MinisApp
 import com.openminis.app.debug.HeadlessChatRunner
 import com.openminis.app.logging.AppLogger
+import com.openminis.app.service.SessionActivityTracker
 import com.openminis.app.speech.TextToSpeechManager
 import com.openminis.app.speech.VoiceOutputState
+import com.openminis.app.ui.chat.ChatViewModelStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -43,6 +45,13 @@ internal object WakeConversation {
     suspend fun ensureSession(context: Context): String {
         val app = context.applicationContext as? MinisApp
             ?: throw IllegalStateException("MinisApp 未初始化")
+        // [T-wake-current-chat] 用户正开着某个聊天时，唤醒命令就落在这个
+        // 会话里。以前无条件写进独立的「语音对话」会话，从用户视角看就像
+        // 在聊天窗口里一唤醒就凭空多开了一个会话。
+        visibleChatSession(app)?.let {
+            AppLogger.info(TAG, "唤醒命令进入当前会话 $it")
+            return it
+        }
         val cached = WakeWordSettings.voiceSessionId.value
         if (!cached.isNullOrBlank()) {
             val exists = withContext(Dispatchers.IO) {
@@ -66,6 +75,27 @@ internal object WakeConversation {
             AppLogger.info(TAG, "已创建语音会话 ${session.id}")
             session.id
         }
+    }
+
+    /**
+     * [T-wake-current-chat] 前台正在展示的聊天会话（草稿会解析成真实 id），
+     * 没有或不可用时返回 null，调用方退回固定的「语音对话」会话。
+     *
+     * 只在 app 处于前台时采用：用户已经切走聊天窗口时，唤醒对话仍然应该
+     * 待在自己的语音会话里，而不是往一个用户看不见的聊天里追加消息。
+     */
+    private suspend fun visibleChatSession(app: MinisApp): String? {
+        if (!app.isAppForeground()) return null
+        val routeId = SessionActivityTracker.visibleChatSession.value
+        if (routeId.isNullOrBlank()) return null
+        // The route may still carry a "__new__…" draft key after its first
+        // send promoted it; resolve to the persisted id the shared VM uses.
+        val sessionId = ChatViewModelStore.resolvePersistedId(routeId)
+        val usable = withContext(Dispatchers.IO) {
+            app.chatRepository.getSession(sessionId) != null ||
+                ChatViewModelStore.existing(sessionId) != null
+        }
+        return sessionId.takeIf { usable }
     }
 
     /**

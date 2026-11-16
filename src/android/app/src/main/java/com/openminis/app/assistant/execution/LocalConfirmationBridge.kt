@@ -23,6 +23,7 @@ object LocalConfirmationBridge {
     private data class Pending(
         val id: String,
         val sessionId: String,
+        val strict: Boolean,
         val confirm: () -> Unit,
         val cancel: () -> Unit,
     )
@@ -37,10 +38,11 @@ object LocalConfirmationBridge {
     fun register(
         id: String,
         sessionId: String,
+        strict: Boolean = false,
         confirm: () -> Unit,
         cancel: () -> Unit,
     ) {
-        pending = Pending(id, sessionId, confirm, cancel)
+        pending = Pending(id, sessionId, strict, confirm, cancel)
     }
 
     fun unregister(id: String) {
@@ -57,8 +59,12 @@ object LocalConfirmationBridge {
      */
     fun resolve(text: String): Resolution? {
         val current = pending ?: return null
-        if (!LocalActionSpeech.isDirectAnswer(text)) return null
-        val decision = LocalActionSpeech.decision(text)
+        if (!LocalActionSpeech.isDirectAnswer(text, strict = current.strict)) return null
+        val decision = if (current.strict) {
+            LocalActionSpeech.decisionStrict(text)
+        } else {
+            LocalActionSpeech.decision(text)
+        }
         val resolution = when (decision) {
             VoiceConfirmationDecision.CONFIRM -> Resolution.CONFIRM
             VoiceConfirmationDecision.CANCEL -> Resolution.CANCEL

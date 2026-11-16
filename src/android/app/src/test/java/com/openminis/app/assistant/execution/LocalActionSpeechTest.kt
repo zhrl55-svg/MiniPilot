@@ -25,10 +25,35 @@ class LocalActionSpeechTest {
 
     @Test
     fun `short affirmatives confirm`() {
-        listOf("确认", "确认。", "好的", "执行", "执行吧", "可以", "嗯", "对", "yes", "OK", "sure")
+        listOf("确认", "确认。", "好的", "执行", "执行吧", "可以", "对", "yes", "OK", "sure")
             .forEach {
                 assertEquals(it, VoiceConfirmationDecision.CONFIRM, LocalActionSpeech.decision(it))
             }
+    }
+
+    @Test
+    fun `bare fillers never confirm`() {
+        // 远场识别最常见的幻觉之一；「嗯」只是语气词，不能代表同意。
+        listOf("嗯", "嗯。", "嗯嗯").forEach {
+            assertEquals(it, VoiceConfirmationDecision.UNCLEAR, LocalActionSpeech.decision(it))
+        }
+    }
+
+    @Test
+    fun `destructive actions only accept explicit consent`() {
+        listOf("确认", "确定", "执行", "确认执行", "没问题", "yes", "confirm").forEach {
+            assertEquals(it, VoiceConfirmationDecision.CONFIRM, LocalActionSpeech.decisionStrict(it))
+        }
+        listOf("嗯", "好", "好的", "对", "是", "可以", "等一下").forEach {
+            assertEquals(it, VoiceConfirmationDecision.UNCLEAR, LocalActionSpeech.decisionStrict(it))
+        }
+        listOf("取消", "不用了", "no").forEach {
+            assertEquals(it, VoiceConfirmationDecision.CANCEL, LocalActionSpeech.decisionStrict(it))
+        }
+        assertEquals(
+            VoiceConfirmationDecision.UNCLEAR,
+            LocalActionSpeech.decisionStrict("确认取消"),
+        )
     }
 
     @Test
@@ -57,6 +82,13 @@ class LocalActionSpeechTest {
         }
         listOf("确认一下明天的日程", "把明天的会议改到下午三点", "今天天气怎么样").forEach {
             assertEquals(it, false, LocalActionSpeech.isDirectAnswer(it))
+        }
+        // 高风险动作：含糊应答不算在回答卡片。
+        listOf("嗯", "好", "好的", "对").forEach {
+            assertEquals(it, false, LocalActionSpeech.isDirectAnswer(it, strict = true))
+        }
+        listOf("确认", "确定", "取消", "no").forEach {
+            assertEquals(it, true, LocalActionSpeech.isDirectAnswer(it, strict = true))
         }
     }
 
