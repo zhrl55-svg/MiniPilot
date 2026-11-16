@@ -2301,6 +2301,37 @@ class ProviderRepository(private val context: Context) {
         }
 
     /**
+     * [T-android-voice-synthesis-settings] Picked cloud VOICE id for a provider
+     * instance whose model and voice are separate namespaces (MiniMax:
+     * `speech-2.8-hd` + `female-shaonv`).
+     *
+     * For almost every vendor the ModelEntry id IS the voice id, which is why
+     * read-aloud passes the entry id as `VoiceOutputRequest.voice`. MiniMax is
+     * the exception: its templates seed MODELS, and the adapter ignores a
+     * voice equal to the model id. This per-device pref (not part of the synced
+     * config, exactly like the override above) fills that gap; null means the
+     * vendor's own default voice.
+     */
+    fun voiceOutputCloudVoice(instanceId: String): String? =
+        prefs.getString("voice.output.cloudVoice.$instanceId", null)
+
+    fun setVoiceOutputCloudVoice(instanceId: String, voiceId: String?) {
+        val editor = prefs.edit()
+        if (voiceId.isNullOrBlank()) {
+            editor.remove("voice.output.cloudVoice.$instanceId")
+        } else {
+            editor.putString("voice.output.cloudVoice.$instanceId", voiceId)
+        }
+        editor.apply()
+        // The Settings summary reads this while composing; bumping the
+        // revision keeps every config collector in step with the pick.
+        synchronized(configLock) {
+            val config = _config.value
+            _config.value = config.copy(revision = ProviderConfig.nextRevision())
+        }
+    }
+
+    /**
      * The resolved ACTIVE voice-output choice for read-aloud: either the
      * on-device System TextToSpeech or a provider entry. Same shape and
      * resolution order as [VoiceInputChoice].

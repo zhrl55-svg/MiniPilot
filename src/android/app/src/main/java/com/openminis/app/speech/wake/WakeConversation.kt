@@ -34,7 +34,7 @@ internal object WakeConversation {
     private const val REPLY_TIMEOUT_MS = 90_000L
 
     /** Longer replies are trimmed — nobody wants a five-minute monologue. */
-    private const val MAX_SPEECH_CHARS = 600
+    internal const val MAX_SPEECH_CHARS = 600
 
     /**
      * The session backing the background conversation.

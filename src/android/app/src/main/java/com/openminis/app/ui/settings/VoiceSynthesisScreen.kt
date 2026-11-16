@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -18,6 +19,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.openminis.app.R
+import com.openminis.app.data.model.MiniMaxVoices
 import com.openminis.app.data.model.ModelEntry
 import com.openminis.app.data.model.ProviderInstance
 import com.openminis.app.data.model.SystemVoiceIds
@@ -25,27 +27,33 @@ import com.openminis.app.data.model.isVoiceOutputCandidate
 import com.openminis.app.data.repository.ProviderRepository
 import com.openminis.app.speech.SystemTtsVoiceCatalog
 import com.openminis.app.speech.VoiceOutputState
+import com.openminis.app.speech.VoicePreviewPlayer
 import com.openminis.app.ui.components.SectionDesign
 import com.openminis.app.ui.components.SectionFooter
+import java.util.Locale
 
 /**
- * [T-android-voice-synthesis-settings] Settings › Speech synthesis — choose
- * what reads replies and selected text aloud: the device TTS engine (with a
- * specific voice) or a cloud TTS model from a configured provider (MiniMax,
- * Doubao, Azure, ElevenLabs, …).
+ * [T-android-voice-synthesis-settings] Settings › Speech synthesis, in two
+ * levels — the hierarchy mirrors the actual decision the user makes:
  *
- * The selection writes exactly what the chat capsule's
- * [com.openminis.app.ui.chat.voice.VoiceOutputPickerSheet] writes:
- *  - [ProviderRepository.voiceOutputOverrideEntryId] — the per-device override
- *    slot [ProviderRepository.resolveVoiceOutputChoice] consults first;
- *  - [VoiceOutputState.setSystemVoice] — the system engine's voice id, which
- *    [com.openminis.app.speech.ReadAloudPlayer] applies per utterance.
+ *   1. How should replies be spoken — the on-device engine, or a cloud vendor?
+ *   2. Only then the details of that choice:
+ *      • System → language, then a voice inside that language.
+ *      • Cloud  → the provider, then its voice (MiniMax voice ids, or the
+ *        provider's model entries for vendors whose entries ARE voices).
  *
- * Both selections are visible in one place instead of being reachable only
- * from the chat capsule or by binding a "Voice Output" model group under
- * Default Models. The group binding is still honoured through the "follow
- * default group" row (override = null), so this screen never silently
- * abandons a group the user configured.
+ * The old flat screen mixed a "follow model group" row, every system voice and
+ * every provider model in one list, which made the order of decisions
+ * invisible. Model-group bindings still work at runtime; this screen simply
+ * writes the explicit override once the user picks something.
+ *
+ * Selection writes are identical to the chat capsule's
+ * [com.openminis.app.ui.chat.voice.VoiceOutputPickerSheet]:
+ *  - [ProviderRepository.voiceOutputOverrideEntryId] chooses system vs a cloud
+ *    model entry;
+ *  - [VoiceOutputState.setSystemVoice] stores the device voice;
+ *  - [ProviderRepository.setVoiceOutputCloudVoice] stores the MiniMax voice id,
+ *    which [com.openminis.app.speech.ReadAloudPlayer] forwards per utterance.
  */
 @Composable
 fun VoiceSynthesisScreen(
@@ -70,24 +78,28 @@ fun VoiceSynthesisScreen(
         voicesLoaded = true
     }
 
+    // [T-android-voice-synthesis-settings] 试听 — audition a row without
+    // committing it. Shut down with the screen so neither the throwaway engine
+    // nor a cloud MediaPlayer outlives the page.
+    val preview = remember { VoicePreviewPlayer(context) }
+    val previewSample = stringResource(R.string.voice_preview_sample)
+    DisposableEffect(Unit) {
+        onDispose { preview.shutdown() }
+    }
+
     val overrideId = providerRepository.voiceOutputOverrideEntryId
-    // Recomputed when the config revision changes so the checkmarks follow a
-    // disabled instance / removed entry, not just this screen's own writes.
+    // Recomputed when the config revision changes so the screen follows a
+    // disabled instance / removed entry, not just its own writes.
     val effective = remember(config, overrideId) {
         providerRepository.resolveVoiceOutputChoice()
     }
-    val effectiveEntryId = effective.entry?.second?.id
-    val systemEffective = effective.entry == null
+    val cloudEntry = effective.entry
+    val isSystemMode = cloudEntry == null
 
     val systemEntryId = "${SystemVoiceIds.BUILTIN_PROVIDER_ID}/${SystemVoiceIds.SYSTEM_TTS}"
-    val boundGroup = config.voiceOutputGroupId?.let { gid ->
-        config.modelGroups.find { it.id == gid }
-    }
 
-    // TTS-capable models from enabled providers, grouped by provider so the
-    // list reads like the rest of the picker surfaces. A model that only
-    // ACCEPTS audio never shows here — isVoiceOutputCandidate is the same
-    // capability gate the runtime resolver uses.
+    // TTS-capable models from enabled providers. A model that only ACCEPTS
+    // audio never shows here — isVoiceOutputCandidate is the runtime's gate.
     val cloudProviders = remember(config) {
         config.instances
             .filter { it.isEnabled }
@@ -101,17 +113,115 @@ fun VoiceSynthesisScreen(
             }
     }
 
-    fun selectSystem() {
+    // ── Level 2, system branch: languages → voices in that language ──
+    val languageGroups = remember(systemVoices) {
+        val uiLocale = Locale.getDefault()
+        systemVoices
+            .groupBy { it.locale.language }
+            .map { (code, voices) ->
+                val name = runCatching {
+                    Locale.forLanguageTag(code).getDisplayName(uiLocale)
+                }.getOrDefault(code).ifBlank { code }
+                SystemLanguageGroup(code = code, label = name, voices = voices)
+            }
+        // groupBy keeps the catalog's own order: the UI language's voices
+        // first, then Chinese/English, then the rest.
+    }
+
+    // Composite id for new picks; a legacy bare engine name still resolves to
+    // the first voice carrying it, which is what the old lookup used.
+    val currentSystemLanguage = systemVoices
+        .firstOrNull { it.id == systemVoiceName || it.name == systemVoiceName }
+        ?.locale?.language
+
+    // Local browse state for the two-step system flow. Null = "follow the
+    // saved voice" (and, when no voice is saved, the Automatic row).
+    var browsingLanguage by remember { mutableStateOf<String?>(null) }
+    val displayedLanguage = browsingLanguage
+        ?.takeIf { code -> languageGroups.any { it.code == code } }
+        ?: currentSystemLanguage
+
+    fun useSystem() {
         providerRepository.voiceOutputOverrideEntryId = systemEntryId
     }
 
-    fun selectSystemVoice(voice: SystemTtsVoiceCatalog.SystemVoice) {
-        VoiceOutputState.setSystemVoice(voice.name, voice.label)
-        selectSystem()
+    fun pickLanguage(group: SystemLanguageGroup) {
+        browsingLanguage = group.code
+        // Commit a concrete voice so the radio state always matches what the
+        // engine will actually use: the first voice of the picked language
+        // when the saved voice belongs to another one.
+        if (currentSystemLanguage != group.code) {
+            group.voices.firstOrNull()?.let { voice ->
+                VoiceOutputState.setSystemVoice(voice.id, voice.label)
+                useSystem()
+            }
+        }
     }
 
-    fun cloudSelected(entry: ModelEntry): Boolean =
-        overrideId == entry.id || (overrideId == null && effectiveEntryId == entry.id)
+    fun pickSystemVoice(voice: SystemTtsVoiceCatalog.SystemVoice) {
+        browsingLanguage = voice.locale.language
+        // Composite id: the locale is part of the identity because OEM engines
+        // can report one name for several locale variants.
+        VoiceOutputState.setSystemVoice(voice.id, voice.label)
+        useSystem()
+    }
+
+    fun pickAutoSystemVoice() {
+        browsingLanguage = null
+        VoiceOutputState.setSystemVoice(null, null)
+        useSystem()
+    }
+
+    // ── Level 2, cloud branch: providers → voices ──
+    val selectedCloudInstance = cloudEntry?.first
+    val selectedProviderEntries = cloudProviders
+        .firstOrNull { it.first.id == selectedCloudInstance?.id }
+        ?.second
+        .orEmpty()
+
+    fun pickCloudMode() {
+        if (cloudProviders.isEmpty()) {
+            onAddProvider()
+            return
+        }
+        if (cloudEntry == null) {
+            cloudProviders.firstOrNull()?.second?.firstOrNull()?.let { entry ->
+                providerRepository.voiceOutputOverrideEntryId = entry.id
+            }
+        }
+    }
+
+    fun pickCloudProvider(
+        instance: ProviderInstance,
+        entries: List<ModelEntry>,
+    ) {
+        val existing = cloudEntry?.takeIf { it.first.id == instance.id }?.second
+        providerRepository.voiceOutputOverrideEntryId = (existing ?: entries.first()).id
+    }
+
+    // First-level cloud subtitle names the actual vendors: with only MiniMax
+    // configured, "Cloud synthesis" alone hides which service will be used.
+    val cloudModeSubtitle = if (cloudProviders.isEmpty()) {
+        stringResource(R.string.voice_synthesis_mode_cloud_unavailable)
+    } else {
+        cloudProviders.joinToString(" · ") { (instance, _) ->
+            instance.label.ifBlank { instance.providerType.displayName }
+        }
+    }
+
+    fun pickMiniMaxVoice(
+        instance: ProviderInstance,
+        entries: List<ModelEntry>,
+        voiceId: String,
+    ) {
+        providerRepository.setVoiceOutputCloudVoice(instance.id, voiceId)
+        val entry = cloudEntry?.takeIf { it.first.id == instance.id }?.second
+            ?: entries.firstOrNull()
+        // entries can be empty if every TTS entry of the instance is hidden
+        // while a stale override still resolves to it; the voice preference
+        // is still worth storing, the override write is not.
+        entry?.let { providerRepository.voiceOutputOverrideEntryId = it.id }
+    }
 
     SettingsScaffold(
         title = stringResource(R.string.voice_synthesis_title),
@@ -120,129 +230,228 @@ fun VoiceSynthesisScreen(
         Spacer(Modifier.height(SectionDesign.FirstSectionTopGap))
         SectionFooter(text = stringResource(R.string.voice_synthesis_intro))
 
-        // ── Follow the Default Models › Voice Output group, when one is bound.
-        // Override = null is the runtime's "follow the group" state; without
-        // this row, visiting the screen and picking nothing would still leave
-        // the group in charge, but the user could never knowingly go BACK to it.
-        if (boundGroup != null) {
-            SettingsSection(
-                header = stringResource(R.string.voice_synthesis_follow_group_header),
-                footer = stringResource(R.string.voice_synthesis_follow_group_desc),
-            ) {
-                SettingsChoiceRow(
-                    title = stringResource(
-                        R.string.voice_synthesis_follow_group,
-                        boundGroup.name,
-                    ),
-                    selected = overrideId == null,
-                    onSelect = {
-                        providerRepository.voiceOutputOverrideEntryId = null
-                    },
-                    showDivider = false,
-                )
-            }
+        // ── Level 1: system vs cloud ──
+        SettingsSection(header = stringResource(R.string.voice_synthesis_mode_header)) {
+            SettingsChoiceRow(
+                title = stringResource(R.string.voice_synthesis_mode_system),
+                subtitle = stringResource(R.string.voice_synthesis_mode_system_desc),
+                selected = isSystemMode,
+                onSelect = { useSystem() },
+                showDivider = true,
+            )
+            SettingsChoiceRow(
+                title = stringResource(R.string.voice_synthesis_mode_cloud),
+                subtitle = cloudModeSubtitle,
+                selected = !isSystemMode,
+                onSelect = { pickCloudMode() },
+                showDivider = false,
+            )
         }
 
-        // ── System voice ──
-        SettingsSection(
-            header = stringResource(R.string.voice_synthesis_system_header),
-            footer = stringResource(R.string.voice_synthesis_system_footer),
-        ) {
-            SettingsChoiceRow(
-                title = stringResource(R.string.voice_synthesis_auto),
-                selected = systemEffective && systemVoiceName == null,
-                onSelect = {
-                    VoiceOutputState.setSystemVoice(null, null)
-                    selectSystem()
-                },
-                showDivider = systemVoices.isNotEmpty(),
-            )
-            systemVoices.forEachIndexed { index, voice ->
+        if (isSystemMode) {
+            // ── Level 2: language ──
+            SettingsSection(
+                header = stringResource(R.string.voice_synthesis_language_header),
+                footer = stringResource(R.string.voice_synthesis_system_footer),
+            ) {
                 SettingsChoiceRow(
-                    title = voice.label,
-                    subtitle = voice.name,
-                    selected = systemEffective && systemVoiceName == voice.name,
-                    onSelect = { selectSystemVoice(voice) },
-                    showDivider = index < systemVoices.lastIndex,
-                )
-            }
-            if (!voicesLoaded) {
-                SettingsRow(
-                    title = stringResource(R.string.voice_synthesis_loading),
-                    showDivider = false,
-                )
-            } else if (systemVoices.isEmpty()) {
-                SettingsRow(
-                    title = stringResource(R.string.voice_synthesis_system_empty),
-                    subtitle = stringResource(R.string.voice_synthesis_system_empty_desc),
+                    title = stringResource(R.string.voice_synthesis_auto),
+                    selected = displayedLanguage == null,
+                    onSelect = { pickAutoSystemVoice() },
+                    // Something always follows: language rows, the loading
+                    // row, or the empty-engine rows.
                     showDivider = true,
                 )
-                SettingsRow(
-                    title = stringResource(R.string.voice_synthesis_open_system_settings),
-                    icon = Icons.Outlined.Settings,
-                    onClick = {
-                        // Not a documented SDK constant — OEMs occasionally
-                        // rename it, so fall back to the general settings
-                        // page rather than crashing.
-                        runCatching {
-                            context.startActivity(
-                                Intent("com.android.settings.TTS_SETTINGS"),
-                            )
-                        }.onFailure {
+                languageGroups.forEachIndexed { index, group ->
+                    SettingsChoiceRow(
+                        title = group.label,
+                        selected = displayedLanguage == group.code,
+                        onSelect = { pickLanguage(group) },
+                        showDivider = index < languageGroups.lastIndex ||
+                            !voicesLoaded || systemVoices.isEmpty(),
+                    )
+                }
+                if (!voicesLoaded) {
+                    SettingsRow(
+                        title = stringResource(R.string.voice_synthesis_loading),
+                        showDivider = false,
+                    )
+                } else if (systemVoices.isEmpty()) {
+                    SettingsRow(
+                        title = stringResource(R.string.voice_synthesis_system_empty),
+                        subtitle = stringResource(R.string.voice_synthesis_system_empty_desc),
+                        showDivider = true,
+                    )
+                    SettingsRow(
+                        title = stringResource(R.string.voice_synthesis_open_system_settings),
+                        icon = Icons.Outlined.Settings,
+                        onClick = {
+                            // Not a documented SDK constant — OEMs occasionally
+                            // rename it, so fall back to general settings rather
+                            // than crashing.
                             runCatching {
                                 context.startActivity(
-                                    Intent(Settings.ACTION_SETTINGS),
+                                    Intent("com.android.settings.TTS_SETTINGS"),
                                 )
+                            }.onFailure {
+                                runCatching {
+                                    context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                                }
                             }
-                        }
-                    },
-                    showDivider = false,
-                )
+                        },
+                        showDivider = false,
+                    )
+                }
             }
-        }
 
-        // ── Cloud models ──
-        if (cloudProviders.isEmpty()) {
-            SettingsSection(
-                header = stringResource(R.string.voice_synthesis_cloud_header),
-                footer = stringResource(R.string.voice_synthesis_cloud_footer),
-            ) {
-                SettingsRow(
-                    title = stringResource(R.string.voice_synthesis_cloud_empty),
-                    subtitle = stringResource(R.string.voice_synthesis_cloud_empty_desc),
-                    showDivider = true,
-                )
-                SettingsRow(
-                    title = stringResource(R.string.voice_synthesis_add_provider),
-                    onClick = onAddProvider,
-                    showDivider = false,
-                )
-            }
-        } else {
-            cloudProviders.forEach { (instance, entries) ->
-                SettingsSection(
-                    header = instance.label.ifBlank { instance.providerType.displayName },
-                ) {
-                    entries.forEachIndexed { index, entry ->
-                        SettingsChoiceRow(
-                            title = entry.model.displayName.ifBlank { entry.model.id },
-                            subtitle = entry.baseModel.id,
-                            selected = cloudSelected(entry),
-                            onSelect = {
-                                providerRepository.voiceOutputOverrideEntryId = entry.id
-                            },
-                            showDivider = index < entries.lastIndex,
-                        )
+            // ── Level 3: voice in the picked language ──
+            if (displayedLanguage == null) {
+                if (systemVoices.isNotEmpty()) {
+                    SectionFooter(text = stringResource(R.string.voice_synthesis_auto_voice_note))
+                }
+            } else {
+                val voices = languageGroups
+                    .firstOrNull { it.code == displayedLanguage }
+                    ?.voices
+                    .orEmpty()
+                if (voices.isNotEmpty()) {
+                    SettingsSection(
+                        header = stringResource(R.string.voice_synthesis_voice_header),
+                    ) {
+                        voices.forEachIndexed { index, voice ->
+                            SettingsChoiceRow(
+                                title = voice.label,
+                                // Locale tag, not the engine name: Huawei
+                                // reports "zh" for every Chinese variant.
+                                subtitle = voice.locale.toLanguageTag(),
+                                selected = SystemTtsVoiceCatalog.isSelected(
+                                    voice,
+                                    systemVoiceName,
+                                    voices,
+                                ),
+                                onSelect = { pickSystemVoice(voice) },
+                                showDivider = index < voices.lastIndex,
+                                onPreview = {
+                                    preview.previewSystem(voice.id, previewSample)
+                                },
+                            )
+                        }
                     }
                 }
             }
-            // One shared footer after the provider cards, not one per provider.
-            SectionFooter(text = stringResource(R.string.voice_synthesis_cloud_footer))
+        } else {
+            // ── Level 2: cloud provider ──
+            SettingsSection(
+                header = stringResource(R.string.voice_synthesis_cloud_service_header),
+                footer = stringResource(R.string.voice_synthesis_cloud_footer),
+            ) {
+                cloudProviders.forEachIndexed { index, (instance, entries) ->
+                    SettingsChoiceRow(
+                        title = instance.label.ifBlank {
+                            instance.providerType.displayName
+                        },
+                        // Show the entry actually in effect on the selected
+                        // provider (may be HD or Turbo), not always the first.
+                        subtitle = (if (selectedCloudInstance?.id == instance.id) {
+                            cloudEntry?.second ?: entries.firstOrNull()
+                        } else {
+                            entries.firstOrNull()
+                        })?.let { shown ->
+                            shown.model.displayName.ifBlank { shown.model.id }
+                        },
+                        selected = selectedCloudInstance?.id == instance.id,
+                        onSelect = { pickCloudProvider(instance, entries) },
+                        showDivider = index < cloudProviders.lastIndex,
+                    )
+                }
+            }
+
+            // ── Level 3: voices for the selected cloud provider ──
+            if (selectedCloudInstance != null && selectedProviderEntries.isNotEmpty()) {
+                if (MiniMaxVoices.isMiniMax(selectedCloudInstance)) {
+                    // MiniMax: model and voice are separate namespaces. When
+                    // nothing is saved the adapter's own default is in effect,
+                    // so mark it selected instead of showing an empty state.
+                    val selectedVoiceId = providerRepository
+                        .voiceOutputCloudVoice(selectedCloudInstance.id)
+                        ?: MiniMaxVoices.DEFAULT_VOICE_ID
+                    // Preview through the model entry actually in effect on this
+                    // provider (HD/Turbo), not merely the first one.
+                    val previewEntry = cloudEntry
+                        ?.takeIf { it.first.id == selectedCloudInstance.id }
+                        ?.second
+                        ?: selectedProviderEntries.first()
+                    SettingsSection(
+                        header = stringResource(R.string.voice_synthesis_voice_header),
+                    ) {
+                        MiniMaxVoices.all.forEachIndexed { index, voice ->
+                            SettingsChoiceRow(
+                                title = voice.label,
+                                subtitle = voice.id,
+                                selected = selectedVoiceId == voice.id,
+                                onSelect = {
+                                    pickMiniMaxVoice(
+                                        selectedCloudInstance,
+                                        selectedProviderEntries,
+                                        voice.id,
+                                    )
+                                },
+                                showDivider = index < MiniMaxVoices.all.lastIndex,
+                                onPreview = {
+                                    preview.previewCloud(
+                                        providerRepository,
+                                        selectedCloudInstance,
+                                        previewEntry,
+                                        voice.id,
+                                        previewSample,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                } else {
+                    // Vendors whose catalog entries ARE voices (Doubao speaker,
+                    // ElevenLabs voice_id …): the entry list is the voice list.
+                    SettingsSection(
+                        header = stringResource(R.string.voice_synthesis_voice_header),
+                    ) {
+                        selectedProviderEntries.forEachIndexed { index, entry ->
+                            SettingsChoiceRow(
+                                title = entry.model.displayName.ifBlank { entry.model.id },
+                                subtitle = entry.baseModel.id,
+                                selected = cloudEntry?.second?.id == entry.id,
+                                onSelect = {
+                                    providerRepository.voiceOutputOverrideEntryId =
+                                        entry.id
+                                },
+                                showDivider = index < selectedProviderEntries.lastIndex,
+                                onPreview = {
+                                    preview.previewCloud(
+                                        providerRepository,
+                                        selectedCloudInstance,
+                                        entry,
+                                        // Entry id IS the voice for this vendor.
+                                        null,
+                                        previewSample,
+                                    )
+                                },
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(SectionDesign.SectionTopGap))
     }
 }
+
+/** One device language and the voices the TTS engine exposes for it. */
+private data class SystemLanguageGroup(
+    val code: String,
+    val label: String,
+    val voices: List<SystemTtsVoiceCatalog.SystemVoice>,
+)
 
 /** Provider + model summary for the Settings row, mirroring the capsule chip. */
 internal fun voiceSynthesisSummary(

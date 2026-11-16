@@ -134,4 +134,35 @@ class SettingsInformationArchitectureTest {
                 .contains("Routes.VOICE_SYNTHESIS"),
         )
     }
+
+    /**
+     * The page's decision order is the point: synthesis type first, then
+     * language → voice (system) or provider → voice (cloud). Voices must be
+     * auditionable, and the background wake conversation must not keep
+     * speaking with its own engine after the user picks a voice.
+     */
+    @Test
+    fun `speech synthesis keeps the two-level flow, previews and wake routing`() {
+        val screen = ProductionSources.read("ui/settings/VoiceSynthesisScreen.kt")
+        for (section in listOf(
+            "voice_synthesis_mode_header",
+            "voice_synthesis_language_header",
+            "voice_synthesis_voice_header",
+            "voice_synthesis_cloud_service_header",
+        )) {
+            assertTrue("$section missing from the flow", screen.contains(section))
+        }
+        assertTrue("MiniMax voices must be selectable", screen.contains("MiniMaxVoices"))
+        assertTrue("voice rows must be previewable", screen.contains("onPreview"))
+        assertTrue(
+            "wake replies must use the selected voice",
+            ProductionSources.read("speech/wake/WakeWordService.kt")
+                .contains("speakBlocking"),
+        )
+        assertTrue(
+            "system voice ids must disambiguate locales",
+            ProductionSources.read("speech/SystemTtsVoiceCatalog.kt")
+                .contains("isSelected"),
+        )
+    }
 }

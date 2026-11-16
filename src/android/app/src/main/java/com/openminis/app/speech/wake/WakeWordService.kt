@@ -390,6 +390,29 @@ class WakeWordService : Service() {
      */
     private var tts: com.openminis.app.speech.TextToSpeechManager? = null
 
+    /**
+     * [T-android-voice-synthesis-settings] Speaks the REPLY through the same
+     * routing as chat read-aloud: the selected cloud TTS model when one is
+     * chosen, otherwise the device engine with the picked system voice.
+     *
+     * The service used to speak replies with its own [TextToSpeechManager]
+     * directly, so changing the voice in Settings › Speech Synthesis had no
+     * effect on the background voice conversation — cloud stayed the device
+     * voice. Created lazily on the first reply; [tts] remains for the quick
+     * "I'm here" acknowledgement, which should stay local/low-latency.
+     */
+    private var readAloud: com.openminis.app.speech.ReadAloudPlayer? = null
+
+    private fun ensureReadAloud(): com.openminis.app.speech.ReadAloudPlayer? =
+        runCatching {
+            readAloud ?: com.openminis.app.speech.ReadAloudPlayer(
+                applicationContext,
+                registerWithCapsule = false,
+            ).also { readAloud = it }
+        }.onFailure {
+            AppLogger.info(TAG, "无法创建朗读播放器：${it.message}")
+        }.getOrNull()
+
     /** When the last conversation diagnostic line was written. */
     private var lastDiagAt = 0L
 
@@ -453,6 +476,8 @@ class WakeWordService : Service() {
         gateJob = null
         runCatching { tts?.stop() }
         tts = null
+        runCatching { readAloud?.shutdown() }
+        readAloud = null
         engine?.stop()
         engine = null
         overlay?.hide()
@@ -906,6 +931,10 @@ class WakeWordService : Service() {
             val speaker = com.openminis.app.speech.TextToSpeechManager()
             speaker.init(applicationContext)
             tts = speaker
+            // [T-android-voice-synthesis-settings] Wake replies now speak
+            // through ReadAloudPlayer; build its engine here too so the first
+            // reply does not pay the 1-4 s cold bind.
+            ensureReadAloud()
             val ready = withContext(Dispatchers.IO) { speaker.awaitReady() }
             AppLogger.info(TAG, "TTS 预热完成 ready=$ready")
         }
@@ -1093,6 +1122,9 @@ class WakeWordService : Service() {
     private fun stopSpeakingNow() {
         speechStopRequested = true
         runCatching { tts?.stop() }
+        // [T-android-voice-synthesis-settings] Wake replies may now be playing
+        // through ReadAloudPlayer (cloud or system voice).
+        runCatching { readAloud?.stop() }
         // [T-tts-barge-in] The cloud reply channel and local assistant
         // announcements play through ReadAloudPlayer, which this service's
         // own TTS cannot reach. Stop them all so the spoken stop command
@@ -1325,14 +1357,27 @@ class WakeWordService : Service() {
 
         publish(VoiceWakePhase.REPLYING, "回复中")
         VoiceWakeState.trace(this, "回复：${reply.take(80)}")
-        val speaker = tts ?: com.openminis.app.speech.TextToSpeechManager().also {
-            it.init(applicationContext)
-            tts = it
-        }
         replyText = reply
         speechStopRequested = false
         installBargeInVad(reply)
-        val spoke = WakeConversation.speak(speaker, reply)
+        // [T-android-voice-synthesis-settings] Provider-first, system fallback,
+        // blocking until the audio ends — the same routing chat read-aloud
+        // uses, so the Settings choice governs wake replies too.
+        val player = ensureReadAloud()
+        val spoke = if (player != null) {
+            // Same 600-character trim as the old wake narration: a background
+            // conversation should not monologue for minutes.
+            runCatching { player.speakBlocking(reply.take(WakeConversation.MAX_SPEECH_CHARS)) }
+                .onFailure { AppLogger.info(TAG, "朗读播放失败：${it.message}") }
+                .getOrDefault(false)
+        } else {
+            // Last resort: the service's own engine, exactly as before.
+            val speaker = tts ?: com.openminis.app.speech.TextToSpeechManager().also {
+                it.init(applicationContext)
+                tts = it
+            }
+            WakeConversation.speak(speaker, reply)
+        }
         removeBargeInVad()
         if (!spoke) {
             AppLogger.info(TAG, "回复未能播报，继续聆听")

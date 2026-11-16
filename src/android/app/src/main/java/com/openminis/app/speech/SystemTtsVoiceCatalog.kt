@@ -30,13 +30,52 @@ import java.util.Locale
 object SystemTtsVoiceCatalog {
 
     data class SystemVoice(
-        /** Engine voice name — the stable id passed to TextToSpeech.setVoice. */
+        /**
+         * Composite id: engine voice name + locale tag.
+         *
+         * Some OEM engines — Huawei's among them — report the SAME voice name
+         * (`zh`) for every Chinese locale variant. Persisting the bare name
+         * then cannot tell 「中文」 from 「中文（繁体中文）」 apart, and the
+         * picker shows every same-name row checked. The locale is what the
+         * engine actually distinguishes, so the stable id combines both.
+         * [name] is kept because setVoice lookup and older saved preferences
+         * use it.
+         */
+        val id: String,
+        /** Engine voice name (not unique on every engine). */
         val name: String,
         /** Human-facing label: localized locale name + variant + network tag. */
         val label: String,
         val locale: Locale,
         val networkRequired: Boolean,
     )
+
+    /** Stable key for a raw engine voice. */
+    private fun key(name: String, locale: Locale): String =
+        "$name|${locale.toLanguageTag()}"
+
+    /**
+     * True when a saved preference refers to [voice].
+     *
+     * New values are composite ids. A bare engine name (saved by an older
+     * build) can only match the first row carrying that name — the same voice
+     * the old lookup resolved to — so the legacy value highlights one row
+     * instead of every locale variant.
+     */
+    fun isSelected(
+        voice: SystemVoice,
+        saved: String?,
+        all: List<SystemVoice>,
+    ): Boolean {
+        if (saved == null) return false
+        if (saved == voice.id) return true
+        if (saved.contains('|')) return false
+        return all.firstOrNull { it.name == saved } == voice
+    }
+
+    /** Does the engine [Voice] match a saved preference (id or legacy name)? */
+    fun matches(voice: Voice, saved: String): Boolean =
+        key(voice.name, voice.locale) == saved || voice.name == saved
 
     private const val TAG = "SystemTtsVoiceCatalog"
     private const val INIT_TIMEOUT_MS = 4_000L
@@ -101,7 +140,13 @@ object SystemTtsVoiceCatalog {
                     if (variant != null) append(" · ").append(variant)
                     if (net) append(" ☁")
                 }
-                SystemVoice(name = v.name, label = label, locale = v.locale, networkRequired = net)
+                SystemVoice(
+                    id = key(v.name, v.locale),
+                    name = v.name,
+                    label = label,
+                    locale = v.locale,
+                    networkRequired = net,
+                )
             }
             // UI language's voices first, then other Chinese/English, then rest;
             // stable alphabetical inside each tier so the list is reproducible.

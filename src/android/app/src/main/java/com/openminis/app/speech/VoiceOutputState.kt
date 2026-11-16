@@ -108,8 +108,10 @@ object VoiceOutputState {
     val activeModelLabel = MutableStateFlow<String?>(null)
 
     /**
-     * [T-android-system-voice-catalog] Selected SYSTEM engine voice (engine
-     * voice name, e.g. "cmn-cn-x-ssa-local"); null = engine default ("Auto").
+     * [T-android-system-voice-catalog] Selected SYSTEM engine voice
+     * ([SystemTtsVoiceCatalog.SystemVoice.id]: engine name + locale, e.g.
+     * "cmn-cn-x-ssa-local|zh-CN"); null = engine default ("Auto"). Older
+     * builds stored a bare engine name, which the lookup still accepts.
      * Deliberately a system-engine detail rather than a provider-override
      * entry: it layers under resolveVoiceOutputChoice() without touching
      * ProviderRepository, while the picker still renders each voice as its own

@@ -25,6 +25,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -46,11 +47,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.openminis.app.R
 import com.openminis.app.i18n.uppercaseForDisplay
 import com.openminis.app.ui.components.SectionDesign
 
@@ -471,6 +474,12 @@ fun SettingsChoiceRow(
     leading: (@Composable () -> Unit)? = null,
     showDivider: Boolean = true,
     subtitle: String? = null,
+    /**
+     * [T-android-voice-synthesis-settings] Optional audition action rendered
+     * before the check mark (voice rows). Its own touch target, so previewing
+     * never changes the selection.
+     */
+    onPreview: (() -> Unit)? = null,
 ) {
     Column {
         Row(
@@ -498,6 +507,19 @@ fun SettingsChoiceRow(
                         subtitle,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (onPreview != null) {
+                IconButton(
+                    onClick = onPreview,
+                    modifier = Modifier.size(36.dp),
+                ) {
+                    Icon(
+                        Icons.Filled.PlayArrow,
+                        contentDescription = stringResource(R.string.voice_preview),
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp),
                     )
                 }
             }

@@ -615,7 +615,10 @@ fun UnifiedModelPickerSheet(
                                             modifier = Modifier
                                                 .fillMaxWidth()
                                                 .clickable {
-                                                    VoiceOutputState.setSystemVoice(v.name, v.label)
+                                                    // Composite id (name|locale): OEM
+                                                    // engines may reuse one voice name
+                                                    // across locale variants.
+                                                    VoiceOutputState.setSystemVoice(v.id, v.label)
                                                     select(sysId)
                                                 }
                                                 .padding(horizontal = 16.dp, vertical = 11.dp),
@@ -623,7 +626,12 @@ fun UnifiedModelPickerSheet(
                                         ) {
                                             SelectionMark(
                                                 selected = selectedId == sysId &&
-                                                    pickedSystemVoice == v.name,
+                                                    com.openminis.app.speech.SystemTtsVoiceCatalog
+                                                        .isSelected(
+                                                            v,
+                                                            pickedSystemVoice,
+                                                            systemVoices,
+                                                        ),
                                             )
                                             Spacer(Modifier.width(10.dp))
                                             Column(modifier = Modifier.weight(1f)) {

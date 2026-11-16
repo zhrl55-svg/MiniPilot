@@ -59,7 +59,18 @@ import kotlin.coroutines.resume
  *
  * Not thread-safe beyond the channel; call from the main thread.
  */
-class ReadAloudPlayer(context: Context) {
+class ReadAloudPlayer(
+    context: Context,
+    /**
+     * [T-android-voice-synthesis-settings] The background wake service speaks
+     * through this class but must NOT join the capsule registry: it can live
+     * for hours, and a permanent top-of-stack entry would steal ownership from
+     * the chat reply channel (whose capsule mirror writes are gated on
+     * [ownsCapsule]). Unregistered, it still routes provider-first and
+     * publishes the global speaking flag the wake UI already uses.
+     */
+    private val registerWithCapsule: Boolean = true,
+) {
 
     private val appContext = context.applicationContext
     private val system = TextToSpeechManager().also { it.init(appContext) }
@@ -163,7 +174,7 @@ class ReadAloudPlayer(context: Context) {
         // capsule's mute/close/stop actions reach this instance, and mirror the
         // live speaking flag into the global state the capsule renders from.
         VoiceOutputState.init(appContext)
-        VoiceOutputState.registerPlayer(this)
+        if (registerWithCapsule) VoiceOutputState.registerPlayer(this)
         worker = scope.launch {
             for (text in queue) {
                 // [T-tts-barge-in] Publish what is about to be audible so the
@@ -295,6 +306,67 @@ class ReadAloudPlayer(context: Context) {
         enqueueLocal(text)
     }
 
+    /**
+     * [T-android-voice-synthesis-settings] Speak [text] to completion through
+     * the SAME routing as reply read-aloud (picked cloud voice / system voice,
+     * with the device engine as fallback) and return only when audio stopped.
+     *
+     * The background wake conversation used to own a private
+     * [TextToSpeechManager], so the Settings › Speech Synthesis choice never
+     * applied to spoken wake replies — switching to cloud kept playing the
+     * device voice. That caller needs a BLOCKING call (it keeps the microphone
+     * closed and watches for a spoken stop phrase), which the async queue
+     * cannot provide, so sentences are spoken directly here. The mute /
+     * read-replies gates are deliberately not applied: a spoken question must
+     * get an audible answer, same rule as [speakLocal].
+     *
+     * @return true when at least one sentence produced audio.
+     */
+    suspend fun speakBlocking(text: String): Boolean {
+        stop()
+        blockingStop = false
+        val clean = VoiceTextSanitizer.sanitize(text, linkPhrases)
+        if (clean.isBlank()) return false
+        // Split exactly like the streaming path so provider TTS gets
+        // request-sized pieces and the system engine's input cap is moot.
+        val buffer = StringBuilder(clean)
+        val pieces = SpeechSentenceSplitter
+            .extractCompleteSentences(buffer, streaming = false)
+            .toMutableList()
+        val tail = buffer.toString().trim()
+        buffer.setLength(0)
+        if (tail.isNotEmpty()) pieces.add(tail)
+        if (pieces.isEmpty()) pieces.add(clean)
+
+        if (ownsCapsule()) VoiceOutputState.currentSpeechText.value = clean
+        VoiceOutputState.isSpeaking.value = true
+        var spoke = false
+        try {
+            for (piece in pieces) {
+                // stop() (capsule stop, spoken stop phrase) interrupts the loop
+                // as well as the in-flight sentence.
+                if (blockingStop) break
+                if (speakOne(piece)) spoke = true
+            }
+        } finally {
+            VoiceOutputState.isSpeaking.value = false
+            VoiceOutputState.isSynthesizing.value = false
+            if (ownsCapsule()) VoiceOutputState.currentSpeechText.value = ""
+            // The queue worker releases focus after every utterance; this path
+            // bypasses the queue, so it must hand focus back itself or the
+            // wake reply would keep other apps ducked after it ends.
+            focus.releaseSoon(this@ReadAloudPlayer, ReadAloudAudioFocus.GRACE_MS)
+        }
+        return spoke
+    }
+
+    /**
+     * Set by [stop] so a multi-sentence [speakBlocking] loop stops too. The
+     * queue path never reads it.
+     */
+    @Volatile
+    private var blockingStop = false
+
     private fun enqueue(raw: String) {
         // [T-android-tts-capsule] Temporary mute suppresses NEW utterances too
         // (not only current playback) — matching iOS, where `canPlay =
@@ -398,6 +470,7 @@ class ReadAloudPlayer(context: Context) {
 
     /** Stop playback and drop everything pending. */
     fun stop() {
+        blockingStop = true
         // A real stop supersedes a capture pause: nothing held is still wanted.
         capturePaused = false
         heldForCapture.clear()
@@ -450,12 +523,13 @@ class ReadAloudPlayer(context: Context) {
         // Deregister by identity: removing a mid-stack player leaves the rest
         // intact, and dropping the top hands the capsule back to the player
         // beneath (typically the reply channel) instead of orphaning it.
-        VoiceOutputState.unregisterPlayer(this)
+        if (registerWithCapsule) VoiceOutputState.unregisterPlayer(this)
     }
 
     // -- internals --
 
-    private suspend fun speakOne(text: String) {
+    /** @return true when the text produced audible speech. */
+    private suspend fun speakOne(text: String): Boolean {
         val entry = runCatching {
             (appContext as? MinisApp)?.providerRepository?.resolveVoiceOutputEntry()
         }.getOrNull()
@@ -478,7 +552,7 @@ class ReadAloudPlayer(context: Context) {
                     )
                     false
                 }
-            if (ok) return
+            if (ok) return true
         }
         if (ownsCapsule()) VoiceOutputState.activeModelLabel.value = null // system engine
         if (!speakViaSystem(text)) {
@@ -489,7 +563,9 @@ class ReadAloudPlayer(context: Context) {
             // with no feedback at all — the reported OPPO symptom. Tell the user
             // once instead of swallowing it.
             notifySpeechUnavailable(providerConfigured = entry != null)
+            return false
         }
+        return true
     }
 
     /** One-shot user-visible signal that read-aloud cannot produce sound. */
@@ -528,8 +604,12 @@ class ReadAloudPlayer(context: Context) {
             ?.takeIf { it.subsystemsReady() }
             ?.providerRepository
             ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: repository unavailable") }
-        val apiKey = repo.loadApiKey(instance.id)
-            ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: no API key for ${instance.id}") }
+        // requestCredential, not loadApiKey: the UI Quick Test path uses it, and
+        // it covers keyless compat endpoints / OAuth instances whose token is
+        // stored elsewhere. loadApiKey made read-aloud silently skip providers
+        // that Quick Test could synthesize fine.
+        val apiKey = repo.requestCredential(instance)
+            ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: no credential for ${instance.id}") }
         val voice = VoiceProviderFactory.make(instance, apiKey)
             ?: return false.also { AppLogger.error(TAG, "provider TTS skipped: no voice adapter for ${instance.providerType}/${instance.customBaseURL}") }
         if (!voice.supportsVoiceOutput) {
@@ -541,16 +621,19 @@ class ReadAloudPlayer(context: Context) {
         // indicator while the network request is in flight (iOS
         // voicePlayer.isSynthesizing).
         if (ownsCapsule()) VoiceOutputState.isSynthesizing.value = true
+        // [T-android-voice-synthesis-settings] For most vendors the entry id
+        // doubles as the voice id (ElevenLabs voice_id, Doubao speaker — the
+        // convention QuickTestSheet relies on, iOS 0a52bdbf). MiniMax is the
+        // exception: model and voice are separate namespaces, so the Settings
+        // screen stores the picked voice per instance and it wins here.
+        val pickedCloudVoice = repo.voiceOutputCloudVoice(instance.id)
         val data = try {
             withContext(Dispatchers.IO) {
                 voice.synthesize(
-                    // The entry id doubles as the voice id — template voices carry
-                    // the voice id as the model id (same convention QuickTestSheet
-                    // relies on, iOS 0a52bdbf).
                     VoiceOutputRequest(
                         input = text,
                         model = modelEntry.model.id,
-                        voice = modelEntry.model.id,
+                        voice = pickedCloudVoice ?: modelEntry.model.id,
                         resolvedModel = modelEntry.model,
                     ),
                 )

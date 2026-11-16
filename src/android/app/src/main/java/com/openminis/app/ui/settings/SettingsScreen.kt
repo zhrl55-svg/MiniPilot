@@ -87,6 +87,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.res.stringResource
 import com.openminis.app.BuildConfig
 import com.openminis.app.R
+import com.openminis.app.data.model.MiniMaxVoices
 import com.openminis.app.data.repository.ProviderRepository
 import com.openminis.app.speech.VoiceOutputState
 import com.openminis.app.ui.components.openExternalUrl
@@ -144,10 +145,22 @@ fun SettingsScreen(
     val voiceChoice = remember(providerConfig) {
         providerRepository.resolveVoiceOutputChoice()
     }
-    val cloudVoiceLabel = voiceSynthesisSummary(voiceChoice.entry)
+    val cloudModelLabel = voiceSynthesisSummary(voiceChoice.entry)
+    // MiniMax's voice is a separate axis from its model, so name it here too;
+    // otherwise the row would say "MiniMax Speech 2.8 HD" while twenty
+    // different voices could be in effect.
+    val cloudVoiceLabel = voiceChoice.entry?.let { (instance, _) ->
+        if (MiniMaxVoices.isMiniMax(instance)) {
+            providerRepository.voiceOutputCloudVoice(instance.id)
+                ?.let { MiniMaxVoices.label(it) }
+        } else {
+            null
+        }
+    }
     val systemVoiceText = stringResource(R.string.voice_synthesis_system_label)
-    val voiceSubtitle = if (cloudVoiceLabel != null) {
-        stringResource(R.string.settings_voice_synthesis_current, cloudVoiceLabel)
+    val voiceSubtitle = if (cloudModelLabel != null) {
+        val label = listOfNotNull(cloudModelLabel, cloudVoiceLabel).joinToString(" · ")
+        stringResource(R.string.settings_voice_synthesis_current, label)
     } else {
         val label = listOfNotNull(systemVoiceText, systemVoiceLabel).joinToString(" · ")
         stringResource(R.string.settings_voice_synthesis_current, label)

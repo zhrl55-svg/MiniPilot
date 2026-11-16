@@ -475,7 +475,12 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
 
     private fun autoDetectAndSetLanguage(text: String) {
         preferredVoiceName?.let { wanted ->
-            val v = runCatching { tts?.voices?.firstOrNull { it.name == wanted } }.getOrNull()
+            // [T-android-system-voice-catalog] Composite id (name|locale) when
+            // the engine reports duplicate names across locales; a bare name
+            // from an older build still matches by name.
+            val v = runCatching {
+                tts?.voices?.firstOrNull { SystemTtsVoiceCatalog.matches(it, wanted) }
+            }.getOrNull()
             if (v != null) {
                 val rc = tts?.setVoice(v)
                 if (rc == TextToSpeech.SUCCESS) return
