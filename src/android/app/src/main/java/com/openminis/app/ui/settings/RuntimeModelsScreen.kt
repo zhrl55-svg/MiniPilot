@@ -128,9 +128,6 @@ fun RuntimeModelsScreen(
             item("runtime_intro") {
                 SectionFooter(text = stringResource(R.string.runtime_models_intro))
             }
-            item("runtime_header") {
-                SectionHeader(text = stringResource(R.string.agent_loop_section_title))
-            }
             runtimeModelRows(
                 providerRepository = providerRepository,
                 config = config,
@@ -164,9 +161,6 @@ fun RuntimeModelsScreen(
                         Text(stringResource(R.string.agent_loop_section_add_groups))
                     }
                 }
-            }
-            item("runtime_footer") {
-                SectionFooter(text = stringResource(R.string.agent_loop_section_footer))
             }
             item("bottom_gap") { Spacer(modifier = Modifier.height(SectionDesign.SectionTopGap)) }
         }

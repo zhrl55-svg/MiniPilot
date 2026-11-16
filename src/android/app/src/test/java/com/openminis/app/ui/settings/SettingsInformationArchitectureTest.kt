@@ -86,7 +86,7 @@ class SettingsInformationArchitectureTest {
         // The agent's runtime set is its own page under Agent Runtime.
         assertTrue(runtime.contains("agentLoopModelEntryIds"))
         assertTrue(runtime.contains("agentLoopGroupIds"))
-        assertTrue(runtime.contains("R.string.agent_loop_section_title"))
+        assertTrue(runtime.contains("R.string.runtime_models_intro"))
         assertTrue(assistant.contains("onRuntimeModelsClick"))
     }
 

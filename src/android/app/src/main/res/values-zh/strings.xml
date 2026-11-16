@@ -1296,7 +1296,7 @@
     <string name="model_group_detail_unlimited">不限</string>
     <string name="model_group_detail_context_limit_unavailable">分组成员未声明上下文窗口，无法启用上限。请先添加模型或检查模型元数据。</string>
     <string name="model_group_detail_context_limit_runtime_capped">当前分组成员最大 ctx=%1$s，配置值 %2$s 会被运行时裁剪。配置值已保留，添加更高上下文模型后会重新生效。</string>
-    <string name="model_groups_model_groups">模型分组</string>
+    <string name="model_groups_model_groups">模型组</string>
     <string name="model_groups_new_group">新建分组</string>
     <string name="model_groups_no_model_groups">暂无模型分组</string>
     <string name="model_groups_groups_let_you_combine_models_for_fallba">模型分组可实现回退或负载均衡。</string>

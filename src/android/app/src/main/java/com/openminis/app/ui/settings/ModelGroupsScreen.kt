@@ -154,8 +154,7 @@ fun ModelGroupsScreen(
         ) {
             item("top_gap") { Spacer(modifier = Modifier.height(SectionDesign.FirstSectionTopGap)) }
 
-            if (groups.isEmpty()) {
-                item("empty_state") {
+            if (groups.isEmpty()) {                item("empty_state") {
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -183,21 +182,13 @@ fun ModelGroupsScreen(
                     }
                 }
             } else {
-                // T313 — Section 1 (Groups).
-                //
-                // [T-android-modelgroup-reorder] The section used to be ONE
-                // LazyColumn item wrapping a SectionCard with a forEach inside
-                // — which is exactly why the groups could not be reordered:
-                // ReorderableLazyListState only sees direct LazyColumn items.
-                // Rows are now individual items keyed "group:<id>" with the
-                // per-row cardRow(first/last) treatment, the same composition
-                // the agent-loop section below has used since T186. Swipe-to-
+                // [T-android-modelgroup-reorder] Rows are individual items
+                // keyed "group:<id>" with the per-row cardRow(first/last)
+                // treatment, so ReorderableLazyListState sees them. Swipe-to-
                 // delete and tap-to-open are unchanged; dragging lives on the
-                // explicit leading handle (consistent with AgentLoopRow, and
-                // it keeps clickable/swipe gestures conflict-free).
-                item("groups_section_header") {
-                    SectionHeader(text = stringResource(R.string.agent_loop_models_groups))
-                }
+                // explicit leading handle, which keeps click/swipe gestures
+                // conflict-free. The page itself is the group collection, so
+                // the redundant "Groups" section header is gone.
                 itemsIndexed(groups, key = { _, g -> "group:${g.id}" }) { index, group ->
                     ReorderableItem(
                         state = reorderState,
