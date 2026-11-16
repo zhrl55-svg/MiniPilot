@@ -49,6 +49,17 @@ class AssistantRouter(
         val action = capability.action(best.route.action)
             ?: return RouteDecision.Cloud("unknown-action", ranked = ranked)
 
+        // [T-media-route-long-text] 媒体指令只接受短句 / 语音转写。一段长文本
+        // 里提到「暂停音乐」或「播放轻音乐」不等于用户要控制播放器 —— 那是
+        // 讨论、引用或汇报。超过 20 个字或带换行时交给云端按整段语境判断，
+        // 避免把一封长消息执行成一次点歌/暂停。
+        if (capability.id == "media" &&
+            (userText.contains('\n') ||
+                AssistantRouteMatcher.normalizeText(userText).length > MEDIA_COMMAND_MAX_LENGTH)
+        ) {
+            return RouteDecision.Cloud("long-text", ranked = ranked)
+        }
+
         val extraction = extractor.extract(userText, best.route)
         if (capability.id == "reminder" && action.name == "schedule" &&
             extraction.args.optString("at").isBlank() &&
@@ -170,6 +181,9 @@ class AssistantRouter(
     private companion object {
         /** 超过这个长度还只命中一个短关键词，就当成「提到」而非「命令」。 */
         const val TOPIC_MENTION_MIN_LENGTH = 14
+
+        /** [T-media-route-long-text] 媒体路由的最大指令长度，超出走云端。 */
+        const val MEDIA_COMMAND_MAX_LENGTH = 20
 
         /** 关键词至少要占句子的这个比例，纯关键词匹配才可信。 */
         const val TOPIC_MENTION_MIN_COVERAGE = 0.30f
