@@ -18,10 +18,14 @@ call D:\minis-src\tools\hub\hubroot\ego_boot.cmd
 | 任务 | 触发 | 作用 |
 |---|---|---|
 | `MinisEgoSrv` | 登录时 | 常驻服务（`pythonw`，无窗口） |
-| `MinisEgoWatch` | 每分钟 | 看门狗：端口没监听就拉起来 |
+| `MinisEgoWatch` | 每分钟 | 看门狗：端口没监听就拉起来（`pythonw`，无窗口） |
 
 其它：`ego_srv_start.cmd` 启动、`ego_srv_restart.cmd` 重启、
 `ego_clean.cmd` 清临时脚本。
+
+> 看门狗为什么是 `.py` 而不是 `.cmd`：计划任务在交互式会话里跑 `.cmd`，
+> 每分钟会闪一个控制台窗口在桌面上。`pythonw` 是 GUI 子系统，根本没有
+> 控制台 —— 这是「不闪窗口」的正解，不是藏技巧。
 
 ## 手机怎么调
 
