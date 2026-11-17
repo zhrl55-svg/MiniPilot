@@ -99,14 +99,16 @@ Settings → Network 把 **MCP** scope 的路由设成 `tailscale`（或 default
 
 ### 常驻
 
-`run_bridge.cmd` + `run_bridge.vbs` 是隐藏窗口的重启循环（崩了 5 秒后重来）。
-是否设为登录自启由你决定，命令是：
+`run_bridge.cmd` + `run_bridge.vbs` 是隐藏窗口的重启循环（崩了 5 秒后重来，
+发现 8788 已有实例就等待，不会抢端口）。
 
-```bat
-schtasks /Create /TN "MinisPCHubBridge" ^
-  /TR "wscript.exe \"D:\minis-src\tools\pchub\run_bridge.vbs\"" ^
-  /SC ONLOGON /RL LIMITED /F
+登录自启已配置在**用户启动文件夹**（无需管理员）：
+
 ```
+%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\MinisPCHubBridge.vbs
+```
+
+（`schtasks /SC ONLOGON` 在非管理员下会报“拒绝访问”，所以用启动文件夹等价实现。）
 
 `tailscale serve` 的配置由 tailscaled 持久化，重启后仍然有效。
 
