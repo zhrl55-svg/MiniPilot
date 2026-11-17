@@ -211,3 +211,6 @@ tools/hub/hubroot/ego_srv.json
 tools/hub/hubroot/ego_srv.log
 tools/hub/hubroot/ego_srv.err
 tools/hub/hubroot/ego_q_*.mjs
+
+# ego 常驻服务的运行时 pid 文件
+tools/hub/hubroot/ego_srv.pid
