@@ -8,6 +8,7 @@ grant the wrong thing to the wrong caller.
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +45,19 @@ WRITE_SUBCOMMANDS: dict[str, set[str]] = {}
 
 #: A shell metacharacter that can turn a read into a write or reach outside.
 UNSAFE_TOKENS = (">", "<", "`", "$(", "${", "&&", "||", ";", "&", "\n")
+
+#: Commands that destroy data even when they "look simple". An approval grant
+#: never covers these: they ask every time. Narrow on purpose — a false
+#: positive is one extra card, a false negative is unapproved data loss.
+_DESTRUCTIVE = re.compile(
+    r"\b(rm|rmdir|rd|del|erase|format|mkfs|dd|shutdown|reboot|poweroff|"
+    r"diskpart|takeown|bcdedit|reg\s+delete)\b",
+    re.IGNORECASE,
+)
+
+
+def shell_is_destructive(command: str) -> bool:
+    return bool(_DESTRUCTIVE.search(command or ""))
 
 
 @dataclass
@@ -96,6 +110,23 @@ class Gate:
             str(k): v for k, v in (policy.get("actions") or {}).items()
         }
         self.read_only_bypass = bool(policy.get("allow_read_only_shell", True))
+        #: How long one approval covers the same action from the same device.
+        #: Without it every step of a multi-step task raised its own card,
+        #: which trains people to tap "allow" without reading. 0 disables.
+        try:
+            self.grant_s = float(policy.get("approval_grant_s", 600))
+        except (TypeError, ValueError):
+            self.grant_s = 600.0
+        self._grants: dict[tuple[str, str], float] = {}
+
+    def note_approval(self, sender_id: str, action: str) -> None:
+        """A person allowed [action] for [sender]: trust it for grant_s."""
+        if self.grant_s > 0:
+            self._grants[(sender_id, action)] = time.monotonic() + self.grant_s
+
+    def _grant_left(self, sender_id: str, action: str) -> float:
+        left = self._grants.get((sender_id, action), 0.0) - time.monotonic()
+        return max(0.0, left)
 
     def _action_mode(self, action: str) -> tuple[str, str]:
         entry = self.per_action.get(action)
@@ -111,13 +142,25 @@ class Gate:
 
         risk = RISK.get(action, "high")
 
-        if action == "shell" and self.read_only_bypass:
-            read_only, why = shell_is_read_only(str(args.get("command", "")))
-            if read_only:
-                return Decision(BYPASS, "low", f"shell is read-only ({why})")
-
+        # An explicitly trusted device skips everything below, including the
+        # destructive check — that is what "trusted" means.
         if sender_id in self.by_sender:
             return Decision(self.by_sender[sender_id], risk, f"trusted device {sender_id}")
+
+        if action == "shell":
+            command = str(args.get("command", ""))
+            # No grant covers destruction: it is exactly the class of call
+            # that must be looked at, every time.
+            if shell_is_destructive(command):
+                return Decision(ASK, "high", "destructive shell command")
+            if self.read_only_bypass:
+                read_only, why = shell_is_read_only(command)
+                if read_only:
+                    return Decision(BYPASS, "low", f"shell is read-only ({why})")
+
+        left = self._grant_left(sender_id, action)
+        if left > 0:
+            return Decision(BYPASS, risk, f"{action!r} was allowed {int(self.grant_s - left)}s ago")
 
         mode, source = self._action_mode(action)
         return Decision(mode, risk, f"{source} for {action!r}")

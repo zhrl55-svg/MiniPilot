@@ -223,6 +223,27 @@ PC 端 `config.listen.json` 的 `api_key` 改用手机已有的 `nm_phone`，PC 
 `phone attached: ELS-AN00 (phone-f7eca9c3)`；连续 `shell` 调用 + 审批卡往返
 一次 3-4.5s，连接无重连。relay 保持在线作为第二地址，P3 再删。
 
+常驻：`tools/hub/run_executor.cmd`（端口已占用就等，退出后 5 秒重启）+
+`run_executor.vbs`（无窗口），启动文件夹里是 `MinisPCHubExecutor.vbs`。
+`tailscale serve` 的 8443 规则由 tailscaled 持久化。
+
+### 审批不再每一步一张卡
+
+手机连续调 `shell` 时，原来每一步都弹一张审批卡——人会开始不读就点「允许」，
+审批就失去意义了。现在 `policy.py` 有三层：
+
+1. **只读命令直接放行**（`ls`、`cat`、`grep`、`tail`…；带 `>`、`|`、
+   `&&`、`$(` 等的一律不算）。
+2. **一次批准覆盖同类操作**：同一设备允许 `shell` 后，`approval_grant_s`
+   （默认 600 秒）内同类调用不再询问，审批卡上会写「允许后 10 分钟内同类操作
+   不再询问」。卡的粒度是 **设备 + 动作**，换了动作或换了设备照样问。
+3. **销毁类命令永远每次问**：`rm`、`del`、`format`、`dd`、`shutdown` 等
+   即使有 grant 也重新弹卡。grant 是省噪音的，不是扩权的。
+
+`by_sender` 里显式信任的设备仍跳过一切（包括销毁检查）——那是「信任」的
+含义。`approval_grant_s: 0` 可关掉 grant。回归测试：`python test_policy.py`
+（18 项）。
+
 ### P1 的形状（关键：不要揉成一个文件）
 
 ```

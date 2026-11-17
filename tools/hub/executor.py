@@ -331,6 +331,9 @@ class Executor:
                 await self._send(fail(call_id, "not_allowed", message))
                 self._record(call_id, sender_id, action, started, status, None, decision.reason)
                 return
+            # One card per action, not per call: the same device may repeat
+            # this action without asking again for grant_s (policy).
+            self.gate.note_approval(sender_id, action)
 
         self._inflight += 1
         try:
@@ -367,11 +370,15 @@ class Executor:
         self._approvals[approval_id] = fut
 
         preview = f"{action} {brief(args)}"
+        grant_hint = ""
+        if self.gate.grant_s > 0:
+            minutes = max(1, int(self.gate.grant_s // 60))
+            grant_hint = f"（允许后 {minutes} 分钟内同类操作不再询问）"
         body = {
             "stage": "approval",
             "approval_id": approval_id,
             "preview": f"{action}: {brief(args, 160)}",
-            "preview_zh": f"{action}：{brief(args, 160)}",
+            "preview_zh": f"{action}：{brief(args, 160)}{grant_hint}",
             "risk": decision.risk,
             "reason": decision.reason,
             "app": "hub-executor",
