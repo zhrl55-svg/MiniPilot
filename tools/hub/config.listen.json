@@ -1,16 +1,25 @@
 {
   "api_key": "nm_phone",
-
   "device": {
     "id": "pc-ausa",
     "name": "AUSA",
     "kind": "computer",
     "root": "hubroot",
-    "remote_control": true
+    "remote_control": true,
+    "roots": [
+      "D:/minis-src"
+    ]
   },
-
-  "actions": ["info", "files", "file.get", "file.put", "shell", "screen", "notify", "mode.set"],
-
+  "actions": [
+    "info",
+    "files",
+    "file.get",
+    "file.put",
+    "shell",
+    "screen",
+    "notify",
+    "mode.set"
+  ],
   "policy": {
     "default": "ask",
     "mode": "smart",
@@ -27,7 +36,6 @@
       "notify": "bypass"
     }
   },
-
   "limits": {
     "file_max": 8388608,
     "out_max": 200000,
@@ -37,13 +45,11 @@
     "screen_long_edge": 1600,
     "screen_jpeg_quality": 80
   },
-
   "shell": {
     "program": "",
     "args": [],
     "kill_on_timeout": true,
     "notify_command": "C:\\Users\\zhrl5\\miniconda3\\python.exe D:\\minis-src\\tools\\hub\\notify.py"
   },
-
   "journal": "journal-listen.jsonl"
 }
