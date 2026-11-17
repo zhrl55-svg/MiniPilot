@@ -3256,11 +3256,18 @@ private fun SessionRow(
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
             val titleText = session.title ?: "New Chat"
+            // [UI-261117-folder-child-hierarchy] A session inside an expanded
+            // group is a CHILD of that card. Its title used to sit at exactly
+            // the group header's tier (16sp SemiBold), so "协作" and the member
+            // it contained read as two siblings. Drop members one tier
+            // (15sp Medium); the header keeps 16sp SemiBold.
+            val titleFontSize = if (inFolder) 15.sp else 16.sp
+            val titleFontWeight = if (inFolder) FontWeight.Medium else FontWeight.SemiBold
             if (searchQuery.isNotBlank()) {
                 Text(
                     text = highlightedAnnotatedString(titleText, searchQuery),
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = titleFontSize,
+                    fontWeight = titleFontWeight,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -3268,8 +3275,8 @@ private fun SessionRow(
             } else {
                 Text(
                     text = titleText,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.SemiBold,
+                    fontSize = titleFontSize,
+                    fontWeight = titleFontWeight,
                     color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
