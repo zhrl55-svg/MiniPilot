@@ -42,7 +42,7 @@
     "program": "",
     "args": [],
     "kill_on_timeout": true,
-    "notify_command": ""
+    "notify_command": "C:\\Users\\zhrl5\\miniconda3\\python.exe D:\\minis-src\\tools\\hub\\notify.py"
   },
 
   "journal": "journal-listen.jsonl"

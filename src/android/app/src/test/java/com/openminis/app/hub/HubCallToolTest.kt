@@ -2,6 +2,7 @@ package com.openminis.app.hub
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -30,5 +31,25 @@ class HubCallToolTest {
     fun `args that make no sense become an empty object`() {
         assertEquals(0, HubCallTool.actionArgs(JSONObject().put("args", "not json")).length())
         assertEquals(0, HubCallTool.actionArgs(JSONObject()).length())
+    }
+
+    /**
+     * The PC side grew `mode.set` but this allowlist is checked on the phone
+     * before anything leaves the device, so a missing entry means the call
+     * dies with "不支持的动作" even though the hub is ready for it.
+     */
+    @Test
+    fun `approval mode switching is offered`() {
+        assertTrue("mode.set" in HubCallTool.ACTIONS)
+    }
+
+    /**
+     * Same story for `notify`: the PC executor implements it and the policy
+     * allows it, but the phone's allowlist rejected it with
+     * "不支持的动作：notify" before the request ever left the device.
+     */
+    @Test
+    fun `desktop notification is offered`() {
+        assertTrue("notify" in HubCallTool.ACTIONS)
     }
 }

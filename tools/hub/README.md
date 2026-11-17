@@ -43,6 +43,7 @@ python fake_phone.py --target pc-ausa --action info
 | `policy.allow_read_only_shell` | 只读命令免审批（白名单见 `policy.py`） |
 | `limits.approval_timeout_s` | 审批卡等人多久，超时按拒绝处理 |
 | `shell.program` / `shell.args` | 留空则 Windows 上用 Git Bash，其次 `cmd /c`；类 Unix 用 `/bin/sh -lc` |
+| `shell.notify_command` | `notify` 动作的落地命令，会被拼上 `title` 和 `body` 两个参数。`config.listen.json` 里指向 `notify.py`（Windows Toast/气泡，不阻塞执行器） |
 | `journal` | 每个 call 的审计记录（谁发起、什么动作、结果、耗时） |
 
 ## 已实测通过
@@ -87,7 +88,7 @@ python fake_phone.py --target pc-ausa --action info
 | C6.1 `stop{call}` | 返回 `{stopped:false}`，绝不强杀已在跑的命令 | 强杀一个写了一半的 `rm` 比让它跑完更危险 |
 | C7.3 断线重放 | 执行器内存里去重（`_done` 保留 500 条） | 中继重启后能挡住「重连又重发」，跨进程重启挡不住 |
 | C3.2 `open` | 未实现 | 它会拉起 GUI，语义依赖桌面环境，先放着 |
-| `notify` | 需要 `shell.notify_command`，否则回 `{delivered:false}` | 不做平台相关的托盘/Toast 适配 |
+| `notify` | 需要 `shell.notify_command`，否则回 `{delivered:false}` | Windows 侧已适配（`notify.py` + `notify_popup.ps1`），其他平台仍需自己配 `notify_command` |
 
 ## 已知限制
 

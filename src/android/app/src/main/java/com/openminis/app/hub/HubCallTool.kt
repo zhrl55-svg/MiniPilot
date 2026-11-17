@@ -23,17 +23,17 @@ object HubCallTool {
     const val PROVENANCE_PREFIX = "[来自 %s] "
 
     /** The actions the PC side implements (contract C3.1 / C3.2). */
-    val ACTIONS = listOf("info", "shell", "files", "file.get", "file.put", "screen")
+    val ACTIONS = listOf("info", "shell", "files", "file.get", "file.put", "screen", "mode.set", "notify")
 
     fun definition(devices: List<String>): AgentToolDefinition = AgentToolDefinition(
         name = NAME,
         description = "Run an action on another device of your account (a computer that is signed " +
             "in to the same relay) — read its files, list a directory, run a shell command there, " +
-            "or take a screenshot of its screen. The other device answers, and a risky action " +
-            "(anything that writes) asks the person for approval on this phone first. " +
-            "Use it for work that belongs to the other machine: building there, reading a log " +
-            "file there, checking a service there. The output comes back tagged with the " +
-            "device it came from.",
+            "take a screenshot of its screen, or pop a desktop notification there. The other device " +
+            "answers, and a risky action (anything that writes) asks the person for approval on " +
+            "this phone first. Use it for work that belongs to the other machine: building there, " +
+            "reading a log file there, checking a service there, telling the person on that screen " +
+            "that something is done. The output comes back tagged with the device it came from.",
         parameters = mapOf(
             "tool_title" to AgentToolParam("string", "A concise 5-10 word summary shown to the user on the block in the tool bar and in the transcript. Use the same language as the user."),
             "device" to AgentToolParam(
@@ -43,16 +43,22 @@ object HubCallTool {
             ),
             "action" to AgentToolParam(
                 "string",
-                "What to do on that device. `info`: system facts. `shell`: run one command (/bin/sh -c). " +
+                "What to do on that device. `info`: system facts (includes the current approval mode). " +
+                    "`shell`: run one command (/bin/sh -c). " +
                     "`files`: list a directory. `file.get`: read a file (base64 comes back; prefer `files` " +
-                    "or `shell` for small reads). `file.put`: write a file. `screen`: a screenshot of the screen.",
+                    "or `shell` for small reads). `file.put`: write a file. `screen`: a screenshot of the screen. " +
+                    "`mode.set`: change how often that device asks for approval (`ask` every step, `smart` " +
+                    "read-only free + 10-minute grants, `auto` everything except destructive commands). " +
+                    "A mode change always asks the person first. " +
+                    "`notify`: pop a desktop notification on that device, with the given title and body.",
                 enumValues = ACTIONS,
             ),
             "args" to AgentToolParam(
                 "object",
                 "The arguments of the action: shell → {command, cwd?, timeout_ms?}; files → {path?, depth?}; " +
                     "file.get → {path, offset?, length?}; file.put → {path, mime, data(base64)}; " +
-                    "screen → {display?}; info → {}.",
+                    "screen → {display?}; info → {}; mode.set → {mode: ask|smart|auto}; " +
+                    "notify → {title?, body?} — both optional, title defaults to \"minis\".",
             ),
         ),
         required = listOf("tool_title", "device", "action", "args"),
