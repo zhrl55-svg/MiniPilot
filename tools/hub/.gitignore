@@ -1,4 +1,5 @@
 journal*.jsonl
+mode.txt
 __pycache__/
 # 运行时日志与测试产出
 *.err

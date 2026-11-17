@@ -9,10 +9,11 @@
     "remote_control": true
   },
 
-  "actions": ["info", "files", "file.get", "file.put", "shell", "screen", "notify"],
+  "actions": ["info", "files", "file.get", "file.put", "shell", "screen", "notify", "mode.set"],
 
   "policy": {
     "default": "ask",
+    "mode": "smart",
     "allow_read_only_shell": true,
     "approval_grant_s": 600,
     "by_sender": {},

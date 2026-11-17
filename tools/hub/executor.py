@@ -370,15 +370,21 @@ class Executor:
         self._approvals[approval_id] = fut
 
         preview = f"{action} {brief(args)}"
-        grant_hint = ""
-        if self.gate.grant_s > 0:
-            minutes = max(1, int(self.gate.grant_s // 60))
-            grant_hint = f"（允许后 {minutes} 分钟内同类操作不再询问）"
+        if action == "mode.set":
+            target = str(args.get("mode", "")).strip().lower()
+            preview = f"approval mode -> {target}"
+            preview_zh = f"切换审批模式 → {target}：{policy.MODE_ZH.get(target, '未知模式')}"
+        else:
+            grant_hint = ""
+            if self.gate.grant_s > 0:
+                minutes = max(1, int(self.gate.grant_s // 60))
+                grant_hint = f"（允许后 {minutes} 分钟内同类操作不再询问）"
+            preview_zh = f"{action}：{brief(args, 160)}{grant_hint}"
         body = {
             "stage": "approval",
             "approval_id": approval_id,
-            "preview": f"{action}: {brief(args, 160)}",
-            "preview_zh": f"{action}：{brief(args, 160)}{grant_hint}",
+            "preview": preview,
+            "preview_zh": preview_zh,
             "risk": decision.risk,
             "reason": decision.reason,
             "app": "hub-executor",
@@ -444,7 +450,18 @@ class Executor:
             "python": sys.version.split()[0],
             "device": self.cfg.device_id,
             "actions": list(self.cfg.actions),
+            "mode": self.gate.current_mode(),
+            "modes": list(policy.RUNTIME_MODES),
         }
+
+    async def _do_mode_set(self, args: dict[str, Any]) -> dict[str, Any]:
+        target = str(args.get("mode") or "").strip().lower()
+        if target not in policy.RUNTIME_MODES:
+            raise ActionError("bad_frame", f"mode must be one of {', '.join(policy.RUNTIME_MODES)}")
+        previous = self.gate.current_mode()
+        self.gate.set_mode(target)
+        self.log.info("approval mode %s -> %s", previous, target)
+        return {"mode": target, "previous": previous, "file": self.gate.mode_file}
 
     async def _do_shell(self, args: dict[str, Any]) -> dict[str, Any]:
         command = str(args.get("command") or "")

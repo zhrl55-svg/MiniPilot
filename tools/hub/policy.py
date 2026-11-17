@@ -7,7 +7,9 @@ grant the wrong thing to the wrong caller.
 
 from __future__ import annotations
 
+import os
 import re
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -15,6 +17,29 @@ from typing import Any
 BYPASS = "bypass"
 ASK = "ask"
 DENY = "deny"
+
+#: Approval modes, in the spirit of Claude Code's permission modes. The
+#: running mode is how much a person has decided to trust the caller *now*;
+#: `by_sender` trust and per-action policy stay above it.
+#:
+#: - ask   : every call outside explicit policy bypass asks, read-only included.
+#: - smart : read-only shell runs free; one approval covers the same action for
+#:           approval_grant_s; destructive commands still ask.
+#: - auto  : everything except destructive commands runs free.
+#:
+#: There is deliberately no runtime "trust everything" mode: full trust is a
+#: config decision (by_sender) a person edits on the PC, not something the
+#: remote caller can switch itself into.
+MODE_ASK = "ask"
+MODE_SMART = "smart"
+MODE_AUTO = "auto"
+RUNTIME_MODES = (MODE_ASK, MODE_SMART, MODE_AUTO)
+
+MODE_ZH = {
+    MODE_ASK: "每一步都询问（只读命令也询问）",
+    MODE_SMART: "只读命令直放，其余询问；允许一次管同类 10 分钟",
+    MODE_AUTO: "除删除/关机等销毁命令外全部直放",
+}
 
 #: Actions whose risk a checker can actually judge from their text.
 RISK = {
@@ -119,6 +144,55 @@ class Gate:
             self.grant_s = 600.0
         self._grants: dict[tuple[str, str], float] = {}
 
+        #: Approval mode. Kept in a tiny file next to the journal so the human
+        #: can flip it from the PC (hub_mode.py) or through an approved
+        #: mode.set call, and the executor picks it up without a restart.
+        mode = str(policy.get("mode", MODE_SMART)).lower()
+        self.mode_default = mode if mode in RUNTIME_MODES else MODE_SMART
+        mode_file = str(policy.get("mode_file") or "mode.txt")
+        if not os.path.isabs(mode_file):
+            base = os.path.dirname(cfg.journal) if cfg.journal else os.getcwd()
+            mode_file = os.path.join(base, mode_file)
+        self.mode_file = mode_file
+        self._mode_state: tuple[str, float, int] | None = None
+
+    # ------------------------------------------------------------------ mode
+    def current_mode(self) -> str:
+        """The mode in effect now: mode file if it names a known mode."""
+        try:
+            st = os.stat(self.mode_file)
+        except OSError:
+            self._mode_state = None
+            return self.mode_default
+        if self._mode_state and self._mode_state[1:] == (st.st_mtime, st.st_size):
+            return self._mode_state[0]
+        try:
+            with open(self.mode_file, "r", encoding="utf-8") as fh:
+                value = (fh.readline() or "").strip().lower()
+        except OSError:
+            value = ""
+        mode = value if value in RUNTIME_MODES else self.mode_default
+        self._mode_state = (mode, st.st_mtime, st.st_size)
+        return mode
+
+    def set_mode(self, mode: str) -> str:
+        """Persist [mode]; refused unless it is one of RUNTIME_MODES."""
+        mode = (mode or "").strip().lower()
+        if mode not in RUNTIME_MODES:
+            raise ValueError(f"mode must be one of {', '.join(RUNTIME_MODES)}")
+        directory = os.path.dirname(self.mode_file) or "."
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".mode-", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(mode + "\n")
+            os.replace(tmp, self.mode_file)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        self._mode_state = None
+        return mode
+
     def note_approval(self, sender_id: str, action: str) -> None:
         """A person allowed [action] for [sender]: trust it for grant_s."""
         if self.grant_s > 0:
@@ -142,28 +216,50 @@ class Gate:
 
         risk = RISK.get(action, "high")
 
+        # A mode change is meta: only a person may make it, never a grant, a
+        # read-only shortcut or auto mode — otherwise the caller could widen
+        # its own permissions. by_sender still decides for a known device.
+        if action == "mode.set":
+            explicit = self.by_sender.get(sender_id)
+            if explicit == DENY:
+                return Decision(DENY, "high", f"trusted device {sender_id} denies mode changes")
+            if explicit == BYPASS:
+                return Decision(BYPASS, "high", f"trusted device {sender_id}")
+            return Decision(ASK, "high", "approval mode is changed by a person, never by grant")
+
         # An explicitly trusted device skips everything below, including the
         # destructive check — that is what "trusted" means.
         if sender_id in self.by_sender:
             return Decision(self.by_sender[sender_id], risk, f"trusted device {sender_id}")
 
+        mode = self.current_mode()
+        configured, source = self._action_mode(action)
+        # An explicit deny is a decision about the action itself; no mode
+        # loosens it. (Modes only upgrade ask -> bypass, never deny -> allow.)
+        if configured == DENY:
+            return Decision(DENY, risk, f"{source} for {action!r}")
+
         if action == "shell":
             command = str(args.get("command", ""))
-            # No grant covers destruction: it is exactly the class of call
-            # that must be looked at, every time.
+            # No mode or grant covers destruction: it is exactly the class of
+            # call that must be looked at, every time.
             if shell_is_destructive(command):
                 return Decision(ASK, "high", "destructive shell command")
-            if self.read_only_bypass:
+
+        if mode == MODE_AUTO:
+            return Decision(BYPASS, risk, "auto mode: non-destructive calls run free")
+        if mode == MODE_SMART:
+            if configured == BYPASS:
+                return Decision(BYPASS, risk, f"{source} for {action!r}")
+            if action == "shell" and self.read_only_bypass:
                 read_only, why = shell_is_read_only(command)
                 if read_only:
                     return Decision(BYPASS, "low", f"shell is read-only ({why})")
+            left = self._grant_left(sender_id, action)
+            if left > 0:
+                return Decision(BYPASS, risk, f"{action!r} was allowed {int(self.grant_s - left)}s ago")
 
-        left = self._grant_left(sender_id, action)
-        if left > 0:
-            return Decision(BYPASS, risk, f"{action!r} was allowed {int(self.grant_s - left)}s ago")
-
-        mode, source = self._action_mode(action)
-        return Decision(mode, risk, f"{source} for {action!r}")
+        return Decision(configured, risk, f"{source} for {action!r} (mode={mode})")
 
 
 def path_is_inside(root: str, candidate: str) -> bool:

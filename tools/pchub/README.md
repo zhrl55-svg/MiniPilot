@@ -242,7 +242,31 @@ PC 端 `config.listen.json` 的 `api_key` 改用手机已有的 `nm_phone`，PC 
 
 `by_sender` 里显式信任的设备仍跳过一切（包括销毁检查）——那是「信任」的
 含义。`approval_grant_s: 0` 可关掉 grant。回归测试：`python test_policy.py`
-（18 项）。
+（33 项）。
+
+### 审批模式（像 Claude Code 的权限模式）
+
+运行时有三档，存在 `tools/hub/mode.txt`（与 journal 同目录），**热生效**，
+不用重启 executor：
+
+| 模式 | 行为 |
+|---|---|
+| `ask` | 每一步都问，只读命令也问；只有 `policy.actions` 里显式 `bypass` 的（info/files/file.get/notify）直接放行 |
+| `smart`（默认） | 只读 shell 直放；允许一次管同类 10 分钟；销毁命令每次都问 |
+| `auto` | 除销毁命令（rm/del/format/dd/shutdown…）外全部直放 |
+
+切换方式：
+
+```bash
+python hub_mode.py            # 看当前模式
+python hub_mode.py ask|smart|auto
+```
+
+或在手机上让 agent 调 `hub_call(action="mode.set", args={"mode":"auto"})`：
+**这一调用永远弹审批卡**（即使有 grant、即使在 auto 模式），卡上写清目标
+模式的含义。模型不能给自己放权；完全信任只写在 PC 配置的 `by_sender` 里，
+是人类改配置的动作。`auto` 模式也不覆盖显式 `deny` 条目。
+`info` 的返回里带 `mode` 和可选 `modes`，调试时一眼能看到现在是什么状态。
 
 ### P1 的形状（关键：不要揉成一个文件）
 
