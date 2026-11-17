@@ -314,12 +314,21 @@ class HubClient(private val listener: Listener) {
         probeJob = scope.launch {
             while (true) {
                 delay(PREFERRED_PROBE_MS)
-                if (stopped || state != State.CONNECTED) continue
+                if (stopped) return@launch
+                if (state != State.CONNECTED) continue
                 if (!RelayChoice.shouldProbe(urlIndex, urls.size)) continue
                 if (preferredAlive()) {
                     AppLogger.info(TAG, "preferred relay is back — switching back")
                     switchToPreferred()
-                    return@launch
+                    // [F-007b] Do NOT end the loop after a successful switch.
+                    // This job is the ONLY thing that brings the phone home;
+                    // ending it made the return one-shot. On 2026-11-17 the
+                    // first probe returned the phone to the direct endpoint,
+                    // then the executor was restarted again, the phone fell
+                    // back to the relay — and with the probe gone it stayed
+                    // there indefinitely. Keep probing for the life of the
+                    // client; while on the preferred endpoint shouldProbe()
+                    // makes every tick a no-op.
                 }
             }
         }
