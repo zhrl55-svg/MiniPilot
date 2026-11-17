@@ -1,4 +1,4 @@
-journal.jsonl
+journal*.jsonl
 __pycache__/
 # 运行时日志与测试产出
 *.err

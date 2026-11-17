@@ -61,6 +61,8 @@ async def main() -> int:
         ping_interval=20,
         ping_timeout=20,
         max_size=64 * 1024 * 1024,
+        # websockets >=15 reads HTTPS_PROXY; a local proxy breaks tailnet TLS.
+        proxy=None,
     ) as ws:
         await ws.send(
             json.dumps(

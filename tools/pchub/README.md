@@ -141,7 +141,10 @@ Settings → Network 把 **MCP** scope 的路由设成 `tailscale`（或 default
   （`http://asus.saola-mintaka.ts.net:8788`），用 `100.x.y.z:8788` 直连会
   得到 `404 page not found`。
 - 本机自测时注意 shell 里的 `HTTP_PROXY`（Clash 等）会劫持 tailnet 域名并
-  返回 400；`smoke.py` 已内置忽略环境代理。
+  返回 400；`smoke.py` 已内置忽略环境代理。**websockets ≥15 的客户端默认读取
+  `HTTPS_PROXY`**，会把 `wss://…ts.net` 送进代理并得到
+  `SSLV3_ALERT_HANDSHAKE_FAILURE`——hub 的三个客户端（executor / fake_phone /
+  test_link）都已显式 `proxy=None`。
 
 ---
 
@@ -150,18 +153,84 @@ Settings → Network 把 **MCP** scope 的路由设成 `tailscale`（或 default
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | **P0** | Ego Bridge + `/mcp` + `tailscale serve` | ✅ `ego_mcp.py` |
-| **P1** | `link.py`：把 relay 的服务端抽出来，executor 加 `--listen`，`--connect` 保留 | 待做 |
-| **P2** | 手机 `HubClient` 走 `NetworkHttp`，地址用 MagicDNS；relay 退到配置第二位 | 待做 |
+| **P1** | `link.py`：把 relay 的服务端抽出来，executor 加 `--listen`，`--connect` 保留 | ✅ 2026-11-17 |
+| **P2** | 手机 `HubClient` 走 `NetworkHttp`，地址用 MagicDNS；relay 退到配置第二位 | ✅ 2026-11-17 |
 | **P3** | 跑稳后删 relay | 待做 |
+
+### P1 已交付（`tools/hub/`）
+
+`link.py` 落在 **`tools/hub/`** 而不是 `pchub/`——它和 executor、relay、
+fake_phone 共用 `hubkit` 的帧工具，放在一起才不用反向引用。
+
+```
+tools/hub/
+  link.py         ← Link 基类 + DirectLink（鉴权、hello/welcome、帧上限、
+                    ping/pong、幂等、审批断线判 aborted）
+  executor.py     ← 新增 --listen HOST:PORT；原有 --connect 不变
+  dev_relay.py    ← 变成 Relay(Link)，只剩路由与事件转发
+  test_link.py    ← 六条契约的回归测试（9 项，真实 WS 客户端）
+  config.listen.json ← direct 模式配置（无 relay 字段）
+```
+
+跑起来（direct，目标形态）：
+
+```bash
+cd tools/hub
+python test_link.py                                   # 9 项契约
+python executor.py --config config.listen.json --listen 127.0.0.1:8790
+tailscale serve --bg --https=8443 http://127.0.0.1:8790
+python fake_phone.py \
+  --relay wss://asus.saola-mintaka.ts.net:8443/v1/hub \
+  --key nm_phone --target pc-ausa --action info
+```
+
+已实测：welcome `minis-pchub/0.1`、`devices=[(AUSA, pc-ausa, controllable)]`，
+loopback 直连 24 ms，经 `tailscale serve` 的 wss 同样返回；审批卡往返
+（`rm -f …` → APPROVAL → allow → 文件删除）在两种入口下都通过。
+
+> 一个 key 绑定一个 device id（C1.3）。真机连着时 `nm_phone` 已被手机占用，
+> 再跑 `fake_phone.py --key nm_phone` 会得到 `4002 bad_device`——这是契约，
+> 不是故障；手工测试请换一个 key 的独立 executor 实例。
+
+router（过渡形态，保留）：`python dev_relay.py --port 8787 --key nm_dev --key nm_phone`。
+
+### P2 已交付（手机直连 PC）
+
+手机端只改了一处：`HubClient.defaultHttp` 不再自己拼代理，而是
+
+```kotlin
+NetworkHttp.following(NetworkScope.MCP.tag, base)   // hub.json 里显式 proxy 仍然优先
+```
+
+即走 **MCP scope** 的路由（该 scope 本来就为 pchub 桥接指向 Tailscale），
+于是 MagicDNS 名字在 tsnet 内解析、`wss://` 经本地入口 CONNECT 隧道出去，
+不占手机 VPN 槽。手机 `hub.json`（`/sdcard/Android/data/com.openminis.app.dev/files/hub.json`）：
+
+```json
+{
+  "relay": [
+    "wss://asus.saola-mintaka.ts.net:8443/v1/hub",
+    "ws://100.95.180.77:8787/v1/hub"
+  ],
+  "key": "nm_phone"
+}
+```
+
+PC 端 `config.listen.json` 的 `api_key` 改用手机已有的 `nm_phone`，PC 只监听
+`127.0.0.1:8790`，由 `tailscale serve --https=8443` 对外——**tailnet 以外不可见**。
+
+实测（2026-11-17 12:45，ELS-AN00）：手机启动后 40s 内连上 PC，
+`phone attached: ELS-AN00 (phone-f7eca9c3)`；连续 `shell` 调用 + 审批卡往返
+一次 3-4.5s，连接无重连。relay 保持在线作为第二地址，P3 再删。
 
 ### P1 的形状（关键：不要揉成一个文件）
 
 ```
-pchub/
-  link.py       ← 服务端：鉴权、hello/welcome、帧上限、心跳、幂等   (~250 行)
+tools/hub/
+  link.py       ← 服务端：鉴权、hello/welcome、帧上限、心跳、幂等
   executor.py   ← 策略、审批、调度（现有 _dispatch / policy / _ask 不动）
   actions/      ← shell / files / screen / browser
-  mcp.py        ← /mcp：把 ego 包成工具
+  pchub/mcp.py  ← /mcp：把 ego 包成工具
 ```
 
 `link.py` 有两种模式，**同一份实现**：

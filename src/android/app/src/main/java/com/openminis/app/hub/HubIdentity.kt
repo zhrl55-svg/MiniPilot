@@ -22,17 +22,20 @@ import java.io.File
  * external one (which `adb push` can reach):
  *
  *   hub.json = {
- *     "relay": ["ws://192.168.2.102:8787/v1/hub", "ws://100.95.180.77:8787/v1/hub"],
+ *     "relay": ["wss://asus.saola-mintaka.ts.net:8443/v1/hub",
+ *               "ws://100.95.180.77:8787/v1/hub"],
  *     "key": "nm_phone",
  *     "proxy": "127.0.0.1:7890",
  *     "enabled": true
  *   }
  *
- * "relay" is an ordered list: the LAN address first, the Tailscale one as the
- * fallback for when the phone is out of the house. "proxy" is optional — it
- * exists because the phone's VPN tears a direct websocket down every 20-40
- * seconds, while the same socket through the local proxy stays up for hours.
- * "enabled" lets the user switch the whole link off without deleting the file.
+ * "relay" is an ordered list: the PC endpoint first (direct WebSocket served
+ * by the executor and exposed by `tailscale serve`), the relay as the
+ * fallback. "proxy" is an optional legacy override: normally it is unset and
+ * the socket follows Settings > Network (the MCP scope, routed to Tailscale),
+ * which is what makes a MagicDNS endpoint resolvable and keeps the socket
+ * alive through the phone's VPN. "enabled" lets the user switch the whole
+ * link off without deleting the file.
  */
 object HubIdentity {
     private const val PREFS = "minis_hub_settings"

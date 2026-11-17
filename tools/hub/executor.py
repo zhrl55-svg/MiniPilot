@@ -27,9 +27,11 @@ from collections import OrderedDict
 from typing import Any
 
 from websockets.asyncio.client import connect
+from websockets.asyncio.server import serve
 from websockets.exceptions import ConnectionClosed
 
 import hubkit
+import link
 import policy
 from hubkit import ActionError, Config, brief, fail, hello_frame, load_config, ok, setup_logging
 
@@ -114,6 +116,7 @@ class Executor:
         self.journal = Journal(cfg.journal)
         self.log = setup_logging(TAG, debug=False)
         self.ws = None
+        self.link: link.DirectLink | None = None
         self.frame_limit = 16 * 1024 * 1024
         self.devices: list[dict[str, Any]] = []
         self._approvals: dict[str, asyncio.Future] = {}
@@ -154,6 +157,44 @@ class Executor:
             backoff = min(backoff * 2, 60.0)
         return 0
 
+    async def run_listen(self, host: str, port: int) -> int:
+        """Act as the endpoint itself — no relay, the phone dials this process.
+
+        All connection rules come from link.DirectLink (the same class the dev
+        relay routes through): auth, hello window, frame ceiling, ping/pong,
+        duplicate call ids. This method only wires the local handler and keeps
+        `self.ws` pointed at the one attached phone, so `_send` works unchanged.
+        """
+        direct = link.DirectLink(
+            key=self.cfg.api_key,
+            device=hello_frame(self.cfg)["device"],
+            handler=self._handle_call,
+            on_attach=self._attach_phone,
+            on_detach=self._detach_phone,
+            tag=TAG,
+            version=f"minis-pchub/{hubkit.PROTO_VERSION}",
+        )
+        self.link = direct
+        async with serve(direct.handler, host, port, max_size=link.SERVER_MAX_FRAME):
+            self.log.info(
+                "listening on ws://%s:%d/v1/hub — device %s, actions %s",
+                host, port, self.cfg.device_id, list(self.cfg.actions) if self.cfg.remote_control else [],
+            )
+            await asyncio.get_running_loop().create_future()
+        return 0
+
+    def _attach_phone(self, peer: link.Peer, socket: Any) -> None:
+        self.ws = socket
+        self.log.info("phone attached: %s (%s)", peer.name, peer.device_id)
+
+    def _detach_phone(self, peer: link.Peer, socket: Any) -> None:
+        if self.ws is socket:
+            self.ws = None
+            # Contract C4: an approval nobody can answer is aborted at once,
+            # never left as a card on a link that is already gone.
+            self._fail_pending("the phone disconnected")
+            self.log.info("phone detached: %s", peer.device_id or peer.name)
+
     async def _session(self) -> None:
         self.log.info("connecting to %s as %s", self.cfg.relay, self.cfg.device_id)
         async with connect(
@@ -163,6 +204,10 @@ class Executor:
             ping_timeout=20,
             open_timeout=20,
             max_size=64 * 1024 * 1024,
+            # Never route the hub link through an OS proxy: websockets >=15
+            # honours HTTPS_PROXY by default, and a local Clash/fake-ip proxy
+            # resets TLS to tailnet names (`SSLV3_ALERT_HANDSHAKE_FAILURE`).
+            proxy=None,
         ) as ws:
             self.ws = ws
             await ws.send(json.dumps(hello_frame(self.cfg), ensure_ascii=False))
@@ -568,6 +613,12 @@ class _Refused(Exception):
 async def main() -> int:
     parser = argparse.ArgumentParser(description="Minis hub executor (computer side)")
     parser.add_argument("--config", default="config.json")
+    parser.add_argument(
+        "--listen",
+        metavar="HOST:PORT",
+        default="",
+        help="serve this device directly instead of connecting to a relay (e.g. 127.0.0.1:8790)",
+    )
     parser.add_argument("--debug", action="store_true")
     args = parser.parse_args()
 
@@ -579,6 +630,17 @@ async def main() -> int:
     os.makedirs(cfg.root, exist_ok=True)
     executor = Executor(cfg)
     try:
+        if args.listen:
+            host, _, port_text = args.listen.rpartition(":")
+            try:
+                port = int(port_text)
+            except ValueError:
+                raise SystemExit(f"--listen needs HOST:PORT, got {args.listen!r}")
+            if not cfg.api_key:
+                raise SystemExit("config: `api_key` is empty — listening needs a key to authenticate the phone")
+            return await executor.run_listen(host or "127.0.0.1", port)
+        if not cfg.relay:
+            raise SystemExit("config: `relay` is empty — add one, or run with --listen HOST:PORT")
         return await executor.run()
     except KeyboardInterrupt:
         return 0

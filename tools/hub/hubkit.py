@@ -122,7 +122,9 @@ def load_config(path: str) -> Config:
     root = here(device.get("root") or raw.get("root") or ".")
     device_id = str(device.get("id") or default_device_id())
     cfg = Config(
-        relay=str(raw["relay"]),
+        # Empty is legal: an executor started with --listen never dials a
+        # relay, and requires no address it would not use.
+        relay=str(raw.get("relay") or ""),
         api_key=str(raw["api_key"]),
         device_id=device_id,
         device_name=str(device.get("name") or device_id),

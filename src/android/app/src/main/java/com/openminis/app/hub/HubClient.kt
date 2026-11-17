@@ -7,6 +7,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.openminis.app.logging.AppLogger
+import com.openminis.app.network.NetworkHttp
+import com.openminis.app.network.NetworkScope
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -84,12 +86,19 @@ class HubClient(private val listener: Listener) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * The http client. Built per start() because the proxy may differ per
+     * The http client. Built per start() because the route may differ per
      * configuration.
      *
-     * The proxy matters: on the direct path the phone's VPN tears the
-     * websocket down every 20-40 seconds; through the local proxy the same
-     * socket stays up for hours (the Python probe proved it).
+     * Two ways to reach the endpoint:
+     *  - an explicit "proxy" in hub.json — the old escape hatch, used verbatim;
+     *  - otherwise the app's network stack. The hub endpoint is a tailnet
+     *    name, which only resolves inside the embedded tsnet, so the socket
+     *    must leave through the local entry. The MCP scope is reused because
+     *    it is already the scope routed to Tailscale for the pchub bridge.
+     *
+     * Route stability is the reason this matters: on the phone's own route
+     * the VPN tears the websocket down every 20-40 seconds; through the
+     * entry the same socket stays up for hours.
      */
     private var http: OkHttpClient = defaultHttp(null)
 
@@ -112,7 +121,9 @@ class HubClient(private val listener: Listener) {
                 AppLogger.info(TAG, "proxy ignored: ${e.message}")
             }
         }
-        return builder.build()
+        val base = builder.build()
+        // An explicit proxy wins; otherwise follow Settings > Network (MCP).
+        return if (proxy.isNullOrBlank()) NetworkHttp.following(NetworkScope.MCP.tag, base) else base
     }
 
     private var socket: WebSocket? = null
