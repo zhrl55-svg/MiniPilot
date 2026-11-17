@@ -1,0 +1,291 @@
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.11.1/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build 
+WARNING: We recommend using a newer Android Gradle plugin to use compileSdk = 36
+
+This Android Gradle plugin (8.7.3) was tested up to compileSdk = 35.
+
+You are strongly encouraged to update your project to use a newer
+Android Gradle plugin that has been tested with compileSdk = 36.
+
+If you are already using the latest version of the Android Gradle plugin,
+you may need to wait until a newer version with support for compileSdk = 36 is available.
+
+For more information refer to the compatibility table:
+https://d.android.com/r/tools/api-level-support
+
+To suppress this warning, add/update
+    android.suppressUnsupportedCompileSdk=36
+to this project's gradle.properties.
+> Task :app:buildKotlinToolingMetadata UP-TO-DATE
+> Task :app:checkKotlinGradlePluginConfigurationErrors SKIPPED
+> Task :app:copyBashismRules UP-TO-DATE
+> Task :app:preBuild UP-TO-DATE
+> Task :app:preGithubPerfBuild UP-TO-DATE
+> Task :app:generateGithubPerfBuildConfig UP-TO-DATE
+> Task :app:checkGithubPerfAarMetadata UP-TO-DATE
+> Task :app:generateGithubPerfResValues UP-TO-DATE
+> Task :app:mapGithubPerfSourceSetPaths UP-TO-DATE
+> Task :app:generateGithubPerfResources UP-TO-DATE
+> Task :app:mergeGithubPerfResources UP-TO-DATE
+> Task :app:packageGithubPerfResources UP-TO-DATE
+> Task :app:parseGithubPerfLocalResources UP-TO-DATE
+> Task :app:createGithubPerfCompatibleScreenManifests UP-TO-DATE
+> Task :app:extractDeepLinksGithubPerf UP-TO-DATE
+> Task :app:processGithubPerfMainManifest UP-TO-DATE
+> Task :app:processGithubPerfManifest UP-TO-DATE
+> Task :app:processGithubPerfManifestForPackage UP-TO-DATE
+> Task :app:processGithubPerfResources UP-TO-DATE
+> Task :app:kspGithubPerfKotlin UP-TO-DATE
+> Task :app:compileGithubPerfKotlin UP-TO-DATE
+> Task :app:javaPreCompileGithubPerf UP-TO-DATE
+> Task :app:compileGithubPerfJavaWithJavac UP-TO-DATE
+> Task :app:bundleGithubPerfClassesToRuntimeJar UP-TO-DATE
+> Task :app:bundleGithubPerfClassesToCompileJar UP-TO-DATE
+> Task :app:kspGithubPerfUnitTestKotlin UP-TO-DATE
+> Task :app:compileGithubPerfUnitTestKotlin UP-TO-DATE
+> Task :app:preGithubPerfUnitTestBuild UP-TO-DATE
+> Task :app:javaPreCompileGithubPerfUnitTest UP-TO-DATE
+> Task :app:compileGithubPerfUnitTestJavaWithJavac NO-SOURCE
+> Task :app:processGithubPerfJavaRes UP-TO-DATE
+> Task :app:processGithubPerfUnitTestJavaRes UP-TO-DATE
+> Task :app:testGithubPerfUnitTest
+
+BackupHistoryStorageTest > a reader racing thousands of writes never reads a truncated file FAILED
+    java.lang.AssertionError at BackupHistoryStorageTest.kt:93
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C16] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C17] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C18] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C19] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C21] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C22] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C26] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C27] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxFixJWireShaTest > only the bodies the fixes target differ from before[C31] FAILED
+    java.lang.AssertionError at CtxFixJWireShaTest.kt:365
+
+CtxInvarianceTest > extracted code reproduces the pre-extraction outputs byte for byte FAILED
+    org.junit.ComparisonFailure at CtxInvarianceTest.kt:260
+
+DirectorySizeSymlinkTest > a symlink to a directory is not descended into FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:49
+
+DirectorySizeSymlinkTest > many links to one target inflate nothing FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:63
+
+DirectorySizeSymlinkTest > a symlink to a file is not counted as a second copy FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:35
+
+DirectorySizeSymlinkTest > a symlink pointing outside the tree cannot import foreign bytes FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:79
+
+DirectorySizeSymlinkTest > a broken symlink is skipped rather than throwing FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:102
+
+DirectorySizeSymlinkTest > a symlink cycle terminates instead of hanging FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:91
+
+DirectorySizeSymlinkTest > walkTopDown follows directory symlinks FAILED
+    java.nio.file.FileSystemException at DirectorySizeSymlinkTest.kt:131
+
+OrphanedSessionFilesTest > delete removes exactly the removable folders FAILED
+    java.nio.file.FileSystemException at OrphanedSessionFilesTest.kt:48
+
+OrphanedSessionFilesTest > only UUID-named real folders are listed, from both roots FAILED
+    java.nio.file.FileSystemException at OrphanedSessionFilesTest.kt:48
+
+OrphanedSessionFilesTest > live, in-use and recently changed folders are never removable FAILED
+    java.nio.file.FileSystemException at OrphanedSessionFilesTest.kt:48
+
+Review0923SessionStorageSymlinkTest > a file symlink is removed as a link, the target stays FAILED
+    java.nio.file.FileSystemException at Review0923SessionStorageSymlinkTest.kt:59
+
+Review0923SessionStorageSymlinkTest > BUG restoreWritable does not chmod a read-only directory outside the session FAILED
+    java.nio.file.FileSystemException at Review0923SessionStorageSymlinkTest.kt:82
+
+Review0923SessionStorageSymlinkTest > freed never exceeds the size the screen reported FAILED
+    java.nio.file.FileSystemException at Review0923SessionStorageSymlinkTest.kt:101
+
+Review0923SessionStorageSymlinkTest > BUG a directory symlink in the workspace does not delete the target's contents FAILED
+    java.nio.file.FileSystemException at Review0923SessionStorageSymlinkTest.kt:42
+
+SessionStorageTest > an undeletable file is REPORTED rather than silently swallowed FAILED
+    java.lang.AssertionError at SessionStorageTest.kt:113
+
+SessionStorageTest > a read-only directory is made writable and still deleted FAILED
+    java.lang.AssertionError at SessionStorageTest.kt:73
+
+ImageReproGateTest > P-a5 planner id is System identityHashCode of the array FAILED
+    java.lang.AssertionError at ImageReproGateTest.kt:206
+
+ImageReproGateTest > P-a7 read_image and browser resize decode the full image, no inSampleSize FAILED
+    java.lang.AssertionError at ImageReproGateTest.kt:252
+
+ImageReproGateTest > P-a6 no decode path reads EXIF or uses ImageDecoder FAILED
+    java.lang.AssertionError at ImageReproGateTest.kt:235
+
+ImageReproGateTest > N4 floor vs round - 1080x32768 is 66x2000 as an attachment, 65x2000 as a tool image FAILED
+    java.lang.AssertionError at ImageReproGateTest.kt:80
+
+ImageReproHistoryFactsTest > N1 attached-image caption exists only on the live turn FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:148
+
+ImageReproHistoryFactsTest > P-a3 rebuild reads the full original before the cache, and skips a missing file silently FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:30
+
+ImageReproHistoryFactsTest > disk copies - originals only, never the model copy FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:186
+
+ImageReproHistoryFactsTest > N3 two screenshots in the same second overwrite one persisted file FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:202
+
+ImageReproHistoryFactsTest > S6 every send path builds images through the same two functions FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:167
+
+ImageReproHistoryFactsTest > agent loop streamMessage call passes no top-level imageParts FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:88
+
+ImageReproHistoryFactsTest > P-a2 tool images reach the live history but are neither persisted nor rebuilt FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:99
+
+ImageReproHistoryFactsTest > P-a1 shape - send path and rebuild both hold each image twice FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:38
+
+ImageReproHistoryFactsTest > P-a8 the old call-site assertion fails only because the history is bound to a val first FAILED
+    java.lang.AssertionError at ImageReproHistoryFactsTest.kt:220
+
+McpOAuthGuardsTest > a token endpoint that is not a URL is a failed result, not a crash FAILED
+    java.lang.AssertionError at McpOAuthGuardsTest.kt:106
+
+McpOAuthSignInTest > reset forgets the registration and the sign-in FAILED
+    java.lang.AssertionError at McpOAuthSignInTest.kt:253
+
+McpOAuthSignInTest > one action signs in, saves the entry first and writes the guest bridge FAILED
+    java.lang.AssertionError at McpOAuthSignInTest.kt:149
+
+McpOAuthSignInTest > a refused sign-in says why FAILED
+    java.lang.AssertionError at McpOAuthSignInTest.kt:207
+
+McpOAuthSignInTest > sign-in registers again when the server forgot the client FAILED
+    java.lang.AssertionError at McpOAuthSignInTest.kt:187
+
+NetworkClientsTest > mcpCliRoutingMatchesIos FAILED
+    java.lang.StringIndexOutOfBoundsException at NetworkClientsTest.kt:119
+
+NetworkCoverageTest > everyHttpClientInTheAppIsAccountedFor FAILED
+    java.lang.AssertionError at NetworkCoverageTest.kt:212
+
+FreshRunnerScriptTest > a successful command reports 0 FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+FreshRunnerScriptTest > the command is passed through literally FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+FreshRunnerScriptTest > a command killed by a signal reports 128 plus the signal FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+FreshRunnerScriptTest > exit inside the command still lets the runner write the status FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+FreshRunnerScriptTest > the command's exit code is written and returned FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+FreshRunnerScriptTest > the runner records its own pid for the group kill FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+FreshRunnerScriptTest > the status is written while a leftover process still holds stdout open FAILED
+    java.io.IOException at FreshRunnerScriptTest.kt:41
+        Caused by: java.io.IOException at FreshRunnerScriptTest.kt:41
+
+NativeOffloadHardeningTest > the terminal child closes inherited fds with raw syscalls before exec FAILED
+    java.lang.AssertionError at NativeOffloadHardeningTest.kt:45
+
+SessionIsolationTest > the terminal mounts its chat's dirs and says which files it sees FAILED
+    java.lang.AssertionError at SessionIsolationTest.kt:150
+
+ShellParityFixesTest > redirecting stdin leaves stdout, stderr and the exit status alone FAILED
+    java.io.IOException at ShellParityFixesTest.kt:68
+        Caused by: java.io.FileNotFoundException at ShellParityFixesTest.kt:68
+
+ShellParityFixesTest > a command that reads stdin gets EOF at once instead of hanging FAILED
+    java.io.IOException at ShellParityFixesTest.kt:68
+        Caused by: java.io.FileNotFoundException at ShellParityFixesTest.kt:68
+
+SpawnSignalMaskTest > start really starts the process through the wrapper FAILED
+    java.io.IOException at SpawnSignalMaskTest.kt:117
+        Caused by: java.io.IOException at SpawnSignalMaskTest.kt:117
+
+StderrDrainTest > finish never waits past its bound on a writer that stays open FAILED
+    java.lang.AssertionError at StderrDrainTest.kt:68
+
+VoiceAsrRetryTest > every composer send entry goes through the voice gate FAILED
+    java.lang.AssertionError at VoiceAsrRetryTest.kt:188
+
+FileToolSizeGuardTest > a read blocked in open() of a FIFO with no writer times out FAILED
+    java.io.FileNotFoundException at FileToolSizeGuardTest.kt:259
+
+ScheduledPrefillWiringTest > the system prompt teaches the prefilled command flags FAILED
+    java.lang.AssertionError at ScheduledPrefillWiringTest.kt:109
+
+FileBrowserDeleteSymlinkTest > the view model deletes only the link and refuses a bind target FAILED
+    java.nio.file.FileSystemException at FileBrowserDeleteSymlinkTest.kt:172
+
+FileBrowserDeleteSymlinkTest > the old deleteRecursively on a link deletes what the link points to FAILED
+    java.nio.file.FileSystemException at FileBrowserDeleteSymlinkTest.kt:40
+
+FileBrowserDeleteSymlinkTest > a link to a file and a dangling link are removed as links FAILED
+    java.nio.file.FileSystemException at FileBrowserDeleteSymlinkTest.kt:69
+
+FileBrowserDeleteSymlinkTest > deleting a link removes only the link FAILED
+    java.nio.file.FileSystemException at FileBrowserDeleteSymlinkTest.kt:40
+
+FileBrowserDeleteSymlinkTest > a stale DELETE_ITEM on what is now a link still removes only the link FAILED
+    java.nio.file.FileSystemException at FileBrowserDeleteSymlinkTest.kt:40
+
+FileBrowserDeleteSymlinkTest > deleting a folder does not follow a link inside it FAILED
+    java.nio.file.FileSystemException at FileBrowserDeleteSymlinkTest.kt:86
+
+UsageVectorsTest > all shared usage vectors pass FAILED
+    java.io.FileNotFoundException at UsageVectorsTest.kt:31
+
+UsageVectorsTest > the vector file holds the 44 cases this suite was written against FAILED
+    java.io.FileNotFoundException at UsageVectorsTest.kt:31
+
+6561 tests completed, 71 failed, 24 skipped
+
+> Task :app:testGithubPerfUnitTest FAILED
+
+FAILURE: Build failed with an exception.
+
+* What went wrong:
+Execution failed for task ':app:testGithubPerfUnitTest'.
+> There were failing tests. See the report at: file:///D:/minis-src/src/android/app/build/reports/tests/testGithubPerfUnitTest/index.html
+
+* Try:
+> Run with --scan to get full insights.
+
+BUILD FAILED in 7m 59s
+28 actionable tasks: 1 executed, 27 up-to-date
+EXIT=1

@@ -46,6 +46,13 @@
   · com.openminis.app.hub.* —— BUILD SUCCESSFUL（含新增的引号往返断言）
   · tools/hub/test_executor.py —— 9 项全过（路径根、Git Bash 探测、detach 3ms 返回且
     子进程存活、info 回显）
+
+证据链归档（2026-11-17 23:5x，Minis 指出全量 XML 已被聚焦跑覆盖）：
+  · 全量运行日志已入库：docs/artifacts/2026-11-17-testGithubPerfUnitTest-full.log
+    （21:03 的运行，末行 `6561 tests completed, 71 failed, 24 skipped`；
+    sha256 e4e2cbba799dc4b422be28462526d6fadef3f5004eab0f16835e4833d37e1f0f）
+  · `app/build/test-results/testGithubPerfUnitTest/` 与 reports 已被随后的聚焦跑覆盖，
+    该目录不再是全量证据；今后跑完全量先归档这两个目录，再跑聚焦测试。
 基线失败类清单（未复跑，供下次对照）：
   com.openminis.app.backup.BackupHistoryStorageTest
   com.openminis.app.ctx.CtxFixJWireShaTest

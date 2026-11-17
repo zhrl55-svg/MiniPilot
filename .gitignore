@@ -10,6 +10,8 @@ local.properties
 
 # Log/OS Files
 *.log
+# Evidence artifacts are part of the record — keep them under docs/artifacts.
+!docs/artifacts/*.log
 
 # Android Studio generated files and folders
 captures/
