@@ -117,6 +117,29 @@ object AmapPlaceQuery {
     private val LEADING_HAVE_REGEX = Regex("""(^|\s)有""")
 
     /**
+     * 查询词**开头**的搜索动词短语。
+     *
+     * 词表剥的是标准说法（「搜一下」「查一下」），但语音识别会写成「搜一上」
+     * 「查一查」这类变体 —— 词表追不上。所以这里按**结构**再剥一次：
+     * 动词（可带「一」）+ 尾巴（下/上/个/同类动词/索/见）。
+     *
+     * 只剥开头：动词出现在开头才说明是命令。地名里带这些字是常事 ——
+     * 「鑫看看便利店」中间的「看看」不能动（词表已单独处理标准的「看看」）。
+     * 尾巴是**必需**的，所以「看守所」「查尔斯酒店」这种以动词字开头的
+     * 地名不会被啃掉开头。
+     */
+    private val LEADING_VERB_REGEX = Regex(
+        """^\s*(?:搜|查|找|看)(?:一)?(?:下|上|个|搜|查|找|看|索|见)""",
+    )
+
+    /**
+     * 光秃秃一个动词：「找加油站」「搜药店」。
+     *
+     * 只认「搜」「找」—— 「看」会啃掉「看守所」，「查」会啃掉「查尔斯酒店」。
+     */
+    private val LEADING_BARE_VERB_REGEX = Regex("""^\s*(?:搜|找)""")
+
+    /**
      * 一条高德 POI。
      *
      * @param rank 命中的是第几个关键词 —— 0 是最具体（最先搜）的那个。
@@ -152,6 +175,9 @@ object AmapPlaceQuery {
      * 「附近有什么好吃的」→「好吃」，「附近有超市吗」→「超市」。
      * 泛指（好吃/美食/馆子）**不**在这里展开 —— 那是 [plan] 的事，
      * 端侧路由只负责把壳剥干净。
+     *
+     * 词表之后还会按**结构**剥一次开头的搜索动词：语音识别把「搜一下」写成
+     * 「搜一上」是常事，穷举词表追不上这种变体。
      */
     fun normalize(raw: String): String {
         var text = lightNormalize(raw)
@@ -160,6 +186,8 @@ object AmapPlaceQuery {
         }
         text = text.replace(PARTICLE_REGEX, " ")
         text = text.replace(LEADING_HAVE_REGEX) { it.groupValues[1] }
+        text = text.replace(LEADING_VERB_REGEX, "")
+        text = text.replace(LEADING_BARE_VERB_REGEX, "")
         text = text.replace(Regex("""\s+"""), " ").trim()
         // 剥掉填充词时留下的空格在中文串里没有意义（「好吃 面馆」→「好吃面馆」），
         // 英文与中文之间的空格要留着（"Starbucks 咖啡"）。

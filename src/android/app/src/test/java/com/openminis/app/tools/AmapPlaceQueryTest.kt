@@ -146,6 +146,30 @@ class AmapPlaceQueryTest {
     }
 
     @Test
+    fun `asr written search verbs are stripped by structure`() {
+        // 语音识别把「搜一下」写成「搜一上」：穷举词表追不上，按结构剥。
+        assertEquals("药店", AmapPlaceQuery.normalize("周边搜一上药店"))
+        assertEquals("药店", AmapPlaceQuery.normalize("搜一上药店"))
+        assertEquals("药店", AmapPlaceQuery.normalize("搜一下药店"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("找加油站"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("搜索加油站"))
+        assertEquals("咖啡店", AmapPlaceQuery.normalize("看见咖啡店"))
+    }
+
+    @Test
+    fun `place names that start with a verb character survive`() {
+        // 只剥完整的动词短语：以动词字开头的地名不能被啃掉开头。
+        assertEquals("看守所", AmapPlaceQuery.normalize("看守所"))
+        assertEquals("查尔斯酒店", AmapPlaceQuery.normalize("查尔斯酒店"))
+        assertEquals("看牙", AmapPlaceQuery.normalize("看牙"))
+    }
+
+    @Test
+    fun `the asr variant reaches the keyword list`() {
+        assertEquals(listOf("药店"), AmapPlaceQuery.plan("周边搜一上药店").keywords)
+    }
+
+    @Test
     fun `a whole sentence produces no keyword`() {
         // 用户原话：一整段说明文字被当成了地点关键词，搜出 0 条。
         val sentence = "我说搜下周边加油站和搜一下加油站都没有成功,说周边加油站.才成功," +

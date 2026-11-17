@@ -163,6 +163,8 @@ class AssistantRouteCorpusTest {
         local("周边加油站", "amap_search", "search"),
         local("搜下周边加油站", "amap_search", "search"),
         local("搜一下周边的加油站", "amap_search", "search"),
+        // 语音识别把「搜一下」写成「搜一上」：照样抽出地点。
+        local("周边搜一上药店", "amap_search", "search"),
         // 地点闸门不能误伤火车票路由。
         local("张掖西到兰州西的高铁票", "train_12306", "query"),
 

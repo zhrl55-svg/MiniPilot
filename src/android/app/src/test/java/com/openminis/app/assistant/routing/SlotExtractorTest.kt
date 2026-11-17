@@ -276,4 +276,12 @@ class SlotExtractorTest {
         assertTrue(out.args.optString("query").isBlank())
         assertTrue(out.missing.contains("query"))
     }
+
+    @Test
+    fun `an asr written search verb still yields the place`() {
+        // 语音识别把「搜一下」写成「搜一上」：端侧照样要抽出「药店」。
+        assertEquals("药店", extract("周边搜一上药店", "tool.amap").args.getString("query"))
+        assertEquals("药店", extract("搜一下药店", "tool.amap").args.getString("query"))
+        assertEquals("加油站", extract("找加油站", "tool.amap").args.getString("query"))
+    }
 }
