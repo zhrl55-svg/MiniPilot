@@ -1,7 +1,7 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 11
+    const val SEED_VERSION = 12
 
     private val RETIRED_AT_V3 = setOf("life.media")
 
@@ -69,6 +69,14 @@ object DefaultAssistantRoutes {
         r(
             "tool.file-write", "Write file", "files_terminal", "file_write", "write", 120,
             listOf("写入", "写文件", "保存到", "存到", "新建文件", "write file", "save to"),
+            // [F-001] 讨论写文件这件事的句子（「写入经…」「写进配置文件」）
+            // 不是写文件指令。用带语境的短语而不是裸词：真命令
+            // （「把日志写入文件」「写入 /tmp/a.txt」）照样命中本地。
+            exclude = listOf(
+                "写入经", "写入配置", "写进配置", "配置文件",
+                "代码里", "代码中", "日志里", "日志中", "文档里", "文档中",
+                "确认卡",
+            ),
             examples = listOf("把 hello 写入 /tmp/a.txt", "write hello to /tmp/a.txt"),
         ),
         r(
@@ -596,6 +604,23 @@ object DefaultAssistantRoutes {
                             keywords = (route.keywords + weather.keywords).distinct(),
                             patterns = (route.patterns + weather.patterns).distinct(),
                         )
+                    }
+                }
+            }
+        }
+        if (fromVersion < 12) {
+            // v12 adds prose-context exclude terms to the built-in file-write
+            // route (F-001). Merge rather than replace, like v4 did for
+            // weather: a user who edited this route keeps their own terms,
+            // but the new excludes start deciding whether 「写入」 is an
+            // instruction or just a topic mention.
+            val write = all.firstOrNull { it.id == "tool.file-write" }
+            if (write != null) {
+                routes = routes.map { route ->
+                    if (route.id != "tool.file-write") {
+                        route
+                    } else {
+                        route.copy(exclude = (route.exclude + write.exclude).distinct())
                     }
                 }
             }

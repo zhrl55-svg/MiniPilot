@@ -168,6 +168,27 @@ class AssistantRouteStoreTest {
     }
 
     @Test
+    fun `v12 merges file-write excludes into an existing route`() {
+        val dir = tempDir()
+        val oldWrite = DefaultAssistantRoutes.all
+            .first { it.id == "tool.file-write" }
+            .copy(
+                exclude = emptyList(),
+                keywords = listOf("写入", "我的自定义写入词"),
+            )
+        File(dir, "routes.json").writeText(
+            doc(oldWrite, defaultsVersion = 11),
+        )
+
+        val store = AssistantRouteStore(dir)
+        val migrated = store.find("tool.file-write")!!
+        assertTrue(migrated.exclude.contains("写入经"))
+        assertTrue(migrated.exclude.contains("配置文件"))
+        // 用户自己的关键词不受迁移影响。
+        assertEquals(listOf("写入", "我的自定义写入词"), migrated.keywords)
+    }
+
+    @Test
     fun `v2 media route retires while user edits and custom routes survive`() {
         val dir = tempDir()
         val oldMedia = AssistantRoute(

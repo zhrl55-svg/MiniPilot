@@ -37,6 +37,11 @@ class AssistantRouter(
         userText: String,
         routes: List<AssistantRoute>,
     ): RouteDecision {
+        // [F-002] [FROM: X] … [END X] 是设备间交接/回执的信封，不是用户
+        // 对助手说的话。整段跳过端侧路由，避免内部内容被当成指令执行。
+        if (isBridgeEnvelope(userText)) {
+            return RouteDecision.Cloud("internal-message")
+        }
         val ranked = AssistantRouteMatcher.rank(userText, routes, limit = 3)
         val best = ranked.firstOrNull()
             ?: return RouteDecision.Cloud("no-match")
@@ -61,6 +66,14 @@ class AssistantRouter(
         }
 
         val extraction = extractor.extract(userText, best.route)
+        // [F-001] 写文件必须有明确的 path 槽。普通句子里出现「写入」二字
+        // （例如汇报里说「写入经 ConfigBridge 确认卡」）不是写文件指令；
+        // 抽不出 path 就交云端按整句判断 —— 不弹确认卡，也绝不会落到
+        // 某个默认路径上。与 AmapPlaceQuery.isPlaceKeyword 同一思路：
+        // 槽位值不合法时，端侧不硬执行。
+        if (capability.id == "file_write" && extraction.args.optString("path").isBlank()) {
+            return RouteDecision.Cloud("no-args", note = "no-args", ranked = ranked)
+        }
         if (capability.id == "reminder" && action.name == "schedule" &&
             extraction.args.optString("at").isBlank() &&
             extraction.args.optLong("after", 0L) <= 0L
@@ -179,6 +192,18 @@ class AssistantRouter(
     }
 
     private companion object {
+        /**
+         * [F-002] Bridge handoff messages carry `[FROM: X] … [END X]` around
+         * their text. They are internal traffic, never user commands.
+         */
+        fun isBridgeEnvelope(text: String): Boolean {
+            val head = text.trimStart()
+            if (!head.startsWith("[")) return false
+            return head.startsWith("[FROM:", ignoreCase = true) ||
+                head.startsWith("[FROM：", ignoreCase = true) ||
+                head.startsWith("[END ", ignoreCase = true)
+        }
+
         /** 超过这个长度还只命中一个短关键词，就当成「提到」而非「命令」。 */
         const val TOPIC_MENTION_MIN_LENGTH = 14
 

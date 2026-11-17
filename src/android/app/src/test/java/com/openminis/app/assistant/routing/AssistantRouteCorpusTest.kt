@@ -168,6 +168,14 @@ class AssistantRouteCorpusTest {
         // 地点闸门不能误伤火车票路由。
         local("张掖西到兰州西的高铁票", "train_12306", "query"),
 
+        // [F-001] 普通句子里出现「写入」不是写文件指令；带路径的真命令仍走本地。
+        cloud("这句话里写入了很多细节"),
+        cloud("我们讨论一下写入经 ConfigBridge 确认卡的流程"),
+        local("把 hello 写入 /tmp/a.txt", "file_write", "write"),
+        // [F-002] 桥接信封（[FROM: X] … [END X]）是内部消息，整段跳过端侧路由。
+        cloud("[FROM: CLAUDE] 写入测试"),
+        cloud("[FROM: CLAUDE]\n轮次：2026-11-17 批次\n[END CLAUDE]"),
+
         // Unrelated chat / deliberate low-information commands
         cloud("你好呀"),
         cloud("你是谁"),
@@ -243,6 +251,37 @@ class AssistantRouteCorpusTest {
             }
         }
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
+    }
+
+    /** [F-001] 没有 path 的「写入」句子必须交云端，而不是本地弹卡/猜测路径。 */
+    @Test
+    fun `prose mentions of write fall back to the cloud with no-args`() {
+        for (text in listOf(
+            "这句话里写入了很多细节",
+            "把结果写入",
+        )) {
+            val decision = router.route(text, routes)
+            assertTrue(
+                text,
+                decision is RouteDecision.Cloud && decision.reason == "no-args",
+            )
+        }
+    }
+
+    /** [F-002] 桥接信封整段跳过端侧路由，reason 固定为 internal-message。 */
+    @Test
+    fun `bridge envelopes skip local routing`() {
+        for (text in listOf(
+            "[FROM: CLAUDE] 写入测试",
+            "[FROM: X]\n任意内容\n[END X]",
+            "  [FROM：CLAUDE] 写入测试",
+        )) {
+            val decision = router.route(text, routes)
+            assertTrue(
+                text,
+                decision is RouteDecision.Cloud && decision.reason == "internal-message",
+            )
+        }
     }
 
     /**
