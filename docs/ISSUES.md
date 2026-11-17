@@ -11,7 +11,7 @@
 | 编号 | 问题 | 涉及文件 | 影响面 | 状态 |
 |---|---|---|---|---|
 | F-004 | `life.contacts/dial` 英文关键词 `call ` 命中 `hub_call` → **可能真的拨号** | `DefaultAssistantRoutes.kt:569-572` | 前台弹拨号确认卡 | 已关闭（14935f5） |
-| F-007 | HubClient 断线后**不重试首选 relay**，粘在兜底 relay 上 → 端点重启后手机不回流直连 | `hub/HubClient.kt` | 端点重启需人工干预才能恢复直连 | 已报 |
+| F-007 | HubClient 断线后**不重试首选 relay**，粘在兜底 relay 上 → 端点重启后手机不回流直连 | `hub/HubClient.kt` | 端点重启需人工干预才能恢复直连 | **已关闭**（ba2d9bc + 9383520） |
 | F-006 | 持久 shell 会话（无状态执行器仍无法 cd / 保持 cwd） | `tools/hub/executor.py` | 连续操作不便 | 待修（可选，优先级最低） |
 
 ### 已关闭（2026-11-17 批次验收通过）
@@ -25,7 +25,8 @@
 
 ---
 
-## F-007 HubClient 断线后不回流首选 relay（高）—— 已报
+## F-007 HubClient 断线后不回流首选 relay —— 已关闭（2026-11-17 23:2x）
+- **修法**：`ba2d9bc`（首选 relay 优先 + 定期巡检）、`9383520`（巡检循环常驻，仅 stopped 才退出 —— 修 F-007b 的一次性巡检缺陷）。
 - **现象**：2026-11-17 22:00:58 我重启了 PC 侧 hub 执行器（改 `config.listen.json` 加 roots）。**执行器在 22:00:58 正常起来，但手机 7 分钟内没有重连**，`hub_call` 一直报「找不到设备「AUSA」。当前在线：ASUS-PC」。
 - **证据**：
   - PC `executor.log` 22:00:58 之后只有我自己的 curl 探针（`22:05:36 connection rejected (426 Upgrade Required)`），**没有任何 `phone attached`**。
@@ -35,7 +36,7 @@
 - **判断**：**首选 relay 断掉后，客户端不会回头重试它，而是粘在兜底 relay 上**。今天 12:58 那次 18 秒重连说明它偶尔会重试首选，行为不稳定。
 - **建议修法**：`HubClient` 在连接断开/心跳超时时，回到 relay 列表**首项**重试，并加一个定时巡检（首选 relay 每 N 分钟探一次），而不是"哪个先成用哪个、之后一直用"。
 - **验收标准**：PC 端重启执行器 → 手机应在 60 秒内重新出现在 `executor.log` 的 `phone attached`，且 buntu 8787 上不再有手机的连接。
-- **前置已备**：ISSUES.md 已复制到 PC `D:\minis-src\docs\ISSUES.md`（22:48，9,673 字节），Claude 可直接开工。派活 m-20261117-010，回执 m-20261117-011。
+- **验收证据**（executor.log）：第 1 轮 23:26:37 listening → 23:26:44 `connection rejected (426 Upgrade Required)` → 23:26:45 connection open；第 2 轮 23:27:21 → 23:27:44 426 → 23:27:45 connection open（第二轮证明巡检常驻）。buntu `ss -tnp | grep 8787` 已无手机连接；装机 sha256 `05c60740…d34eaaa`、versionCode 55、lastUpdateTime 23:26:10。
 - **注意**：Claude 重启 executor 时我的 `hub_call` 会断，请他提前打招呼。
 
 ---
