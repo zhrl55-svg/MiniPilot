@@ -205,3 +205,9 @@ assets/icon-backup-*/
 .workbuddy-ai/
 rev_slot.txt
 tools/hub/.tmp_off*.txt
+
+# ego 常驻服务：本地配置（含 token）、运行日志、临时脚本
+tools/hub/hubroot/ego_srv.json
+tools/hub/hubroot/ego_srv.log
+tools/hub/hubroot/ego_srv.err
+tools/hub/hubroot/ego_q_*.mjs
