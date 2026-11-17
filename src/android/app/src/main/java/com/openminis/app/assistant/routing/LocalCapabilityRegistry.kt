@@ -262,6 +262,29 @@ object LocalCapabilityRegistry {
             ),
         ),
         LocalCapability(
+            // [T-local-volume] 音量直调。set/adjust 都是可瞬间撤销的状态变化，
+            // LOW risk + 路由 ConfirmMode.NEVER；percent 是必需槽，抽不到就
+            // 说明这句话不是明确的调音量指令（例如「调到 60 分」），退回云端。
+            // stream 可选：默认音乐流，说「铃声」时改铃声流。
+            "volume", "Volume",
+            mapOf(
+                "set" to action(
+                    "set", false, CapabilityRisk.LOW,
+                    slot("percent", SlotType.NUMBER),
+                    slot("stream", SlotType.ENUM, required = false),
+                ),
+                "adjust" to action(
+                    "adjust", false, CapabilityRisk.LOW,
+                    slot("percent", SlotType.NUMBER),
+                    slot("stream", SlotType.ENUM, required = false),
+                ),
+                "status" to action(
+                    "status", true,
+                    slots = arrayOf(slot("stream", SlotType.ENUM, required = false)),
+                ),
+            ),
+        ),
+        LocalCapability(
             "media", "Media control",
             mapOf(
                 // [T-music-player-top] `play` drives the in-app music player

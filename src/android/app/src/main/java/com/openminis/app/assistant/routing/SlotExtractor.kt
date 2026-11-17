@@ -57,6 +57,7 @@ class SlotExtractor(
             "scheduled_task" -> extractScheduled(text, route.action, parsed, now, args)
             "weather" -> Unit
             "device" -> extractDevice(text, route.action, args)
+            "volume" -> extractVolume(text, route.action, args)
             "media" -> extractMedia(text, route.action, args)
             "contacts" -> extractContacts(text, route.action, args)
             "app_launch" -> extractApp(text, route.action, args)
@@ -375,6 +376,93 @@ class SlotExtractor(
         ).find(text)?.let {
             args.put("session", it.groupValues[1])
         }
+    }
+
+    /**
+     * [T-local-volume] 「音量调到百分之六十」→ set:60；
+     * 「音量调大一点」→ adjust:+10。解析不出具体数值就不写 percent，
+     * 必需槽缺失会让路由退回云端——「调到 60 分」不是音量指令。
+     *
+     * @param action set = 绝对值；adjust = 相对增减；status = 只看不改。
+     */
+    private fun extractVolume(text: String, action: String, args: JSONObject) {
+        if (text.contains("铃声") || text.contains("来电")) args.put("stream", "ring")
+        if (action == "status") return
+        val normalized = normalizeVolumePercent(text)
+        when (action) {
+            "set" -> {
+                val absolute = absoluteVolumePercent(normalized) ?: when {
+                    normalized.contains("最大") || normalized.contains("最响") -> 100
+                    normalized.contains("最小") || normalized.contains("最轻") -> 0
+                    else -> null
+                }
+                absolute?.let { args.put("percent", it.coerceIn(0, 100)) }
+            }
+            "adjust" -> volumeDeltaPercent(normalized)?.let { args.put("percent", it) }
+        }
+    }
+
+    /**
+     * 把中文百分比归一成 `N%`：`百分之六十` → `60%`，
+     * `调到六十` → `调到 60%`。数字后面跟「分 / 块 / 元…」时不做替换，
+     * 那些是别的量词，不是音量百分比。
+     */
+    private fun normalizeVolumePercent(input: String): String {
+        var out = input
+        out = out.replace(Regex("百分百"), "100%")
+        Regex("百分之([零一二两三四五六七八九十百]{1,4})")
+            .findAll(out).toList().reversed().forEach { match ->
+                val value = chineseNumber(match.groupValues[1]) ?: return@forEach
+                out = out.replaceRange(match.range, "$value%")
+            }
+        Regex(
+            "(调到|调至|调成|设成|设为|设置为|改成|改为|变成|变到)\\s*" +
+                "([零一二两三四五六七八九十百]{1,4})(?!\\s*[分块元秒度个次])",
+        ).findAll(out).toList().reversed().forEach { match ->
+            val value = chineseNumber(match.groupValues[2]) ?: return@forEach
+            out = out.replaceRange(match.range, "${match.groupValues[1]} $value%")
+        }
+        return out
+    }
+
+    /** 绝对值：只认百分比或句末的「调到 60」；「调到 60 分」不算。 */
+    private fun absoluteVolumePercent(text: String): Int? {
+        Regex(
+            """(?:调到|调至|调成|设成|设为|设置为|改成|改为|变成|变到)\s*(\d{1,3})\s*(?:%|$|[,.!?;])""",
+        ).find(text)?.groupValues?.get(1)?.toIntOrNull()?.let {
+            return it.coerceIn(0, 100)
+        }
+        return Regex("""(?:音量|声音|响度|铃声)\s*(\d{1,3})\s*%""")
+            .find(text)?.groupValues?.get(1)?.toIntOrNull()?.coerceIn(0, 100)
+    }
+
+    /** 相对增减：显式「调大 20%」优先，否则按方向词给步长。 */
+    private fun volumeDeltaPercent(text: String): Int? {
+        Regex("""(?:调大|增大|加大|增加|提高|升高|上调)\s*(\d{1,3})\s*%""")
+            .find(text)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                return it.coerceIn(0, 100)
+            }
+        Regex("""(?:调小|减小|减少|降低|调低|下调)\s*(\d{1,3})\s*%""")
+            .find(text)?.groupValues?.get(1)?.toIntOrNull()?.let {
+                return -it.coerceIn(0, 100)
+            }
+        val up = listOf(
+            "调大", "增大", "加大", "增加", "提高", "升高", "上调",
+            "大一点", "大一些", "大点", "大很多", "大声", "高一点",
+        ).any { text.contains(it) }
+        val down = listOf(
+            "调小", "减小", "减少", "降低", "调低", "下调",
+            "小一点", "小一些", "小点", "小很多", "小声", "低一点",
+        ).any { text.contains(it) }
+        if (up == down) return null
+        val step = when {
+            text.contains("一点") || text.contains("一些") || text.contains("稍微") ||
+                text.contains("点儿") || text.contains("点") -> 10
+            text.contains("很多") || text.contains("大幅") || text.contains("大量") ||
+                text.contains("一大") -> 40
+            else -> 20
+        }
+        return if (up) step else -step
     }
 
     /**
@@ -828,6 +916,29 @@ class SlotExtractor(
 
         /** 「周杰伦的歌 / 歌曲 / 曲子 / 音乐」→ 歌手意图，不是歌名。 */
         private val ARTIST_TAIL_WORDS = setOf("歌", "歌曲", "曲子", "音乐")
+
+        private val CHINESE_DIGITS = mapOf(
+            '零' to 0, '一' to 1, '二' to 2, '两' to 2, '三' to 3, '四' to 4,
+            '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9,
+        )
+
+        /** 中文数字 → 整数，覆盖 0~100（五、十五、五十、五十五、一百）。 */
+        private fun chineseNumber(src: String): Int? {
+            if (src.isEmpty()) return null
+            if (src == "一百" || src == "百") return 100
+            if (src.length == 1) return CHINESE_DIGITS[src[0]]
+            val ten = src.indexOf('十')
+            if (ten >= 0) {
+                val tens = if (ten == 0) 1 else (CHINESE_DIGITS[src[0]] ?: return null)
+                val ones = if (ten == src.length - 1) {
+                    0
+                } else {
+                    CHINESE_DIGITS[src[ten + 1]] ?: return null
+                }
+                return tens * 10 + ones
+            }
+            return null
+        }
 
         /** Command prefixes stripped before looking for the `X到Y` span. */
         private val TRAIN_QUERY_PREFIXES = listOf(

@@ -43,6 +43,8 @@ object LocalActionSpeech {
             "reminder" to "schedule" -> "设置提醒"
             "reminder" to "pending", "reminder" to "list" -> "查看提醒"
             "reminder" to "cancel" -> "取消提醒"
+            "volume" to "set", "volume" to "adjust" -> "调节音量"
+            "volume" to "status" -> "查看音量"
             "note" to "create" -> "新建笔记"
             "note" to "search" -> "搜索笔记"
             "note" to "list" -> "查看笔记"

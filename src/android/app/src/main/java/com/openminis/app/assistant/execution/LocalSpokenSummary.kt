@@ -42,6 +42,9 @@ object LocalSpokenSummary {
             "weather" -> if (action == "current") answer else ""
             "device" -> answer
             "flashlight" -> answer
+            // [T-local-volume] 音量回执本身就是一句「改前 → 改后」的中文，
+            // 语音场景直接念，不再拼通用的「已调节音量」。
+            "volume" -> answer
             "calendar" -> when (action) {
                 // Free/busy 的 JSON 不会被 LocalResultFormatter 渲染成正文，
                 // 只能从原始输出里取出第一个空闲时段。

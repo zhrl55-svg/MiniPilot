@@ -150,6 +150,7 @@ class LocalCapabilityExecutor(private val context: Context) {
                 "weather" -> weather(decision.action, args, sessionId)
                 "device" -> device(decision.action, args)
                 "flashlight" -> flashlight(decision.action)
+                "volume" -> volume(decision.action, args)
                 "media" -> media(decision.action, args, decision.route.label)
                 "contacts" -> contacts(decision.action, args)
                 "app_launch" -> appLaunch(decision.action, args)
@@ -764,6 +765,30 @@ class LocalCapabilityExecutor(private val context: Context) {
         return NativeOffloadResult(if (result.success) 0 else 1, result.message)
     }
 
+    /**
+     * [T-local-volume] 音量走进程内 AudioManager，一次性完成；回执里带
+     * 「改前 → 改后」的百分比与档位，语音场景直接念这句话。
+     */
+    private fun volume(action: String, args: JSONObject): NativeOffloadResult {
+        val controller = VolumeController.get(context)
+        val stream = args.optString("stream").takeIf { it.isNotBlank() }
+        val result = when (action) {
+            "set" -> if (!args.has("percent")) {
+                VolumeController.VolumeResult(false, "没有识别出要设置到多少音量。")
+            } else {
+                controller.set(args.optInt("percent", 0), stream)
+            }
+            "adjust" -> if (!args.has("percent")) {
+                VolumeController.VolumeResult(false, "没有识别出音量要调大还是调小。")
+            } else {
+                controller.adjust(args.optInt("percent", 0), stream)
+            }
+            "status" -> controller.status(stream)
+            else -> VolumeController.VolumeResult(false, "不支持的音量操作。")
+        }
+        return NativeOffloadResult(if (result.success) 0 else 1, result.message)
+    }
+
     private suspend fun media(
         action: String,
         args: JSONObject,
@@ -1105,7 +1130,7 @@ class LocalCapabilityExecutor(private val context: Context) {
          */
         val SUPPORTED_CAPABILITIES = setOf(
             "calendar", "alarm", "reminder", "note", "settings",
-            "scheduled_task", "weather", "device", "flashlight",
+            "scheduled_task", "weather", "device", "flashlight", "volume",
             "media", "contacts", "app_launch",
         )
 

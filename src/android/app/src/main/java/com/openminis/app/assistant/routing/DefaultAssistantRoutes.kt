@@ -1,7 +1,7 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 10
+    const val SEED_VERSION = 11
 
     private val RETIRED_AT_V3 = setOf("life.media")
 
@@ -13,6 +13,17 @@ object DefaultAssistantRoutes {
     private val FLASHLIGHT_TOPIC_EXCLUDES = listOf(
         "加个", "添加", "增加", "支持", "功能", "开发", "实现",
         "讨论", "方案", "接口", "代码", "原理", "设计",
+    )
+
+    /**
+     * [T-local-volume] 「声音设置」是打开设置页，不是调音量；「接口 / 方案 /
+     * 实现」说明用户在聊这个能力。这些都留给云端或其他路由。
+     * 最多 20 项（AssistantRouteStore 的校验上限）。
+     */
+    private val VOLUME_TOPIC_EXCLUDES = listOf(
+        "音量设置", "声音设置", "打开设置", "设置页", "设置里", "设置界面", "系统设置",
+        "声音模式", "铃声设置", "设置铃声", "更换铃声", "换铃声",
+        "讨论", "方案", "接口", "代码", "实现", "开发", "功能", "原理",
     )
 
     private fun r(
@@ -423,6 +434,57 @@ object DefaultAssistantRoutes {
             ),
             exclude = FLASHLIGHT_TOPIC_EXCLUDES,
             examples = listOf("手电筒", "手电筒现在开着吗"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        // [T-local-volume] 音量快路径：端侧规则命中后进程内直调 AudioManager，
+        // 不上云、不弹确认卡（音量随时可以改回，和手电筒同级）。
+        // 只认「音量 / 声音 / 铃声 + 明确动作」；「声音设置」归 life.settings-open，
+        // 讨论句和「调到 60 分」这类错误单位留给云端。
+        r(
+            "life.volume-set", "Set volume", "life", "volume", "set", 160,
+            listOf(
+                "音量调到", "音量调至", "音量调成", "音量设为", "音量设成", "音量改成",
+                "音量最大", "音量最小", "音量最响", "音量最轻", "媒体音量", "音乐音量",
+                "把音量", "铃声音量", "铃声调到", "铃声最大", "铃声最小",
+                "声音调到", "声音最大", "声音最小",
+            ),
+            patterns = listOf(
+                """(?:音量|声音|响度|铃声).{0,8}(?:调到|调至|调成|设成|设为|设置为|改成|改为|变成|变到)\s*(?:百分之[零一二两三四五六七八九十百]{1,4}|\d{1,3}\s*(?:%|$|[,.!?]))""",
+                """(?:音量|声音|响度|铃声)\s*(?:百分之[零一二两三四五六七八九十百]{1,4}|\d{1,3}\s*%)""",
+                """(?:音量|声音|响度|铃声).{0,6}(?:最大|最响|最轻|最小)""",
+            ),
+            exclude = VOLUME_TOPIC_EXCLUDES,
+            examples = listOf("音量调到百分之六十", "把铃声调到 50%", "音量调到最大"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        r(
+            "life.volume-adjust", "Adjust volume", "life", "volume", "adjust", 160,
+            listOf(
+                "调大音量", "调小音量", "音量调大", "音量调小", "音量加大", "音量减小",
+                "音量增大", "音量降低", "音量调高", "音量调低", "声音调大", "声音调小",
+                "声音大一点", "声音小一点", "声音大点", "声音小点", "大声点", "小声点",
+                "大点声", "小点声",
+            ),
+            patterns = listOf(
+                """(?:音量|声音|响度|铃声).{0,6}(?:调大|调小|增大|减小|加大|提高|升高|上调|降低|调低|下调|大一点|小一点|大一些|小一些|大点|小点|大很多|小很多|高一点|低一点)""",
+                """(?:调大|调小|增大|减小|加大|提高|升高|上调|降低|调低|下调|大点声|小点声|大声点|小声点).{0,6}(?:音量|声音|响度)""",
+                """^(?:帮我|给我|请|麻烦)?\s*(?:把)?\s*(?:音量|声音|铃声)?\s*(?:调大|调小|增大|减小|加大|提高|升高|上调|降低|调低|下调|大点声|小点声|大声点|小声点)\s*(?:一点|一些|点儿|点|很多|大幅|大量)?\s*$""",
+            ),
+            exclude = VOLUME_TOPIC_EXCLUDES,
+            examples = listOf("音量调大一点", "音量调小 20%", "大点声"),
+            confirm = ConfirmMode.NEVER,
+        ),
+        r(
+            "life.volume-status", "Volume status", "life", "volume", "status", 165,
+            listOf(
+                "音量多少", "当前音量", "现在音量", "音量是", "音量多大", "声音多大",
+                "音量大小", "音量状态", "铃声音量", "媒体音量", "音乐音量",
+            ),
+            patterns = listOf(
+                """(?:音量|声音|铃声).{0,4}(?:多少|多大|几档|是几|当前|现在|状态)""",
+            ),
+            exclude = VOLUME_TOPIC_EXCLUDES,
+            examples = listOf("现在音量多少", "媒体音量是几档"),
             confirm = ConfirmMode.NEVER,
         ),
         r(
