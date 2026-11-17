@@ -81,6 +81,15 @@ class HubClient(private val listener: Listener) {
 
         /** C1.5 — `hub_paused` means "wait a minute", not "retry now". */
         private const val PAUSED_RETRY_MS = 60_000L
+
+        /** [F-007] How often the preferred relay is probed while we sit on an alternative. */
+        private const val PREFERRED_PROBE_MS = 30_000L
+
+        /** [F-007] The reconnect delay after deliberately switching back to the preferred relay. */
+        private const val SWITCH_RETRY_MS = 500L
+
+        /** The probe must not hang the loop: the endpoint may be a black hole. */
+        private const val PROBE_TIMEOUT_S = 5L
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -140,6 +149,15 @@ class HubClient(private val listener: Listener) {
     private var pingJob: Job? = null
     private var watchdogJob: Job? = null
     /**
+     * [F-007] The periodic probe of the preferred relay. It is what brings
+     * the phone back to the direct endpoint after the PC restarted — without
+     * anyone editing the phone's configuration.
+     */
+    private var probeJob: Job? = null
+    /** Set while we deliberately move back to the preferred relay. */
+    @Volatile
+    private var preferredSwitch = false
+    /**
      * Set by [stop]. Without it the close callback runs the reconnect path
      * and the socket comes back on its own — an orphan connection that then
      * fights the next one for the same device id.
@@ -160,12 +178,14 @@ class HubClient(private val listener: Listener) {
         this.hello = hello
         stopped = false
         openSocket()
+        startPreferredProbe()
     }
 
     fun stop() {
         stopped = true
         pingJob?.cancel()
         watchdogJob?.cancel()
+        probeJob?.cancel()
         socket?.close(1000, "client stop")
         socket = null
         state = State.IDLE
@@ -173,7 +193,8 @@ class HubClient(private val listener: Listener) {
 
     private fun openSocket() {
         if (stopped) return
-        val endpoint = urls.getOrNull(urlIndex) ?: return
+        val index = urlIndex
+        val endpoint = urls.getOrNull(index) ?: return
         val key = apiKey ?: return
         state = State.CONNECTING
         val request = Request.Builder()
@@ -182,11 +203,15 @@ class HubClient(private val listener: Listener) {
             .build()
         socket = http.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                AppLogger.info(TAG, "socket open")
+                AppLogger.info(TAG, "socket open: $endpoint")
                 state = State.CONNECTED
                 backoffMs = BACKOFF_MIN_MS
-                // Prefer the first address again for the next cycle.
-                urlIndex = 0
+                // [F-007] Remember WHICH endpoint opened. Writing 0 here
+                // made the next drop move "one past the preferred one" —
+                // from the fallback that meant straight back to the
+                // fallback, so the phone never returned to the direct
+                // endpoint after a PC restart.
+                urlIndex = index
                 lastInbound.set(System.currentTimeMillis())
                 hello?.let { send(it) }
                 startHeartbeats()
@@ -253,9 +278,17 @@ class HubClient(private val listener: Listener) {
             else -> {
                 state = State.CONNECTING
                 listener.onDisconnected(code, reason)
-                // The next address in the list gets the next try: the LAN
-                // relay first, the Tailscale one when the phone is out.
-                if (urls.size > 1) urlIndex = (urlIndex + 1) % urls.size
+                if (preferredSwitch) {
+                    // [F-007] We are going back to the preferred relay on
+                    // purpose — do not push the index past it.
+                    preferredSwitch = false
+                    scheduleRetry(SWITCH_RETRY_MS)
+                    return
+                }
+                // [F-007] A drop on the preferred endpoint falls back to an
+                // alternative; a drop on an alternative goes back to the
+                // preferred one (the PC may just have restarted).
+                urlIndex = RelayChoice.nextIndex(urlIndex, urls.size)
                 scheduleRetry(backoffMs)
                 backoffMs = (backoffMs * 2).coerceAtMost(BACKOFF_MAX_MS)
             }
@@ -269,8 +302,63 @@ class HubClient(private val listener: Listener) {
         }
     }
 
-    private fun startHeartbeats() {
-        pingJob?.cancel()
+    /**
+     * [F-007] Probe the preferred relay while we sit on an alternative.
+     *
+     * The PC's direct endpoint comes back on its own after a restart; the
+     * phone has to notice. A plain GET is enough — the endpoint answers
+     * "426 Upgrade Required" to it, which means the process is up.
+     */
+    private fun startPreferredProbe() {
+        probeJob?.cancel()
+        probeJob = scope.launch {
+            while (true) {
+                delay(PREFERRED_PROBE_MS)
+                if (stopped || state != State.CONNECTED) continue
+                if (!RelayChoice.shouldProbe(urlIndex, urls.size)) continue
+                if (preferredAlive()) {
+                    AppLogger.info(TAG, "preferred relay is back — switching back")
+                    switchToPreferred()
+                    return@launch
+                }
+            }
+        }
+    }
+
+    /** Whether the preferred relay answers right now. */
+    private suspend fun preferredAlive(): Boolean {
+        val endpoint = urls.firstOrNull() ?: return false
+        val key = apiKey ?: return false
+        return try {
+            val request = Request.Builder()
+                .url(endpoint)
+                .header("Authorization", "Bearer $key")
+                .build()
+            val probe = http.newBuilder()
+                .callTimeout(PROBE_TIMEOUT_S, TimeUnit.SECONDS)
+                .connectTimeout(PROBE_TIMEOUT_S, TimeUnit.SECONDS)
+                .readTimeout(PROBE_TIMEOUT_S, TimeUnit.SECONDS)
+                .build()
+            probe.newCall(request).execute().use { response ->
+                // Any HTTP answer means the endpoint is up: a websocket path
+                // answers "426 Upgrade Required" to a plain GET.
+                AppLogger.info(TAG, "preferred relay probe: HTTP ${response.code}")
+                true
+            }
+        } catch (e: Exception) {
+            AppLogger.info(TAG, "preferred relay probe failed: ${e.message}")
+            false
+        }
+    }
+
+    /** Move back to the preferred relay; the close callback reconnects. */
+    private fun switchToPreferred() {
+        preferredSwitch = true
+        urlIndex = 0
+        socket?.cancel()
+    }
+
+    private fun startHeartbeats() {        pingJob?.cancel()
         watchdogJob?.cancel()
         pingJob = scope.launch {
             while (true) {

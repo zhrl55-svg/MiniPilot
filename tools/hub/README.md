@@ -36,15 +36,20 @@ python fake_phone.py --target pc-ausa --action info
 | `relay` / `api_key` | 中继地址与凭据。一把 key 只能认领一个 `device.id`，多设备要多把 key |
 | `device.id` | 必须持久化，`kind` 恒为 `computer`。改 id = 换设备身份 |
 | `device.root` | **文件与命令的工作根**。所有 `files` / `file.*` / `shell.cwd` 都被限制在这个目录内 |
+| `device.roots` | 额外的允许目录（如 `["D:/minis-src"]`）。命中**任一**根即可；不配就仍然只有 `device.root`。线上已开：`config.listen.json` 里是 `["D:/minis-src"]` |
 | `device.remote_control` | 本机总开关。设为 `false` 时 `hello` 声明空 `actions`，中继会直接拒投递（`not_controllable`） |
 | `actions[]` | 对外声明的能力。**声明了就必须实现**，否则等于给自己挖一个必超时的洞 |
 | `policy.default` | 默认档位：`bypass` / `ask` / `deny` |
 | `policy.by_sender` | 按**发起方 device id** 放行，例如 `{"phone-xxxx": "bypass"}` |
 | `policy.allow_read_only_shell` | 只读命令免审批（白名单见 `policy.py`） |
-| `limits.approval_timeout_s` | 审批卡等人多久，超时按拒绝处理 |
+| `limits.approval_timeout_s` | 审批卡等人多久，超时按拒绝处理。**线上是 600s**：手机端的审批会弹系统横幅（user-ask 通知），横幅需要人看见的时间，120 秒基本来不及点 |
+| `limits.max_concurrent_calls` | 同时在跑的 call 上限（线上 4）。**等待审批的 call 也占坑** —— 无人应答时一条待批就占 600 秒，批量审批时注意别把通道占满 |
 | `shell.program` / `shell.args` | 留空则 Windows 上用 Git Bash，其次 `cmd /c`；类 Unix 用 `/bin/sh -lc` |
 | `shell.notify_command` | `notify` 动作的落地命令，会被拼上 `title` 和 `body` 两个参数。`config.listen.json` 里指向 `notify.py`（Windows Toast/气泡，不阻塞执行器） |
 | `journal` | 每个 call 的审计记录（谁发起、什么动作、结果、耗时） |
+
+`file.get` 的返回体里 `size` 是**整个文件**的大小，`data` 才是这次取的片段
+（`offset`/`length` 生效）。别把 `size` 当成片段长度。
 
 ## 已实测通过
 

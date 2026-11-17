@@ -385,19 +385,24 @@ class Executor:
             self._record(call_id, sender_id, action, started, "denied", None, decision.reason, extra)
             return
 
-        if decision.mode == policy.ASK:
-            allowed, approver, status = await self._ask(call_id, sender_name, action, args, decision)
-            if not allowed:
-                message = "denied by a person" if status == "denied" else f"approval {status}"
-                await self._send(fail(call_id, "not_allowed", message))
-                self._record(call_id, sender_id, action, started, status, None, decision.reason, extra)
-                return
-            # One card per action, not per call: the same device may repeat
-            # this action without asking again for grant_s (policy).
-            self.gate.note_approval(sender_id, action)
-
+        # [H-002] A waiting approval holds a channel slot too. The approval
+        # timeout is 600s now (a banner needs a human to see it), and a batch
+        # of unanswered approvals would otherwise pile up without limit:
+        # they waited outside the limit and every one of them still counted
+        # as "in flight" once it was approved.
         self._inflight += 1
         try:
+            if decision.mode == policy.ASK:
+                allowed, approver, status = await self._ask(call_id, sender_name, action, args, decision)
+                if not allowed:
+                    message = "denied by a person" if status == "denied" else f"approval {status}"
+                    await self._send(fail(call_id, "not_allowed", message))
+                    self._record(call_id, sender_id, action, started, status, None, decision.reason, extra)
+                    return
+                # One card per action, not per call: the same device may repeat
+                # this action without asking again for grant_s (policy).
+                self.gate.note_approval(sender_id, action)
+
             body = await self._dispatch(action, args)
             frame_out = ok(call_id, body)
             self._remember(call_id, frame_out)
