@@ -283,5 +283,7 @@ class SlotExtractorTest {
         assertEquals("药店", extract("周边搜一上药店", "tool.amap").args.getString("query"))
         assertEquals("药店", extract("搜一下药店", "tool.amap").args.getString("query"))
         assertEquals("加油站", extract("找加油站", "tool.amap").args.getString("query"))
+        // 口语/方言的「搜一哈」同理。
+        assertEquals("加油站", extract("搜一哈加油站", "tool.amap").args.getString("query"))
     }
 }

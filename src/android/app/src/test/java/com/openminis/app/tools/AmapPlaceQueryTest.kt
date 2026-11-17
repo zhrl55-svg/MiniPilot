@@ -154,6 +154,10 @@ class AmapPlaceQueryTest {
         assertEquals("加油站", AmapPlaceQuery.normalize("找加油站"))
         assertEquals("加油站", AmapPlaceQuery.normalize("搜索加油站"))
         assertEquals("咖啡店", AmapPlaceQuery.normalize("看见咖啡店"))
+        // 方言/口语的「一哈」和别的单字写法同样按「一 + 任意单字」剥。
+        assertEquals("加油站", AmapPlaceQuery.normalize("搜一哈加油站"))
+        assertEquals("药店", AmapPlaceQuery.normalize("找一哈药店"))
+        assertEquals("药店", AmapPlaceQuery.normalize("查一哈药店"))
     }
 
     @Test
@@ -167,6 +171,7 @@ class AmapPlaceQueryTest {
     @Test
     fun `the asr variant reaches the keyword list`() {
         assertEquals(listOf("药店"), AmapPlaceQuery.plan("周边搜一上药店").keywords)
+        assertEquals(listOf("加油站"), AmapPlaceQuery.plan("搜一哈加油站").keywords)
     }
 
     @Test
