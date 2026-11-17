@@ -168,7 +168,7 @@ class AssistantRouteStoreTest {
     }
 
     @Test
-    fun `v12 merges file-write excludes into an existing route`() {
+    fun `v13 merges file-write excludes into an existing route`() {
         val dir = tempDir()
         val oldWrite = DefaultAssistantRoutes.all
             .first { it.id == "tool.file-write" }
@@ -176,8 +176,11 @@ class AssistantRouteStoreTest {
                 exclude = emptyList(),
                 keywords = listOf("写入", "我的自定义写入词"),
             )
+        val oldEdit = DefaultAssistantRoutes.all
+            .first { it.id == "tool.file-edit" }
+            .copy(exclude = emptyList())
         File(dir, "routes.json").writeText(
-            doc(oldWrite, defaultsVersion = 11),
+            doc(oldWrite, oldEdit, defaultsVersion = 11),
         )
 
         val store = AssistantRouteStore(dir)
@@ -186,6 +189,8 @@ class AssistantRouteStoreTest {
         assertTrue(migrated.exclude.contains("配置文件"))
         // 用户自己的关键词不受迁移影响。
         assertEquals(listOf("写入", "我的自定义写入词"), migrated.keywords)
+        // file-edit 同样拿到语境排除词。
+        assertTrue(store.find("tool.file-edit")!!.exclude.contains("写入经"))
     }
 
     @Test

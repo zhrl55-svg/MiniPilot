@@ -1,7 +1,7 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 12
+    const val SEED_VERSION = 13
 
     private val RETIRED_AT_V3 = setOf("life.media")
 
@@ -10,6 +10,17 @@ object DefaultAssistantRoutes {
      * the feature ("我们可以加个手电筒功能"). Those verbs/nouns keep the
      * flashlight routes from treating the mention as a command.
      */
+    /**
+     * [F-001] 讨论「写文件」这件事的句子不是写文件指令。用带语境的短语
+     * 而不是裸词：真命令（「把日志写入文件」「修改 /tmp/a.txt」）照样命中
+     * 本地。最多 20 项（AssistantRouteStore 的校验上限）。
+     */
+    private val FILE_WRITE_TOPIC_EXCLUDES = listOf(
+        "写入经", "写入配置", "写进配置", "配置文件",
+        "代码里", "代码中", "日志里", "日志中", "文档里", "文档中",
+        "确认卡",
+    )
+
     private val FLASHLIGHT_TOPIC_EXCLUDES = listOf(
         "加个", "添加", "增加", "支持", "功能", "开发", "实现",
         "讨论", "方案", "接口", "代码", "原理", "设计",
@@ -70,18 +81,15 @@ object DefaultAssistantRoutes {
             "tool.file-write", "Write file", "files_terminal", "file_write", "write", 120,
             listOf("写入", "写文件", "保存到", "存到", "新建文件", "write file", "save to"),
             // [F-001] 讨论写文件这件事的句子（「写入经…」「写进配置文件」）
-            // 不是写文件指令。用带语境的短语而不是裸词：真命令
-            // （「把日志写入文件」「写入 /tmp/a.txt」）照样命中本地。
-            exclude = listOf(
-                "写入经", "写入配置", "写进配置", "配置文件",
-                "代码里", "代码中", "日志里", "日志中", "文档里", "文档中",
-                "确认卡",
-            ),
+            // 不是写文件指令。
+            exclude = FILE_WRITE_TOPIC_EXCLUDES,
             examples = listOf("把 hello 写入 /tmp/a.txt", "write hello to /tmp/a.txt"),
         ),
         r(
             "tool.file-edit", "Edit file", "files_terminal", "file_edit", "edit", 120,
             listOf("修改", "编辑文件", "改一下", "改成", "替换掉", "编辑", "edit file", "replace"),
+            // [F-001] 同 tool.file-write：讨论「改文件」不是改文件指令。
+            exclude = FILE_WRITE_TOPIC_EXCLUDES,
             examples = listOf("修改 /tmp/a.txt 里的 a 改成 b"),
         ),
         r(
@@ -608,19 +616,19 @@ object DefaultAssistantRoutes {
                 }
             }
         }
-        if (fromVersion < 12) {
-            // v12 adds prose-context exclude terms to the built-in file-write
-            // route (F-001). Merge rather than replace, like v4 did for
-            // weather: a user who edited this route keeps their own terms,
-            // but the new excludes start deciding whether 「写入」 is an
+        if (fromVersion < 13) {
+            // v13 adds prose-context exclude terms to the built-in file-write
+            // and file-edit routes (F-001). Merge rather than replace, like v4
+            // did for weather: a user who edited these routes keeps their own
+            // terms, but the new excludes start deciding whether 「写入」 is an
             // instruction or just a topic mention.
-            val write = all.firstOrNull { it.id == "tool.file-write" }
-            if (write != null) {
+            for (id in listOf("tool.file-write", "tool.file-edit")) {
+                val builtin = all.firstOrNull { it.id == id } ?: continue
                 routes = routes.map { route ->
-                    if (route.id != "tool.file-write") {
+                    if (route.id != id) {
                         route
                     } else {
-                        route.copy(exclude = (route.exclude + write.exclude).distinct())
+                        route.copy(exclude = (route.exclude + builtin.exclude).distinct())
                     }
                 }
             }

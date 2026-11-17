@@ -71,7 +71,13 @@ class AssistantRouter(
         // 抽不出 path 就交云端按整句判断 —— 不弹确认卡，也绝不会落到
         // 某个默认路径上。与 AmapPlaceQuery.isPlaceKeyword 同一思路：
         // 槽位值不合法时，端侧不硬执行。
-        if (capability.id == "file_write" && extraction.args.optString("path").isBlank()) {
+        //
+        // file_edit 同理，而且更危险：它带 needsLlm，槽位缺了会交给端侧
+        // 模型去猜路径 —— 「你一并整理成一个文档放桌面」这种句子曾被猜成
+        // /etc/hosts。猜出来的路径一律不认。
+        if (capability.id in PATH_REQUIRED_WRITE_CAPABILITIES &&
+            extraction.args.optString("path").isBlank()
+        ) {
             return RouteDecision.Cloud("no-args", note = "no-args", ranked = ranked)
         }
         if (capability.id == "reminder" && action.name == "schedule" &&
@@ -192,6 +198,11 @@ class AssistantRouter(
     }
 
     private companion object {
+        /**
+         * [F-001] 这些能力会写文件，path 槽抽不出来就不该本地执行。
+         */
+        val PATH_REQUIRED_WRITE_CAPABILITIES = setOf("file_write", "file_edit")
+
         /**
          * [F-002] Bridge handoff messages carry `[FROM: X] … [END X]` around
          * their text. They are internal traffic, never user commands.

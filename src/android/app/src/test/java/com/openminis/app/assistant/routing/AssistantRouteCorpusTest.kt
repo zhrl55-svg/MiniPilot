@@ -172,6 +172,10 @@ class AssistantRouteCorpusTest {
         cloud("这句话里写入了很多细节"),
         cloud("我们讨论一下写入经 ConfigBridge 确认卡的流程"),
         local("把 hello 写入 /tmp/a.txt", "file_write", "write"),
+        // 同一条规则管 file-edit：「你一并整理成一个文档放桌面」不是改文件
+        // 指令，端侧模型曾据此把路径猜成 /etc/hosts。
+        cloud("前面另一个会话记了要修改的东西，你一并整理成一个文档放桌面"),
+        local("修改 /tmp/a.txt 里的 a 改成 b", "file_edit", "edit"),
         // [F-002] 桥接信封（[FROM: X] … [END X]）是内部消息，整段跳过端侧路由。
         cloud("[FROM: CLAUDE] 写入测试"),
         cloud("[FROM: CLAUDE]\n轮次：2026-11-17 批次\n[END CLAUDE]"),
