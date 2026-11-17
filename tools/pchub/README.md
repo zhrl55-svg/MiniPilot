@@ -79,6 +79,37 @@ Settings → MCP Integrations，新增：
 
 Settings → Network 把 **MCP** scope 的路由设成 `tailscale`（或 default = tailscale）。
 
+> 也可以用命令行注册（与 UI 写的是同一份 servers.json，实测无需改 App）：
+>
+> ```bash
+> minis-mcp-cli add --name pchub \
+>   --url http://asus.saola-mintaka.ts.net:8788/mcp \
+>   --header "Authorization: Bearer <token.txt 里的 token>" \
+>   --note "PC endpoint tools/pchub"
+> ```
+
+### 手机端实测（2026-11-17，ELS-AN00 / 1.20-dev build 51）
+
+| 步骤 | 结果 |
+|---|---|
+| 沙箱内 `curl /health` | HTTP 200，**86 ms** |
+| `minis-mcp-cli tools pchub` | 11 个工具，1.8 s（含 daemon 冷启动） |
+| `minis-mcp-cli call pchub browser_open` | 真实 a11y 快照，2.4 s |
+| 连续 5 次 tools/list（经 tailscale serve） | 全 200 |
+
+### 常驻
+
+`run_bridge.cmd` + `run_bridge.vbs` 是隐藏窗口的重启循环（崩了 5 秒后重来）。
+是否设为登录自启由你决定，命令是：
+
+```bat
+schtasks /Create /TN "MinisPCHubBridge" ^
+  /TR "wscript.exe \"D:\minis-src\tools\pchub\run_bridge.vbs\"" ^
+  /SC ONLOGON /RL LIMITED /F
+```
+
+`tailscale serve` 的配置由 tailscaled 持久化，重启后仍然有效。
+
 ### 工具集
 
 | 工具 | 作用 |
