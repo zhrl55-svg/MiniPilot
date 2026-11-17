@@ -40,7 +40,8 @@
   且缓冲不刷就看不到记录。
 
 单测：全量 testGithubPerfUnitTest 按用户指示本批**不再跑**（上一版基线：6561 用例 / 71 失败 /
-24 个失败类，失败类清单见文末）。本批改动涉及的聚焦单测已跑通：
+24 失败类 —— 注意 gradle 摘要显示的是 24 skipped，与「24 个失败类」是两个不同指标，
+数值恰好相同；失败类清单见文末）。本批改动涉及的聚焦单测已跑通：
   · com.openminis.app.assistant.routing.* —— BUILD SUCCESSFUL（含新增的语料 5 例、
     no-args / internal-message 专项、v13 迁移合并）
   · com.openminis.app.hub.* —— BUILD SUCCESSFUL（含新增的引号往返断言）
@@ -49,7 +50,8 @@
 
 证据链归档（2026-11-17 23:5x，Minis 指出全量 XML 已被聚焦跑覆盖）：
   · 全量运行日志已入库：docs/artifacts/2026-11-17-testGithubPerfUnitTest-full.log
-    （21:03 的运行，末行 `6561 tests completed, 71 failed, 24 skipped`；
+    （21:03 的运行；第 276 行 `6561 tests completed, 71 failed, 24 skipped`。
+    文件真正的末尾是 `BUILD FAILED in 7m 59s` / `EXIT=1` —— 那 71 个失败让构建本身失败；
     sha256 e4e2cbba799dc4b422be28462526d6fadef3f5004eab0f16835e4833d37e1f0f）
   · `app/build/test-results/testGithubPerfUnitTest/` 与 reports 已被随后的聚焦跑覆盖，
     该目录不再是全量证据；今后跑完全量先归档这两个目录，再跑聚焦测试。
