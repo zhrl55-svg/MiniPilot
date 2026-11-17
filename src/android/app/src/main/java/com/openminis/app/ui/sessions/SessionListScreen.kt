@@ -1285,8 +1285,12 @@ fun SessionListScreen(
                                     isRegenerating = session.id in regeneratingIds,
                                     searchQuery = activeQuery,
                                     searchSnippet = searchSnippets[session.id],
-                                    // Transparent so the folder container's
-                                    // surface shows through member rows.
+                                    // [UI-261117-folder-child-fill] Member rows
+                                    // paint one tonal step ABOVE the group
+                                    // card (iOS "elevated grouped card") so
+                                    // the expanded children read as their own
+                                    // block. User feedback on the first fix:
+                                    // the title-only step was "几乎看不出".
                                     //
                                     // [T-android-tablet-split] In two-pane mode
                                     // the row backing the detail pane is tinted,
@@ -1295,14 +1299,14 @@ fun SessionListScreen(
                                     // primary@12% is the same treatment the
                                     // mention picker uses for its highlighted
                                     // row, so selection reads consistently.
-                                    // Ordering matters: the folder-member case
-                                    // stays transparent unless it is ALSO the
-                                    // selected row, or a selected row inside a
-                                    // group would show no highlight at all.
+                                    // Ordering matters: a selected folder member
+                                    // must take the selection tint — otherwise a
+                                    // selected row inside a group would show no
+                                    // highlight at all.
                                     rowBackground = when {
                                         session.id == selectedSessionId ->
                                             MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)
-                                        inFolder -> Color.Transparent
+                                        inFolder -> folderMemberFillColor()
                                         else -> null
                                     },
                                     isFolderMember = inFolder,
@@ -2496,6 +2500,19 @@ private fun folderEdgeColor(): Color =
 
 @Composable
 private fun folderFillColor(): Color = MaterialTheme.colorScheme.surfaceContainerLow
+
+/**
+ * [UI-261117-folder-child-fill] The fill for a session row inside an expanded
+ * group. One tonal step above the card itself — the app's theme maps
+ * `surfaceContainerHigh` to iOS's "elevated grouped card" (#F7F7FA on white
+ * cards in light, #2C2C2E on #1C1C1E in dark) — so the children form a
+ * visibly distinct block under the group header.
+ *
+ * The first attempt only stepped the title typography down (16sp SemiBold →
+ * 15sp Medium); the user read that as "几乎看不出区别", hence the tonal fill.
+ */
+@Composable
+private fun folderMemberFillColor(): Color = MaterialTheme.colorScheme.surfaceContainerHigh
 
 private fun Modifier.folderSurface(
     segment: FolderSegment,
