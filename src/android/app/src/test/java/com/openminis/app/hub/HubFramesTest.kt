@@ -43,6 +43,21 @@ class HubFramesTest {
         assertEquals("ping", HubFrames.ping().optString("type"))
     }
 
+    /**
+     * [H-004] The quotes in a shell command must survive the phone's own
+     * encoding. A command that arrives as `echo \"a b\"` was mangled before
+     * the wire, not on it — the PC side logs the same value so the two ends
+     * can be compared.
+     */
+    @Test
+    fun `a command keeps its quotes all the way into the frame`() {
+        val command = "echo \"a b\""
+        val frame = HubFrames.call("phone-abcd1234:7:1a2b", "pc-ausa", "shell", JSONObject().put("command", command))
+        val parsed = JSONObject(frame.toString())
+        assertEquals(command, parsed.getJSONObject("args").getString("command"))
+        assertEquals("\"echo \\\"a b\\\"\"", debugRepr(command))
+    }
+
     @Test
     fun `an error frame carries the code`() {
         val err = HubFrames.error("bad_frame", "unparseable frame")

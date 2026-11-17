@@ -97,6 +97,34 @@ python fake_phone.py --target pc-ausa --action info
 - `screen` 依赖 Pillow + 可用的桌面会话；无头环境下会回 `not_allowed`。
 - 只读命令白名单刻意保守：`awk` / `sed` / `find` / `git` / `python` 一律不算只读（它们都有写入或执行路径）。宁多弹一次卡，不放行一次写。
 
+## 线上跑的是哪一份（2026-11-17）
+
+手机上的 `hub_call` 打到的是 **`deploy/hub_executor.py`**（单文件版，跑在
+`C:\Users\zhrl5\hub\hub_executor.py`，计划任务 `MinisHubExec` 以 `pythonw` 启动，
+连 `ws://192.168.2.102:8787/v1/hub`）。它和本目录的 `executor.py` 是两份实现：
+
+| | `executor.py`（契约实现） | `deploy/hub_executor.py`（线上单文件版） |
+|---|---|---|
+| 审批 | `policy.Gate` + 审批卡 | 无（手机侧直接执行） |
+| 配置 | `config.listen.json`（嵌套 `device.root`） | `hub_device.json`（扁平 `root`） |
+| 路径 | 只允许 `device.root` + `device.roots[]` | 同上（`roots[]`） |
+| 审计 | `journal` 逐条记录 | 只有 `hub.log` |
+
+改线上那份要同步改 `deploy/` 里的副本，否则下次部署会把它覆盖回去。
+
+## 新增能力（2026-11-17 批次）
+
+- **`shell` 的 `detach`**：`{"command": "...", "detach": true}` 立刻返回 `{"pid": …, "detached": true}`。
+  前台跑常驻服务时子进程会继承管道，`communicate()` 等一个永远不来的 EOF，调用必然超时——
+  这就是「服务起来了但工具说超时」的原因。detached 子进程没有管道，不等它。
+- **`device.roots`**：除 `device.root` 之外再开几个允许落盘的目录（`"roots": ["D:/minis-src"]`）。
+  没配就仍然只有 `device.root` 一个根，越界路径回 `not_allowed: path is outside this executor's root`。
+- **`info` 回显 `shell_program`**：Windows 上探测 Git Bash（`%LOCALAPPDATA%\hermes\git\…`、
+  `%ProgramFiles%\Git\…` …）。**不信 `where bash`**：它先命中 WindowsApps 的 WSL 别名，
+  那个 shell 的引号和路径规则跟我们要的不是一回事。
+- **`cmd_repr` 审计**：每条 `shell` call 的 journal 里多一个 `cmd_repr` 字段（原命令的 repr），
+  手机侧 `Hub.call` / `HubClient.send` 各记一条同样的 repr —— 引号在哪一跳被吃掉，两边一对就知道。
+
 ## 下一步
 
 1. 换真中继：把 `relay` 指向 Tailscale 上的实例，`api_key` 换成 `nm_…`，`executor.py` 不动。

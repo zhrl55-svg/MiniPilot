@@ -1,0 +1,21 @@
+{
+  "relay": "ws://192.168.2.102:8787/v1/hub",
+  "api_key": "nm_dev",
+  "device_id": "pc-asus",
+  "device_name": "ASUS-PC",
+  "actions": [
+    "info",
+    "shell",
+    "files",
+    "file.get",
+    "file.put",
+    "screen"
+  ],
+  "root": "C:\\Users\\zhrl5",
+  "shell_timeout_s": 120,
+  "file_max": 8388608,
+  "out_max": 200000,
+  "roots": [
+    "D:\\minis-src"
+  ]
+}

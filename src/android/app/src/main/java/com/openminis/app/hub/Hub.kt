@@ -210,6 +210,12 @@ object Hub {
         val id = nextCallId(ctx)
         val deferred = CompletableDeferred<HubResult>()
         pending[id] = PendingCall(deferred, target, sessionId, toolCallId)
+        // [H-004] The command as the phone is about to send it. The PC logs
+        // the same string as a repr; comparing the two tells us which hop
+        // mangled the quotes.
+        args.optString("command").takeIf { it.isNotEmpty() }?.let { command ->
+            AppLogger.info(TAG, "hub call command: ${debugRepr(command)}")
+        }
         if (!c.send(HubFrames.call(id, target, action, args))) {
             pending.remove(id)
             return HubResult(false, null, "queue_full", "发送队列已满，请稍后再试")

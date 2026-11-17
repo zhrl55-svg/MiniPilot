@@ -62,6 +62,7 @@ class Config:
     device_name: str
     kind: str = "computer"
     root: str = "."
+    roots: tuple[str, ...] = ()
     remote_control: bool = True
     actions: tuple[str, ...] = ()
     policy: dict[str, Any] = field(default_factory=dict)
@@ -130,6 +131,9 @@ def load_config(path: str) -> Config:
         device_name=str(device.get("name") or device_id),
         kind=str(device.get("kind") or "computer"),
         root=root,
+        # Extra roots the file actions may touch. Empty keeps the old
+        # behaviour: `device.root` is the only place files may live.
+        roots=tuple(here(p) for p in (device.get("roots") or [])),
         remote_control=bool(device.get("remote_control", True)),
         actions=tuple(raw.get("actions") or ()),
         policy=raw.get("policy") or {},

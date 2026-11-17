@@ -70,18 +70,72 @@ def _decode(raw: bytes) -> str:
     return raw.decode("utf-8", errors="replace")
 
 
+def _where(program: str) -> list[str]:
+    """Windows `where <program>` as a list of paths (empty when not found)."""
+    try:
+        out = subprocess.run(
+            ["where", program], capture_output=True, text=True, timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if out.returncode != 0:
+        return []
+    return [line.strip() for line in (out.stdout or "").splitlines() if line.strip()]
+
+
+#: Git Bash candidates on Windows, in probe order.
+#:
+#: `where bash` is deliberately not trusted on its own: on this machine it
+#: finds `C:\Users\...\AppData\Local\Microsoft\WindowsApps\bash` first — the
+#: WSL alias, whose path and quoting rules differ from the shell we mean.
+#: Only a path that clearly belongs to a Git/MSYS install is accepted.
+_WINDOWS_BASH_CANDIDATES = (
+    r"%ProgramFiles%\Git\bin\bash.exe",
+    r"%ProgramFiles%\Git\usr\bin\bash.exe",
+    r"%ProgramFiles(x86)%\Git\bin\bash.exe",
+    r"%LOCALAPPDATA%\Programs\Git\bin\bash.exe",
+    r"%LOCALAPPDATA%\Programs\Git\usr\bin\bash.exe",
+    r"%LOCALAPPDATA%\hermes\git\bin\bash.exe",
+    r"%LOCALAPPDATA%\hermes\git\usr\bin\bash.exe",
+    r"%USERPROFILE%\hermes\git\bin\bash.exe",
+    r"%USERPROFILE%\hermes\git\usr\bin\bash.exe",
+    r"%USERPROFILE%\scoop\apps\git\current\bin\bash.exe",
+)
+
+
+def _windows_bash() -> str:
+    """The Git Bash this machine actually has, or "" when it has none."""
+    for raw in _WINDOWS_BASH_CANDIDATES:
+        candidate = os.path.expandvars(raw)
+        if os.path.exists(candidate):
+            return candidate
+    for candidate in _where("bash"):
+        lowered = candidate.lower()
+        if "\\git\\" in lowered or "\\msys" in lowered:
+            if os.path.exists(candidate):
+                return candidate
+    return ""
+
+
+def _shell_program(cfg: Config) -> str:
+    """The shell commands actually run under — reported by `info`."""
+    program = (cfg.shell or {}).get("program")
+    if program:
+        return str(program)
+    if os.name == "nt":
+        return _windows_bash() or "cmd.exe"
+    return "/bin/sh"
+
+
 def _shell_argv(cfg: Config, command: str) -> list[str]:
     program = (cfg.shell or {}).get("program")
     args = (cfg.shell or {}).get("args")
     if program:
         return [program, *(args or ["-lc"]), command]
     if os.name == "nt":
-        for candidate in (
-            r"C:\Program Files\Git\bin\bash.exe",
-            r"C:\Program Files\Git\usr\bin\bash.exe",
-        ):
-            if os.path.exists(candidate):
-                return [candidate, "-lc", command]
+        bash = _windows_bash()
+        if bash:
+            return [bash, "-lc", command]
         return ["cmd.exe", "/c", command]
     return ["/bin/sh", "-lc", command]
 
@@ -122,6 +176,7 @@ class Executor:
         self._approvals: dict[str, asyncio.Future] = {}
         self._done: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._inflight = 0
+        self._detached: list[subprocess.Popen] = []
         self._stop = asyncio.Event()
 
     # ------------------------------------------------------------------ link
@@ -313,6 +368,12 @@ class Executor:
             return
 
         started = time.time()
+        # [H-004] The exact command the executor received, byte for byte. A
+        # phone that over-escaped its quotes shows up here as '\\"a b\\"';
+        # the repr is what makes the two ends of the wire comparable.
+        extra: dict[str, Any] | None = None
+        if action == "shell" and args.get("command") is not None:
+            extra = {"cmd_repr": repr(str(args.get("command")))}
         decision = self.gate.decide(sender_id, action, args)
         self.log.info(
             "call %s from %s: %s -> %s (%s)",
@@ -321,7 +382,7 @@ class Executor:
 
         if decision.mode == policy.DENY:
             await self._send(fail(call_id, "not_allowed", f"denied: {decision.reason}"))
-            self._record(call_id, sender_id, action, started, "denied", None, decision.reason)
+            self._record(call_id, sender_id, action, started, "denied", None, decision.reason, extra)
             return
 
         if decision.mode == policy.ASK:
@@ -329,7 +390,7 @@ class Executor:
             if not allowed:
                 message = "denied by a person" if status == "denied" else f"approval {status}"
                 await self._send(fail(call_id, "not_allowed", message))
-                self._record(call_id, sender_id, action, started, status, None, decision.reason)
+                self._record(call_id, sender_id, action, started, status, None, decision.reason, extra)
                 return
             # One card per action, not per call: the same device may repeat
             # this action without asking again for grant_s (policy).
@@ -341,17 +402,17 @@ class Executor:
             frame_out = ok(call_id, body)
             self._remember(call_id, frame_out)
             await self._send(frame_out)
-            self._record(call_id, sender_id, action, started, "ok", body.get("exit_code"), decision.reason)
+            self._record(call_id, sender_id, action, started, "ok", body.get("exit_code"), decision.reason, extra)
             self.log.info("call %s done in %.0fms", call_id, (time.time() - started) * 1000)
         except ActionError as exc:
             self._remember(call_id, fail(call_id, exc.code, exc.message))
             await self._send(fail(call_id, exc.code, exc.message))
-            self._record(call_id, sender_id, action, started, f"error:{exc.code}", None, exc.message)
+            self._record(call_id, sender_id, action, started, f"error:{exc.code}", None, exc.message, extra)
             self.log.warning("call %s failed: %s %s", call_id, exc.code, exc.message)
         except Exception as exc:  # noqa: BLE001 - never leave a caller hanging
             self.log.exception("call %s crashed", call_id)
             await self._send(fail(call_id, "not_allowed", f"executor error: {exc}"))
-            self._record(call_id, sender_id, action, started, "crash", None, str(exc))
+            self._record(call_id, sender_id, action, started, "crash", None, str(exc), extra)
         finally:
             self._inflight -= 1
 
@@ -436,8 +497,16 @@ class Executor:
 
     def _path(self, value: str | None, default: str = ".") -> str:
         candidate = os.path.abspath(os.path.join(self.cfg.root, value or default))
-        if not policy.path_is_inside(self.cfg.root, candidate):
-            raise ActionError("not_allowed", "path is outside this executor's root")
+        # `device.roots` is an allow-list of EXTRA places files may live;
+        # `device.root` always stays allowed. The check is "inside any of
+        # them", never "inside all of them".
+        roots = (self.cfg.root,) + tuple(self.cfg.roots)
+        if not any(policy.path_is_inside(root, candidate) for root in roots):
+            raise ActionError(
+                "not_allowed",
+                f"path is outside this executor's root: {candidate} "
+                f"(allowed: {', '.join(roots)})",
+            )
         return candidate
 
     async def _do_info(self, args: dict[str, Any]) -> dict[str, Any]:
@@ -446,6 +515,8 @@ class Executor:
             "host": os.environ.get("COMPUTERNAME") or os.environ.get("HOSTNAME") or "unknown",
             "home": os.path.expanduser("~"),
             "root": self.cfg.root,
+            "roots": list(self.cfg.roots) or [self.cfg.root],
+            "shell_program": _shell_program(self.cfg),
             "cwd": self.cfg.root,
             "python": sys.version.split()[0],
             "device": self.cfg.device_id,
@@ -470,8 +541,11 @@ class Executor:
         cwd = self._path(str(args.get("cwd") or "."))
         if not os.path.isdir(cwd):
             raise ActionError("bad_frame", f"cwd does not exist: {cwd}")
+        if bool(args.get("detach")):
+            return self._detach_shell(command, cwd)
         timeout_s = min(float(args.get("timeout_ms") or self.cfg.shell_timeout_s * 1000) / 1000.0, 300.0)
         argv = _shell_argv(self.cfg, command)
+        self.log.info("shell command: %r", command)
 
         flags = 0
         if os.name == "nt":
@@ -518,6 +592,52 @@ class Executor:
         if timed_out:
             body["timed_out"] = True
         return body
+
+    def _detach_shell(self, command: str, cwd: str) -> dict[str, Any]:
+        """Start a long-lived process and return immediately.
+
+        A background service inherits the pipes of the shell that started it,
+        so `communicate()` waits for an EOF that never arrives while the
+        service is alive: the call times out even though the service is up
+        and healthy. A detached call gives the child its own console and no
+        pipes at all, so the executor never waits on it — it hands back the
+        pid and moves on.
+        """
+        argv = _shell_argv(self.cfg, command)
+        flags = 0
+        if os.name == "nt":
+            flags = (
+                getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                | getattr(subprocess, "DETACHED_PROCESS", 0)
+            )
+        started = time.time()
+        proc = subprocess.Popen(
+            argv,
+            cwd=cwd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+            start_new_session=(os.name != "nt"),
+        )
+        self._detached.append(proc)
+        self._reap_detached()
+        self.log.info("detached pid=%s: %r", proc.pid, command)
+        return {
+            "pid": proc.pid,
+            "detached": True,
+            "command": command,
+            "cwd": cwd,
+            "duration_ms": int((time.time() - started) * 1000),
+        }
+
+    def _reap_detached(self) -> None:
+        """Drop finished detached children so they do not pile up as zombies."""
+        alive = []
+        for proc in self._detached:
+            if proc.poll() is None:
+                alive.append(proc)
+        self._detached = alive
 
     async def _do_files(self, args: dict[str, Any]) -> dict[str, Any]:
         target = self._path(str(args.get("path") or "."))
@@ -618,7 +738,17 @@ class Executor:
         while len(self._done) > 500:
             self._done.popitem(last=False)
 
-    def _record(self, call_id: str, sender: str, action: str, started: float, status: str, exit_code, note: str) -> None:
+    def _record(
+        self,
+        call_id: str,
+        sender: str,
+        action: str,
+        started: float,
+        status: str,
+        exit_code,
+        note: str,
+        extra: dict[str, Any] | None = None,
+    ) -> None:
         self.journal.write(
             call=call_id,
             sender=sender,
@@ -627,6 +757,7 @@ class Executor:
             exit_code=exit_code,
             duration_ms=int((time.time() - started) * 1000),
             note=note,
+            **(extra or {}),
         )
 
 

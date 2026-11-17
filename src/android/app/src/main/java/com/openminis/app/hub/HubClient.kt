@@ -297,6 +297,11 @@ class HubClient(private val listener: Listener) {
      */
     fun send(frame: JSONObject): Boolean {
         val text = frame.toString()
+        // [H-004] The command inside the frame as it goes on the wire. The PC
+        // side logs the same value; two logs, one comparison.
+        frame.optJSONObject("args")?.optString("command")?.takeIf { it.isNotEmpty() }?.let { command ->
+            AppLogger.info(TAG, "hub frame command: ${debugRepr(command)}")
+        }
         val size = text.toByteArray(Charsets.UTF_8).size
         if (outFrames.get() >= HubFrames.MAX_OUT_FRAMES || outBytes.get() + size > HubFrames.MAX_OUT_BYTES) {
             listener.onError("hub send queue is full (${outFrames.get()} frames / ${outBytes.get()} bytes)")

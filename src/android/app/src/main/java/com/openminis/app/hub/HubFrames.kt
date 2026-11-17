@@ -70,7 +70,6 @@ object HubFrames {
     }
 
     fun type(frame: JSONObject): String = frame.optString("type", "")
-
     /** The device list carried by `welcome` and `devices` frames. */
     fun devices(frame: JSONObject): List<HubDevice> {
         val arr = frame.optJSONArray("devices") ?: return emptyList()
@@ -95,6 +94,16 @@ object HubFrames {
         return out
     }
 }
+
+/**
+ * A log-safe rendering of a string: every backslash and quote stays visible.
+ *
+ * [H-004] When a phone sends `echo "a b"` the other end has to see the same
+ * bytes. Logging the raw value hides the difference between `echo "a b"` and
+ * `echo \"a b\"` — the escaped form makes the two comparable across the wire.
+ */
+internal fun debugRepr(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 /** One entry of the account's device table. */
 data class HubDevice(
