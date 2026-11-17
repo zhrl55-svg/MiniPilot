@@ -2,6 +2,7 @@ package com.openminis.app.assistant.execution
 
 import android.content.Context
 import android.media.AudioManager
+import androidx.annotation.VisibleForTesting
 import com.openminis.app.logging.AppLogger
 import java.util.Locale
 
@@ -14,7 +15,7 @@ import java.util.Locale
  * 设置页滑块走的是同一个系统 API。
  *
  * 因此本控制器不做 shell、不打开设置页：一次调用把音乐流（或铃声流）
- * 设到目标档位，并把「改前 → 改后」的百分比和档位写成回执。
+ * 设到目标档位，并把调整后的音量写成回执。
  * 权限：AndroidManifest 里的 MODIFY_AUDIO_SETTINGS（安装时授予）。
  */
 class VolumeController private constructor(context: Context) {
@@ -40,10 +41,7 @@ class VolumeController private constructor(context: Context) {
             val max = am.getStreamMaxVolume(stream)
             if (max <= 0) return VolumeResult(false, "无法读取${label(stream)}的档位。")
             val current = am.getStreamVolume(stream)
-            VolumeResult(
-                true,
-                "${label(stream)} ${percentOf(current, max)}%（第${current}档，共${max}档）。",
-            )
+            VolumeResult(true, receipt(stream, current, max))
         } catch (e: SecurityException) {
             permissionDenied()
         } catch (t: Throwable) {
@@ -75,7 +73,7 @@ class VolumeController private constructor(context: Context) {
                 "${label(stream)} ${percentOf(from, max)}% -> ${percentOf(to, max)}% " +
                     "(requested=${if (absolute) "$requestedPercent%" else "$requestedPercent% delta"})",
             )
-            VolumeResult(true, message(stream, from, to, max))
+            VolumeResult(true, receipt(stream, to, max))
         } catch (e: SecurityException) {
             permissionDenied()
         } catch (t: Throwable) {
@@ -85,29 +83,14 @@ class VolumeController private constructor(context: Context) {
     }
 
     /**
-     * 统一回执：说清改前改后、实际变化百分比与档位；到顶/到底时明确说明。
-     * 例：`音乐音量 60%（第9档）→ 73%（第11档）（+13%）。`
+     * 统一回执：只报调整后的音量。
+     *
+     * WHY: 用户要的是「现在是多少」，不是档位账。改前的值、档位、增量、
+     * 是否到顶全是噪音——屏幕上一行字要能一眼看完，语音上也只念一个数字。
+     * 例：`音乐音量73%`。
      */
-    private fun message(stream: Int, from: Int, to: Int, max: Int): String {
-        val name = label(stream)
-        val fromPct = percentOf(from, max)
-        val toPct = percentOf(to, max)
-        val delta = toPct - fromPct
-        if (delta == 0) {
-            return when {
-                to >= max -> "${name}已经是最大（${toPct}%，第${to}档）。"
-                to <= 0 -> "${name}已经是最小（0%，第0档）。"
-                else -> "${name}保持在 $toPct%（第${to}档）。"
-            }
-        }
-        val sign = if (delta > 0) "+" else ""
-        val limit = when {
-            to >= max -> "，已到最大"
-            to <= 0 -> "，已到最小"
-            else -> ""
-        }
-        return "${name} ${fromPct}%（第${from}档）→ ${toPct}%（第${to}档）（${sign}${delta}%${limit}）。"
-    }
+    private fun receipt(stream: Int, value: Int, max: Int): String =
+        "${label(stream)}${percentOf(value, max)}%"
 
     private fun streamOf(name: String?): Int = when (name?.lowercase(Locale.ROOT)) {
         "ring", "铃声" -> AudioManager.STREAM_RING
@@ -137,5 +120,16 @@ class VolumeController private constructor(context: Context) {
             instance ?: synchronized(this) {
                 instance ?: VolumeController(context.applicationContext).also { instance = it }
             }
+
+        /**
+         * 测试用：返回一个绑定当前 context 的新实例。
+         *
+         * WHY: 单例会把第一次拿到的 [AudioManager] 一直留着，而 Robolectric
+         * 每个用例都重建 Application —— 单例里的 AudioManager 会变成上一用例
+         * 的旧对象，断言读的是新对象，两边对不上。
+         */
+        @VisibleForTesting
+        internal fun newInstanceForTest(context: Context): VolumeController =
+            VolumeController(context.applicationContext)
     }
 }

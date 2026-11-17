@@ -766,8 +766,8 @@ class LocalCapabilityExecutor(private val context: Context) {
     }
 
     /**
-     * [T-local-volume] 音量走进程内 AudioManager，一次性完成；回执里带
-     * 「改前 → 改后」的百分比与档位，语音场景直接念这句话。
+     * [T-local-volume] 音量走进程内 AudioManager，一次性完成；回执只报调整后
+     * 的音量（`音乐音量73%`），语音场景直接念这一句。
      */
     private fun volume(action: String, args: JSONObject): NativeOffloadResult {
         val controller = VolumeController.get(context)

@@ -42,7 +42,7 @@ object LocalSpokenSummary {
             "weather" -> if (action == "current") answer else ""
             "device" -> answer
             "flashlight" -> answer
-            // [T-local-volume] 音量回执本身就是一句「改前 → 改后」的中文，
+            // [T-local-volume] 音量回执本身就是一句「音乐音量73%」，
             // 语音场景直接念，不再拼通用的「已调节音量」。
             "volume" -> answer
             "calendar" -> when (action) {
