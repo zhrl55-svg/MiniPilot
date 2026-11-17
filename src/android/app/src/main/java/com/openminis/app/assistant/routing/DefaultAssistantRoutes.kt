@@ -1,9 +1,14 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 13
+    const val SEED_VERSION = 14
 
     private val RETIRED_AT_V3 = setOf("life.media")
+
+    /** [F-004] The contacts pattern that matched `hub_call` as a phone call. */
+    private val RETIRED_CONTACT_PATTERNS = setOf(
+        """(?:打电话给|拨打|call)\s*[\p{L}0-9_·]{1,30}""",
+    )
 
     /**
      * [T-local-flashlight] A sentence can mention the torch while discussing
@@ -568,8 +573,10 @@ object DefaultAssistantRoutes {
         r(
             "life.contacts", "Call contact", "life", "contacts", "dial", 210,
             listOf("打电话给", "拨打", "给...打电话", "call "),
-            patterns = listOf("""(?:打电话给|拨打|call)\s*[\p{L}0-9_·]{1,30}"""),
-            exclude = listOf("打开电话", "话费", "提醒", "remind"),
+            // [F-004] `call` 必须带词边界：工具名 `hub_call` 里的 "call"
+            // 是「调用工具」，不是「打电话」。
+            patterns = listOf("""(?:打电话给|拨打|(?<![A-Za-z0-9_])call\b)\s*[\p{L}0-9_·]{1,30}"""),
+            exclude = listOf("打开电话", "话费", "提醒", "remind", "hub_call", "shell", "command", "工具"),
         ),
         r(
             "life.contacts-search", "Search contacts", "life", "contacts", "search", 170,
@@ -629,6 +636,26 @@ object DefaultAssistantRoutes {
                         route
                     } else {
                         route.copy(exclude = (route.exclude + builtin.exclude).distinct())
+                    }
+                }
+            }
+        }
+        if (fromVersion < 14) {
+            // v14 puts a word boundary on "call" in the built-in contacts
+            // route (F-004): `hub_call` is a tool call, not a phone call.
+            // The old built-in pattern is retired and replaced — merging it
+            // would keep matching `hub_call ...` — while any pattern the
+            // user added survives.
+            val contacts = all.firstOrNull { it.id == "life.contacts" }
+            if (contacts != null) {
+                routes = routes.map { route ->
+                    if (route.id != "life.contacts") {
+                        route
+                    } else {
+                        route.copy(
+                            patterns = (route.patterns - RETIRED_CONTACT_PATTERNS) + contacts.patterns,
+                            exclude = (route.exclude + contacts.exclude).distinct(),
+                        )
                     }
                 }
             }

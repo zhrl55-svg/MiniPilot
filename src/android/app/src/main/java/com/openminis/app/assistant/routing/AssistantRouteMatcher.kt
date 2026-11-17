@@ -105,6 +105,8 @@ object AssistantRouteMatcher {
         val ascii = normalizedTerm.all { it.code < 128 }
         if (!ascii) return normalizedText.contains(normalizedTerm)
         val escaped = Regex.escape(normalizedTerm)
-        return Regex("""(?<![a-z0-9])$escaped(?![a-z0-9])""").containsMatchIn(normalizedText)
+        // `_` 也算词内字符：工具名 `hub_call` 里的 "call" 不是「打电话」，
+        // `run_command` 里的 "command" 也不是「运行命令」。
+        return Regex("""(?<![a-z0-9_])$escaped(?![a-z0-9_])""").containsMatchIn(normalizedText)
     }
 }

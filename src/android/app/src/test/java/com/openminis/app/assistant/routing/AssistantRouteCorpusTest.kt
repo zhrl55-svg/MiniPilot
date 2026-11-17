@@ -168,6 +168,9 @@ class AssistantRouteCorpusTest {
         // 地点闸门不能误伤火车票路由。
         local("张掖西到兰州西的高铁票", "train_12306", "query"),
 
+        // [F-004] `hub_call` 里的 "call" 是「调用工具」，不是「打电话」。
+        cloud("hub_call 张三"),
+
         // [F-001] 普通句子里出现「写入」不是写文件指令；带路径的真命令仍走本地。
         cloud("这句话里写入了很多细节"),
         cloud("我们讨论一下写入经 ConfigBridge 确认卡的流程"),
@@ -255,6 +258,21 @@ class AssistantRouteCorpusTest {
             }
         }
         assertTrue(failures.joinToString("\n"), failures.isEmpty())
+    }
+
+    /** [F-004] `hub_call` 是工具调用，不是打电话——曾经的真误触发。 */
+    @Test
+    fun `hub_call is never a phone call`() {
+        for (text in listOf(
+            "用 hub_call 工具在电脑上执行 shell，command 是 echo \"a b\"",
+            "hub_call 张三",
+            "hub_call 一下",
+        )) {
+            val decision = router.route(text, routes)
+            val isDial = decision is RouteDecision.Local &&
+                decision.capability == "contacts" && decision.action == "dial"
+            assertTrue("$text -> $decision", !isDial)
+        }
     }
 
     /** [F-001] 没有 path 的「写入」句子必须交云端，而不是本地弹卡/猜测路径。 */
