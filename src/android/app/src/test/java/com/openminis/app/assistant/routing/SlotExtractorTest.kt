@@ -246,4 +246,34 @@ class SlotExtractorTest {
         assertEquals("咖啡店", extract("找一家附近的咖啡店", "tool.amap").args.getString("query"))
         assertEquals("超市", extract("附近有超市吗", "tool.amap").args.getString("query"))
     }
+
+    @Test
+    fun `amap query drops the search verb`() {
+        // 「搜一下 / 搜下」是搜索动词：剥掉之后剩下的才是地点关键词。
+        // 端侧实测：「搜一下加油站」曾原样当成关键词，高德搜不到。
+        assertEquals("加油站", extract("搜一下加油站", "tool.amap").args.getString("query"))
+        assertEquals("加油站", extract("搜下周边加油站", "tool.amap").args.getString("query"))
+        assertEquals("加油站", extract("搜一下周边的加油站", "tool.amap").args.getString("query"))
+        assertEquals("加油站", extract("周边加油站", "tool.amap").args.getString("query"))
+    }
+
+    @Test
+    fun `a whole sentence leaves the query slot empty`() {
+        // 端侧实测：这一整段说明文字被当成了地点关键词，搜出 0 条。
+        // 槽位留空 → 必需槽位缺失 → 路由交回云端。
+        val out = extract(
+            "我说搜下周边加油站和搜一下加油站都没有成功，说周边加油站.才成功，" +
+                "然后这一段长文字也走了快路径",
+            "tool.amap",
+        )
+        assertTrue(out.args.optString("query").isBlank())
+        assertTrue(out.missing.contains("query"))
+    }
+
+    @Test
+    fun `a sentence mentioning a nearby place is not a place query`() {
+        val out = extract("我昨天在附近那家店吃了个饭，你觉得怎么样", "tool.amap")
+        assertTrue(out.args.optString("query").isBlank())
+        assertTrue(out.missing.contains("query"))
+    }
 }

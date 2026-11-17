@@ -739,10 +739,14 @@ class SlotExtractor(
      * 剥掉疑问句的壳：「附近有什么好吃的」→「好吃」，「附近有超市吗」→「超市」。
      * 剥不掉的泛指（好吃/美食/馆子）**留在这里** —— 展开成餐厅/饭店/小吃是
      * 工具的活（[AmapPlaceQuery.plan]），端侧和云端共用同一套口径。
+     *
+     * 剥完还像一句话（太长、带分句标点）就**交回云端**：这里返回空串，
+     * 必需槽位 `query` 缺失，路由自然放弃本地。这里绝不截断后硬搜 ——
+     * 截出来的关键词只会得到错误结果。
      */
     private fun extractPlaceQuery(text: String): String {
         val cleaned = AmapPlaceQuery.normalize(text)
-        return cleaned.ifBlank { text.take(60) }
+        return if (AmapPlaceQuery.isPlaceKeyword(cleaned)) cleaned else ""
     }
 
     /**

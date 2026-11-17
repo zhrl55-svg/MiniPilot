@@ -116,6 +116,54 @@ class AmapPlaceQueryTest {
         assertTrue(AmapPlaceQuery.plan("附近呢").keywords.isEmpty())
     }
 
+    // -------------------------------------------------- 搜索动词 / 整句闸门
+
+    @Test
+    fun `search verbs are stripped from the query`() {
+        // 「搜一下 / 搜下」是搜索动词，不是地点的一部分。剥掉之后剩下的
+        // 才是高德认识的关键词。
+        assertEquals("加油站", AmapPlaceQuery.normalize("搜一下加油站"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("搜下周边加油站"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("搜一下周边的加油站"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("帮我搜一下加油站"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("帮我搜加油站"))
+    }
+
+    @Test
+    fun `the search verb never reaches the keyword list`() {
+        assertEquals(listOf("加油站"), AmapPlaceQuery.plan("搜一下加油站").keywords)
+        assertEquals(listOf("加油站"), AmapPlaceQuery.plan("搜下周边加油站").keywords)
+        assertEquals(listOf("加油站"), AmapPlaceQuery.plan("周边加油站").keywords)
+    }
+
+    @Test
+    fun `the search verb is not a keyword of a food question`() {
+        // 端侧实测：「搜一下周边好吃的」曾把「搜一下」当成一个关键词去搜，
+        // 结果标签变成「搜一下·餐厅·饭店·小吃」。
+        val plan = AmapPlaceQuery.plan("搜一下周边好吃的")
+        assertEquals(listOf("餐厅", "饭店", "小吃"), plan.keywords)
+        assertTrue(plan.foodMode)
+    }
+
+    @Test
+    fun `a whole sentence produces no keyword`() {
+        // 用户原话：一整段说明文字被当成了地点关键词，搜出 0 条。
+        val sentence = "我说搜下周边加油站和搜一下加油站都没有成功,说周边加油站.才成功," +
+            "然后这一段长文字也走了快路径"
+        assertTrue(AmapPlaceQuery.plan(sentence).keywords.isEmpty())
+        assertTrue(
+            AmapPlaceQuery.plan("我昨天在附近那家店吃了个饭,你觉得怎么样").keywords.isEmpty(),
+        )
+    }
+
+    @Test
+    fun `a place keyword is short and free of clause punctuation`() {
+        assertTrue(AmapPlaceQuery.isPlaceKeyword("加油站"))
+        assertFalse(AmapPlaceQuery.isPlaceKeyword(""))
+        assertFalse(AmapPlaceQuery.isPlaceKeyword("加油站,超市"))
+        assertFalse(AmapPlaceQuery.isPlaceKeyword("加油站,超市".repeat(4)))
+    }
+
     // -------------------------------------------------------------- 合并
 
     @Test

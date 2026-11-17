@@ -235,7 +235,17 @@ object AmapSearchTool {
         // 端侧（本地路由抽槽）和云端（模型调用工具）走的是同一个工具，
         // 所以同一句话在两端的结果一致。
         val plan = AmapPlaceQuery.plan(query)
-        val keywords = plan.keywords.ifEmpty { listOf(query) }
+        if (plan.keywords.isEmpty()) {
+            // 剥完填充词剩下的是一整句话（或者什么都不剩）：这不是地点关键词。
+            // 明确说清楚，别拿它去搜出一句「附近没有找到」—— 那会让用户以为
+            // 附近真的没有，而其实是整句话被当成了关键词。
+            return ToolExecutionResult(
+                "「${query.take(40)}」不像一个能搜的地点关键词。" +
+                    "换个说法试试：直接说地点或品类，例如「附近的加油站」「附近有什么好吃的」。",
+                false,
+            )
+        }
+        val keywords = plan.keywords
 
         // 多关键词并行搜索：三个品类词一起打，墙钟时间 ≈ 单次请求。
         val responses: List<Pair<String, SearchOutcome>> = if (keywords.size == 1) {

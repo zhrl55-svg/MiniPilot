@@ -10,11 +10,14 @@ import org.json.JSONObject
  * `有什么` 和 `好吃` 都不是地点。原样丢给 around 接口只会回来 0 条，
  * 用户看到的是一句「附近没有找到」。
  *
- * 这里做两件事：
+ * 这里做三件事：
  *
  *  1. [normalize] —— 剥掉疑问句的壳，只留下用户真正要找的东西；
  *  2. [plan] —— 把「好吃」这类泛指展开成高德认识的品类词（餐厅/饭店/小吃），
- *     同时把修饰词（面馆、火锅…）留在最前面。
+ *     同时把修饰词（面馆、火锅…）留在最前面；
+ *  3. [isPlaceKeyword] —— 判断剥完之后剩下的是不是一个地点关键词。一整句话
+ *     （「我说搜下加油站…然后这一段长文字也走快路径」）剥完还有 39 个字，
+ *     拿去搜只会得到 0 条 —— 这种一律交回云端，绝不截断后硬搜。
  *
  * 词表对齐沙箱里那份实测过的 amap.py（`normalize_query()` / `expand_query()`），
  * 端侧（本地路由）与云端（模型调用）用同一套口径，同一句话在两端结果才一致。
@@ -28,6 +31,10 @@ object AmapPlaceQuery {
      *
      * 剥离时按长度从长到短替换 ——「有什么」必须先于「什么」被剥掉，
      * 否则会留下一个孤零零的「什么」。
+     *
+     * 同长度的词按**表里的先后**剥（排序是稳定的）：「搜一下」必须先于
+     * 「帮我搜」，否则「帮我搜一下加油站」会先被剥成「帮我 一下加油站」，
+     * 剩下一个孤零零的「一下」。
      */
     val FILLER_WORDS: List<String> = listOf(
         // 方位
@@ -38,6 +45,8 @@ object AmapPlaceQuery {
         // 动作与客套
         "找一家", "找个", "找一下", "找找", "找点", "看看", "查一下", "推荐",
         "请问", "帮我", "帮忙", "麻烦", "我想", "我要", "想要", "给我", "能不能",
+        // 搜索动作
+        "搜一下", "搜下", "搜搜", "帮我搜", "查查", "看一看",
         // 其它
         "地址是", "怎么去", "nearby", "near me",
     )
@@ -77,8 +86,24 @@ object AmapPlaceQuery {
     /** 修饰词至少这么长才算关键词 —— 单个字（「吃」「玩」）搜不出东西。 */
     private const val MIN_SPECIFIC_LENGTH = 2
 
-    /** 修饰词最长到这个长度就当句子处理，不再当关键词用。 */
-    private const val MAX_SPECIFIC_LENGTH = 16
+    /**
+     * POI 关键词最长到这个长度；更长就当句子处理，不再当关键词用。
+     *
+     * 端侧抽槽（[com.openminis.app.assistant.routing.SlotExtractor]）和
+     * 这里的 [plan] 共用这一个阈值 —— 两端口径必须一致，同一句话在两端
+     * 才会有同样的结果。
+     */
+    const val MAX_QUERY_LENGTH = 16
+
+    /**
+     * 分句标点：出现任何一个，说明这是一句话，不是一个地点关键词。
+     *
+     * 全角和半角都算 —— 端侧抽槽前文本已经被归一化过（「，」→「,」），
+     * 所以这里两套都得认。
+     */
+    private val CLAUSE_PUNCTUATION = setOf(
+        '，', ',', '。', '.', '！', '!', '？', '?', '；', ';', '、',
+    )
 
     private val CJK_REGEX = Regex("""[一-鿿]""")
 
@@ -143,6 +168,23 @@ object AmapPlaceQuery {
     }
 
     /**
+     * 归一化之后的字符串是不是一个可以拿去搜的地点关键词。
+     *
+     * 三条闸门，命中任一就不是关键词：
+     *  1. 空 —— 剥完填充词什么都不剩（「附近呢」）；
+     *  2. 超过 [MAX_QUERY_LENGTH] —— 这么长的是一句话，不是 POI 名；
+     *  3. 含分句标点 ——「我说搜下加油站…然后这一段长文字也走快路径」剥完
+     *     填充词还有 39 个字，拿去搜只能得到 0 条。
+     *
+     * 不是关键词时**不要截断后硬搜**：截出来的关键词只会得到错误结果，
+     * 应该交回云端。
+     */
+    fun isPlaceKeyword(normalized: String): Boolean =
+        normalized.isNotBlank() &&
+            normalized.length <= MAX_QUERY_LENGTH &&
+            normalized.none { it in CLAUSE_PUNCTUATION }
+
+    /**
      * 一次查询的展开方案。
      *
      * - 「附近有什么好吃的」→ 餐厅 / 饭店 / 小吃（三个词并行搜）
@@ -153,6 +195,11 @@ object AmapPlaceQuery {
         val light = lightNormalize(raw)
         if (light.isBlank()) return Plan(emptyList(), false)
         val plain = normalize(light)
+
+        // 一整句话不是地点关键词：「我说搜下加油站…然后这一段长文字也走快路径」
+        // 剥完填充词还有 39 个字。宁可空手回去让工具明确报错，也不要拿它去
+        // 搜出「附近没有找到」。
+        if (!isPlaceKeyword(plain)) return Plan(emptyList(), false)
 
         // 用户直接说了品类（「附近的餐厅」「美食城」）：照搜，别再展开。
         if (plain in FOOD_CATEGORY_TERMS) return Plan(listOf(plain), true)
@@ -166,15 +213,14 @@ object AmapPlaceQuery {
             rest = rest.removeRange(hit.index, hit.index + hit.alias.length)
         }
         if (categories.isEmpty()) {
-            return Plan(listOf(plain).filter { it.isNotBlank() }, false)
+            return Plan(listOf(plain), false)
         }
 
         val specific = normalize(rest)
         val keywords = buildList {
-            if (specific.isNotBlank() &&
+            if (specific.length >= MIN_SPECIFIC_LENGTH &&
                 specific !in JUNK_REMAINDERS &&
-                specific.length >= MIN_SPECIFIC_LENGTH &&
-                specific.length <= MAX_SPECIFIC_LENGTH
+                isPlaceKeyword(specific)
             ) {
                 add(specific)
             }

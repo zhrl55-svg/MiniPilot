@@ -159,6 +159,12 @@ class AssistantRouteCorpusTest {
         local("附近有什么好吃的", "amap_search", "search"),
         local("附近有超市吗", "amap_search", "search"),
         local("找一家附近的咖啡店", "amap_search", "search"),
+        // 「搜一下 / 搜下」是搜索动词，剥掉之后剩下的才是地点关键词。
+        local("周边加油站", "amap_search", "search"),
+        local("搜下周边加油站", "amap_search", "search"),
+        local("搜一下周边的加油站", "amap_search", "search"),
+        // 地点闸门不能误伤火车票路由。
+        local("张掖西到兰州西的高铁票", "train_12306", "query"),
 
         // Unrelated chat / deliberate low-information commands
         cloud("你好呀"),
@@ -201,6 +207,10 @@ class AssistantRouteCorpusTest {
         cloud("怎么对接新闻接口"),
         cloud("我们在讨论股票接口的方案"),
         cloud("看看未读消息"),
+        // 一整句话不是地点查询：句子里带「周边」也不行。槽位抽不出来就
+        // 交回云端，而不是本地拿 39 个字去搜出 0 条。
+        cloud("我说搜下周边加油站和搜一下加油站都没有成功，说周边加油站.才成功，然后这一段长文字也走了快路径"),
+        cloud("我昨天在附近那家店吃了个饭，你觉得怎么样"),
     )
 
     @Test
