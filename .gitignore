@@ -199,3 +199,9 @@ assets/icon-backup-*/
 
 # codebase-index cache (machine-local; do not commit)
 .claude/cache/codebase-index/
+
+# Local scratch (agent sessions, temp offsets)
+.tmp/
+.workbuddy-ai/
+rev_slot.txt
+tools/hub/.tmp_off*.txt
