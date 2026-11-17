@@ -90,3 +90,39 @@
 - 线上跑的是 C:\Users\zhrl5\hub\hub_executor.py（单文件版，与仓库的 executor.py 是两份
   实现）。已同步修复并纳管进 tools/hub/deploy/，README 记了这一节。
 [END CLAUDE]
+
+---
+
+# 收尾：F-007 验收 / F-007b / 分组子条目 UI（2026-11-17 23:30）
+
+## 提交
+- `9383520` fix(hub): 巡检循环切换成功后不再退出（F-007b）
+- `909a46c` fix(sessions): 分组展开后的子会话标题降一级（15sp Medium）
+- 均已推送 `minipilot/main`（连同 `ba2d9bc` F-007 主线）。
+
+## F-007 真机验收（ELS-AN00，versionCode 55，lastUpdateTime 23:26:10）
+- APK sha256 `05c60740…34eaaa`，75026454 字节。
+- 第 1 轮：23:26:37 杀执行器 → 23:26:39 手机落到备选 `ws://100.95.180.77:8787` →
+  23:26:45 巡检 probe HTTP 426 → 23:26:46 切回 `wss://asus…:8443`
+  （executor.log 23:26:45 phone attached）。
+- 第 2 轮：23:27:20 再杀 → 23:27:22 落备选 → 23:27:45 巡检切回
+  （25s，executor.log 23:27:45 phone attached）。
+- 结论：PC 重启后手机在一个 30s 巡检周期内自己回到直连，满足 ≤60s 验收线。
+
+## F-007b（验收中发现，ba2d9bc 未覆盖）
+- 现象：23:14:21 巡检第一次切回直连后 `return@launch` 退出；23:14:38 再次杀执行器，
+  手机落到备选 relay 后 2 分钟没有任何 probe，再也回不来。
+- 修复：巡检循环常驻，仅 `stopped` 退出；位于首选端点时 `shouldProbe()` 让 tick 空转。
+- 复验：即上面第 2 轮——第一次切换成功后仍能第二次回来。
+
+## 分组子条目视觉层级（用户反馈）
+- 分组头「协作」保持 16sp SemiBold；成员行标题改为 15sp Medium
+  （搜索高亮的标题分支同样处理）。
+- 真机截图核对：展开后的「Claude 通信信箱」明显比分组头退一级。
+
+## 更正与投递
+- `file.get` 的 `offset`/`length` 生效；返回体 `size` 是整个文件大小，不是本次片段长度。
+  `tools/hub/README.md` 已写明。
+- 回执 `c-20261117-010` 已写入 `.claude/bridge/claude-to-minis.jsonl`，并直接投递到
+  设备上现存唯一的信箱会话 `f8c4477a-684f-4df2-b68e-ed146234d9dd`
+  （`142417d5-6840-44be-a72c-4d3ae4a23dfb` 已不在设备会话表中）。
