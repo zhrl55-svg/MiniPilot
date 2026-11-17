@@ -8,11 +8,14 @@ import android.location.LocationManager
 import android.os.Build
 import com.openminis.app.data.model.AgentToolDefinition
 import com.openminis.app.data.model.AgentToolParam
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
 
 /**
  * 高德地点查询（Web API 通道）。
@@ -55,7 +58,7 @@ object AmapSearchTool {
             "city-wide search by name. Returns names, addresses and distance in meters.",
         parameters = mapOf(
             "tool_title" to AgentToolParam("string", "A concise 5-10 word summary of what this tool call does, shown to the user. Use the same language as the user."),
-            "query" to AgentToolParam("string", "What to search for, e.g. \"超市\", \"咖啡\", \"加油站\". Use the word the user used."),
+            "query" to AgentToolParam("string", "What to search for, e.g. \"超市\", \"咖啡\", \"加油站\". Use the word the user used. Colloquial food questions such as \"附近有什么好吃的\" are expanded into restaurant keywords automatically."),
             "mode" to AgentToolParam(
                 "string",
                 "\"near\" (default) — search around the device's current location; " +
@@ -154,6 +157,44 @@ object AmapSearchTool {
     // ---------------------------------------------------------------- exec
 
     /**
+     * 单个关键词的高德查询结果。
+     *
+     * @param pois 命中列表；null 表示这一次请求失败了。
+     * @param error 失败原因（网络超时 / 接口 status 不为 1）。
+     */
+    private data class SearchOutcome(val pois: JSONArray?, val error: String?)
+
+    /**
+     * 打一个关键词。
+     *
+     * around 还是 text 由有没有定位决定，和之前一致。
+     */
+    private fun searchPois(
+        key: String,
+        keyword: String,
+        loc: Location?,
+        radius: Int,
+        city: String,
+    ): SearchOutcome {
+        val url = if (loc != null) {
+            "$BASE/around?key=$key&keywords=${enc(keyword)}" +
+                "&location=${loc.longitude},${loc.latitude}&radius=$radius" +
+                "&sortrule=distance&offset=10"
+        } else {
+            val cityPart = if (city.isEmpty()) "" else "&city=${enc(city)}"
+            "$BASE/text?key=$key&keywords=${enc(keyword)}$cityPart&citylimit=false&offset=10"
+        }
+        val body = httpJson(url) ?: return SearchOutcome(null, "网络或超时")
+        if (body.optString("status") != "1") {
+            return SearchOutcome(
+                null,
+                "status=${body.optString("status")} info=${body.optString("info")}",
+            )
+        }
+        return SearchOutcome(body.optJSONArray("pois") ?: JSONArray(), null)
+    }
+
+    /**
      * 执行查询。
      *
      * 返回给人看的文本（不是 JSON）—— 这是给用户看的工具结果，
@@ -175,85 +216,102 @@ object AmapSearchTool {
 
         val mode = args.optString("mode", "near").trim().lowercase().ifEmpty { "near" }
         val radius = args.optInt("radius", 3000).coerceIn(100, 50_000)
+        val city = args.optString("city").trim()
 
         val loc = if (mode == "near") currentLocation(context) else null
         if (mode == "near" && loc == null) {
             return ToolExecutionResult(
-                "拿不到设备定位，无法做周边搜索。可以改用「在${args.optString("city").ifBlank { "当前城市" }}找…」这种城市级查询。",
+                "拿不到设备定位，无法做周边搜索。可以改用「在${city.ifBlank { "当前城市" }}找…」这种城市级查询。",
                 false,
             )
         }
 
-        val url = if (loc != null) {
-            "$BASE/around?key=$key&keywords=${enc(query)}" +
-                "&location=${loc.longitude},${loc.latitude}&radius=$radius" +
-                "&sortrule=distance&offset=10"
+        // [T-amap-colloquial] 口语归一化 + 泛指展开。
+        //
+        // 「附近有什么好吃的」原样丢给高德是 0 结果：它只认 POI 关键词，
+        // 「有什么」「好吃」都不是地点。这里把它们剥掉，并把「好吃」展开成
+        // 餐厅/饭店/小吃并行去搜；修饰词（面馆、火锅）留在最前面。
+        //
+        // 端侧（本地路由抽槽）和云端（模型调用工具）走的是同一个工具，
+        // 所以同一句话在两端的结果一致。
+        val plan = AmapPlaceQuery.plan(query)
+        val keywords = plan.keywords.ifEmpty { listOf(query) }
+
+        // 多关键词并行搜索：三个品类词一起打，墙钟时间 ≈ 单次请求。
+        val responses: List<Pair<String, SearchOutcome>> = if (keywords.size == 1) {
+            keywords.map { kw -> kw to searchPois(key, kw, loc, radius, city) }
         } else {
-            val city = args.optString("city").trim()
-            val cityPart = if (city.isEmpty()) "" else "&city=${enc(city)}"
-            "$BASE/text?key=$key&keywords=${enc(query)}$cityPart&citylimit=false&offset=10"
+            val pool = Executors.newFixedThreadPool(keywords.size)
+            try {
+                keywords
+                    .map { kw -> pool.submit(Callable { kw to searchPois(key, kw, loc, radius, city) }) }
+                    .map { future ->
+                        runCatching { future.get() }.getOrNull()
+                            ?: ("?" to SearchOutcome(null, "网络或超时"))
+                    }
+            } finally {
+                pool.shutdown()
+            }
         }
-
-        val body = httpJson(url)
-            ?: return ToolExecutionResult("请求高德接口失败（网络或超时）", false)
-        if (body.optString("status") != "1") {
-            return ToolExecutionResult(
-                "高德接口返回异常：status=${body.optString("status")} info=${body.optString("info")}",
-                false,
-            )
+        if (responses.all { it.second.pois == null }) {
+            val reason = responses.firstNotNullOfOrNull { it.second.error } ?: "网络或超时"
+            return ToolExecutionResult("请求高德接口失败（$reason）", false)
         }
+        val ranked = responses.mapNotNull { (kw, outcome) -> outcome.pois?.let { kw to it } }
+        val merged = AmapPlaceQuery.merge(ranked, plan.foodMode, MAX_SANE_DISTANCE_M)
 
-        val pois = body.optJSONArray("pois") ?: org.json.JSONArray()
-        if (pois.length() == 0) {
-            return ToolExecutionResult(
-                if (loc != null) "附近 ${radius}m 内没有找到「$query」" else "没有找到「$query」",
-                true,
-                spokenSummary = if (loc != null) "附近没有找到「$query」" else "没有找到「$query」",
-            )
+        // 显示真正搜过的关键词：泛指问句会显示成「餐厅·饭店·小吃」，
+        // 普通查询显示归一化后的地点名。
+        val label = keywords.joinToString("·")
+        if (merged.pois.isEmpty()) {
+            return if (merged.droppedTooFar > 0) {
+                ToolExecutionResult(
+                    "找到的「$label」都在 ${MAX_SANE_DISTANCE_M / 1000}km 之外，已全部丢弃。",
+                    true,
+                    spokenSummary = "找到的「$label」都太远了，没有可用的结果。",
+                )
+            } else {
+                ToolExecutionResult(
+                    if (loc != null) "附近 ${radius}m 内没有找到「$label」" else "没有找到「$label」",
+                    true,
+                    spokenSummary = if (loc != null) "附近没有找到「$label」" else "没有找到「$label」",
+                )
+            }
         }
 
         val sb = StringBuilder()
         // 前三个结果用于语音播报：名字 + 距离，「周边搜索」在语音场景下
         // 用户最关心的就是「最近的是什么、多远」。完整列表仍在气泡里。
         val spoken = mutableListOf<String>()
-        var dropped = 0
         var shown = 0
-        for (i in 0 until pois.length()) {
-            val p = pois.optJSONObject(i) ?: continue
-            val name = p.optString("name")
-            val address = p.optString("address")
-            val dist = p.optString("distance")
-            // 距离安全阀：接口有时会给出远得离谱的结果。
-            val distM = dist.toDoubleOrNull()
-            if (distM != null && distM > MAX_SANE_DISTANCE_M) {
-                dropped++
-                continue
-            }
-            if (shown >= 8) break
+        // 每个关键词分到一份名额、总共最多 8 条：不分配额的话，
+        // 「好吃的面馆」光面馆就能占满，后面的餐厅/饭店/小吃一条都露不出来。
+        for (poi in AmapPlaceQuery.select(merged.pois, limit = 8)) {
+            val distM = poi.distanceM
             shown++
-            sb.append("• ").append(name)
+            sb.append("• ").append(poi.name)
             if (distM != null) sb.append("（").append(distM.toInt()).append("m）")
-            if (address.isNotBlank()) sb.append(" — ").append(address)
+            if (poi.address.isNotBlank()) sb.append(" — ").append(poi.address)
             sb.append('\n')
             if (spoken.size < 3) {
-                spoken += if (distM != null) "$name，${distM.toInt()}米" else name
+                spoken += if (distM != null) "${poi.name}，${distM.toInt()}米" else poi.name
             }
         }
-        if (shown == 0) {
-            return ToolExecutionResult(
-                "找到的「$query」都在 ${MAX_SANE_DISTANCE_M / 1000}km 之外，已全部丢弃。",
-                true,
-                spokenSummary = "找到的「$query」都太远了，没有可用的结果。",
-            )
-        }
         val header = if (loc != null) {
-            "附近 ${radius}m 内的「$query」：\n"
+            "附近 ${radius}m 内的「$label」：\n"
         } else {
-            "「$query」的结果：\n"
+            "「$label」的结果：\n"
         }
-        val tail = if (dropped > 0) "\n（已丢弃 $dropped 个距离过远的结果）" else ""
+        val tail = buildString {
+            if (merged.droppedTooFar > 0) {
+                append("\n（已丢弃 ${merged.droppedTooFar} 个距离过远的结果）")
+            }
+            if (merged.droppedWrongType > 0) {
+                append("\n（已过滤 ${merged.droppedWrongType} 个非餐饮结果）")
+            }
+        }
         val spokenSummary = buildString {
-            append("找到 ").append(shown).append(" 个「").append(query).append("」")
+            append("找到 ").append(shown).append(" 个「").append(label).append("」")
             if (spoken.isNotEmpty()) append("：").append(spoken.joinToString("；"))
             append("。")
         }

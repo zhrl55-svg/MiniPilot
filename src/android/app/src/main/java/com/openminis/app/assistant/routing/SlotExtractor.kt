@@ -1,6 +1,7 @@
 package com.openminis.app.assistant.routing
 
 import com.openminis.app.assistant.routing.ChineseTimeParser.RepeatMode
+import com.openminis.app.tools.AmapPlaceQuery
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.Normalizer
@@ -644,12 +645,16 @@ class SlotExtractor(
         }
     }
 
+    /**
+     * [T-amap-colloquial] 地点查询的槽位。
+     *
+     * 剥掉疑问句的壳：「附近有什么好吃的」→「好吃」，「附近有超市吗」→「超市」。
+     * 剥不掉的泛指（好吃/美食/馆子）**留在这里** —— 展开成餐厅/饭店/小吃是
+     * 工具的活（[AmapPlaceQuery.plan]），端侧和云端共用同一套口径。
+     */
     private fun extractPlaceQuery(text: String): String {
-        var t = text
-        listOf("附近", "周边", "周围", "旁边", "最近的", "找一家", "找个", "有哪些", "在哪有", "有没有", "地址是", "怎么去", "nearby", "near me")
-            .forEach { t = t.replace(it, " ", ignoreCase = true) }
-        t = t.replace(Regex("""(?:吗|呢|？|\?|的|有)"""), " ")
-        return t.replace(Regex("""\s+"""), " ").trim().ifBlank { text.take(60) }
+        val cleaned = AmapPlaceQuery.normalize(text)
+        return cleaned.ifBlank { text.take(60) }
     }
 
     /**

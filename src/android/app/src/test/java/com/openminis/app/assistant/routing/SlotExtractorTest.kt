@@ -228,4 +228,22 @@ class SlotExtractorTest {
         assertEquals("chart", out.args.getString("kind"))
         assertEquals("new", out.args.getString("chart"))
     }
+
+    // ── [T-amap-colloquial] 口语地点查询 ────────────────────────────────
+    // 槽位只负责剥掉疑问句的壳；泛指的展开是 AmapSearchTool 的活。
+
+    @Test
+    fun `amap query drops the question shell`() {
+        val out = extract("附近有什么好吃的", "tool.amap")
+        assertEquals("好吃", out.args.getString("query"))
+        assertFalse(out.missing.contains("query"))
+    }
+
+    @Test
+    fun `amap query keeps the generic and the modifier for the tool to expand`() {
+        // 「好吃的面馆」端侧只剥掉「的」；工具再把「好吃」展开成餐厅/饭店/小吃。
+        assertEquals("好吃面馆", extract("好吃的面馆", "tool.amap").args.getString("query"))
+        assertEquals("咖啡店", extract("找一家附近的咖啡店", "tool.amap").args.getString("query"))
+        assertEquals("超市", extract("附近有超市吗", "tool.amap").args.getString("query"))
+    }
 }

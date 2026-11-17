@@ -155,6 +155,11 @@ class AssistantRouteCorpusTest {
         local("今天大盘怎么样", "stock_quote", "quote"),
         local("深证成指涨了还是跌了", "stock_quote", "quote"),
 
+        // [T-amap-colloquial] 口语地点查询走本地 amap 路由（不用等云端）。
+        local("附近有什么好吃的", "amap_search", "search"),
+        local("附近有超市吗", "amap_search", "search"),
+        local("找一家附近的咖啡店", "amap_search", "search"),
+
         // Unrelated chat / deliberate low-information commands
         cloud("你好呀"),
         cloud("你是谁"),
