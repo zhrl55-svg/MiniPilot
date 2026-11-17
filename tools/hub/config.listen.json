@@ -39,7 +39,7 @@
   "limits": {
     "file_max": 8388608,
     "out_max": 200000,
-    "approval_timeout_s": 120,
+    "approval_timeout_s": 600,
     "shell_timeout_s": 120,
     "max_concurrent_calls": 4,
     "screen_long_edge": 1600,
