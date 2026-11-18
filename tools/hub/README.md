@@ -27,6 +27,35 @@ python fake_phone.py --target pc-ausa --action info
 
 `fake_phone.py` 的 `--target` 可以写设备 id（`pc-ausa`）也可以写设备名（`AUSA`）。
 
+## 开机自启（H-006，2026-11-18）
+
+**规则（强制）**：Startup 里只放 **`.lnk` 快捷方式**（或把绝对路径写死在脚本里），
+**禁止**把依赖同目录文件的启动 vbs **复制**进 Startup。
+`run_executor.vbs` / `run_bridge.vbs` 用 `GetParentFolderName(WScript.ScriptFullName)`
+找同目录的 `.cmd`，复制到 Startup 后它只在 Startup 里找，**必然找不到**：
+executor 从未启动 → `127.0.0.1:8790` 无监听 → `tailscale serve` 8443 没有后端 →
+手机侧 hub 全断，且极容易被误判成「Tailscale/网络问题」。（2026-11-18 H-006 实测复现。）
+
+**安装**（新机器 / 仓库挪位置后重跑一次即可，幂等）：
+
+```bat
+tools\hub\install_startup.cmd
+rem 或：cscript //nologo tools\hub\install_startup.vbs
+```
+
+脚本做三件事：
+
+1. 把 Startup 里旧的 `MinisPCHubExecutor.vbs` / `MinisPCHubBridge.vbs` 改名备份成
+   `*.removed.<时间戳>`（只动这两个本项目名字，其它启动项不碰）；
+2. 创建两个 `.lnk`：`MinisPCHubExecutor.lnk` → `tools\hub\run_executor.vbs`、
+   `MinisPCHubBridge.lnk` → `tools\pchub\run_bridge.vbs`。
+   快捷方式指向**仓库里的源脚本**，所以脚本自己的同目录查找继续有效；
+3. 自检 `127.0.0.1:8790`：未监听就立即拉起一次执行器，仍未监听则把一条明确错误
+   追加到 `tools\hub\executor.log`（无控制台窗口也能事后排障）。
+
+**验收**：执行安装脚本 → 重启 PC → 无任何弹窗，`netstat -ano | findstr 127.0.0.1:8790`
+显示 LISTENING，`tailscale serve status` 仍指向 8790，手机端 `hub_call` 往返正常。
+
 ## 配置
 
 `config.dev.json` 逐项说明：
