@@ -45,16 +45,22 @@ rem 或：cscript //nologo tools\hub\install_startup.vbs
 
 脚本做三件事：
 
-1. 把 Startup 里旧的 `MinisPCHubExecutor.vbs` / `MinisPCHubBridge.vbs` 改名备份成
-   `*.removed.<时间戳>`（只动这两个本项目名字，其它启动项不碰）；
+1. 把 Startup 里旧的 `MinisPCHubExecutor.vbs*` / `MinisPCHubBridge.vbs*`
+   **移出** Startup，归档到 `tools\hub\backup\startup-legacy\`（连同历史
+   `*.bak.*` / `*.removed.*` 残留一并清扫；只动这两个本项目前缀，其它启动项不碰）。
+   不能像早期版本那样原地改名成 `*.removed.<时间戳>`：Startup 会对每个文件执行
+   ShellExecute，未知扩展名（如 `.vbs.bak.20261118`）会在每次登录时弹
+   「选择程序打开」。2026-11-18 重启实测复现；
 2. 创建两个 `.lnk`：`MinisPCHubExecutor.lnk` → `tools\hub\run_executor.vbs`、
    `MinisPCHubBridge.lnk` → `tools\pchub\run_bridge.vbs`。
    快捷方式指向**仓库里的源脚本**，所以脚本自己的同目录查找继续有效；
 3. 自检 `127.0.0.1:8790`：未监听就立即拉起一次执行器，仍未监听则把一条明确错误
    追加到 `tools\hub\executor.log`（无控制台窗口也能事后排障）。
 
-**验收**：执行安装脚本 → 重启 PC → 无任何弹窗，`netstat -ano | findstr 127.0.0.1:8790`
-显示 LISTENING，`tailscale serve status` 仍指向 8790，手机端 `hub_call` 往返正常。
+**验收**：执行安装脚本 → 重启 PC → 无任何弹窗（Startup 里与 hub 相关的只应有
+`MinisPCHubExecutor.lnk` / `MinisPCHubBridge.lnk`，打开“选择程序”弹窗即说明还有
+未知扩展名的残留文件），`netstat -ano | findstr 127.0.0.1:8790` 显示 LISTENING，
+`tailscale serve status` 仍指向 8790，手机端 `hub_call` 往返正常。
 
 ## 配置
 

@@ -1,6 +1,8 @@
 journal*.jsonl
 mode.txt
 __pycache__/
+# 从 Startup 移出的旧启动器归档（install_startup.vbs）
+backup/
 # 运行时日志与测试产出
 *.err
 *.out

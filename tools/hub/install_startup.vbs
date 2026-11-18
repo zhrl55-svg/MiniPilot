@@ -11,8 +11,16 @@
 ' This installer never copies a launcher. It creates shortcuts whose target is
 ' the repo copy of run_executor.vbs / run_bridge.vbs, so GetParentFolderName
 ' keeps resolving to tools\hub and tools\pchub. Re-running it is safe:
-' shortcuts are overwritten and legacy copied launchers are renamed to
-' *.removed.<timestamp> before the new entries are written.
+' shortcuts are overwritten and legacy copied launchers are MOVED OUT of
+' Startup into tools\hub\backup\startup-legacy\ before the new entries are
+' written.
+'
+' 2026-11-18 follow-up: they used to be renamed in place to
+' *.removed.<timestamp>. That left non-executable files in Startup, and
+' Explorer ShellExecutes every startup item - an unknown extension such as
+' *.vbs.bak.20261118 popped the "How do you want to open this file?" dialog at
+' every logon. Anything that starts with the legacy names is now swept out of
+' Startup (plain copy, *.bak.* and *.removed.* leftovers included).
 '
 ' Usage:  cscript //nologo tools\hub\install_startup.vbs
 '     or: tools\hub\install_startup.cmd  (/quiet skips the pause)
@@ -41,17 +49,36 @@ If startupDir = "" Or Not fso.FolderExists(startupDir) Then
 End If
 stamp = Year(Now) & Pad2(Month(Now)) & Pad2(Day(Now)) & "-" & Pad2(Hour(Now)) & Pad2(Minute(Now)) & Pad2(Second(Now))
 
-' 1. Retire copied launchers. Only the two names this project owns; anything
-'    else in Startup is left alone.
-Dim legacy, name, removed
+' 1. Retire copied launchers by moving them OUT of Startup. Only names this
+'    project owns (MinisPCHubExecutor.vbs* / MinisPCHubBridge.vbs*) are
+'    touched; anything else in Startup is left alone. Sweeping by prefix also
+'    collects leftovers from earlier fix attempts (*.bak.<date>,
+'    *.removed.<timestamp>), which must not stay in Startup at all: Explorer
+'    ShellExecutes every startup item and prompts "open with" for unknown
+'    extensions.
+Dim backupDir
+backupDir = hubDir & "\backup\startup-legacy"
+If Not fso.FolderExists(backupDir) Then
+    sh.Run "cmd /c mkdir """ & backupDir & """", 0, True
+End If
+
+Dim legacy, leftover, file, prefix, key, dest, retired
 legacy = Array("MinisPCHubExecutor.vbs", "MinisPCHubBridge.vbs")
-removed = 0
-For Each name In legacy
-    If fso.FileExists(startupDir & "\" & name) Then
-        fso.MoveFile startupDir & "\" & name, startupDir & "\" & name & ".removed." & stamp
-        removed = removed + 1
-        WScript.Echo "removed legacy copy: " & name & " -> " & name & ".removed." & stamp
-    End If
+Set leftover = CreateObject("Scripting.Dictionary")
+For Each file In fso.GetFolder(startupDir).Files
+    For Each prefix In legacy
+        If LCase(Left(file.Name, Len(prefix))) = LCase(prefix) Then
+            leftover.Add file.Name, True
+        End If
+    Next
+Next
+retired = 0
+For Each key In leftover.Keys
+    dest = backupDir & "\" & key
+    If fso.FileExists(dest) Then dest = dest & "." & stamp
+    fso.MoveFile startupDir & "\" & key, dest
+    retired = retired + 1
+    WScript.Echo "moved out of Startup: " & key & " -> " & dest
 Next
 
 ' 2. Create the shortcuts that point at the REPO scripts.
@@ -85,7 +112,7 @@ Else
     End If
 End If
 
-WScript.Echo "done. Legacy copies retired: " & removed & ". Reboot to verify: no popup, 8790 handled by the .lnk."
+WScript.Echo "done. Startup entries moved to backup: " & retired & ". Reboot to verify: no popup, 8790 handled by the .lnk."
 WScript.Quit 0
 
 ' ---------------------------------------------------------------------------
