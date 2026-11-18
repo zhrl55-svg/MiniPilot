@@ -47,6 +47,38 @@ class CopyFeedbackLocalizedGuardTest {
     }
 
     @Test
+    fun `the code block copy button has a finger-sized hit area and a green check`() {
+        // [T-android-codeblock-copy-target] The 24dp ContentCopy glyph is drawn
+        // LARGER than the 16dp layout box a bare Icon(...).clickable leaves
+        // behind, so the part of the glyph outside that box was dead to the
+        // finger - only the "pressed" overlap was tappable. The glyph stays
+        // 16dp; the tappable box is 36dp (iOS: 44x44 hit area, small glyph).
+        //
+        // The feedback is the green check - a toast was tried and dropped, the
+        // check is enough and matches iOS.
+        val src = code(streaming)
+        val at = src.indexOf("stringResource(R.string.copy_code_block)")
+        assertTrue("the code block copy button is gone", at >= 0)
+        val around = src.substring(maxOf(0, at - 1500), minOf(src.length, at + 1500))
+        assertTrue(
+            "the code block copy button needs a finger-sized hit area: $around",
+            around.contains(".size(36.dp)"),
+        )
+        assertTrue(
+            "the code block copy button must confirm the copy with the green check: $around",
+            around.contains("Icons.Default.Check"),
+        )
+        assertTrue(
+            "the code block copy button must not pop a text toast: $around",
+            !around.contains("Toast.makeText"),
+        )
+        assertTrue(
+            "the clickable box must carry the TalkBack label itself",
+            around.contains("contentDescription = copyLabel"),
+        )
+    }
+
+    @Test
     fun `no copy feedback in ui is a hard-coded English literal`() {
         // Exact copy-feedback literals. SessionDuplicateTitle matches the
         // English "Copy" suffix of old titles on purpose (logic, not UI text).

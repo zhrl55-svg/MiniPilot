@@ -35,6 +35,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
 import androidx.compose.foundation.clickable
@@ -65,6 +66,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -2631,11 +2634,13 @@ private fun RenderBlock(block: MdBlock) {
                     .clip(RoundedCornerShape(8.dp))
                     .background(colors.codeBg),
             ) {
-                // Header row: language label + copy button
+                // Header row: language label + copy button. The top padding
+                // keeps the strip tight now that the copy button carries a
+                // finger-sized hit area instead of a bare 16dp glyph.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(start = 12.dp, end = 8.dp, top = 6.dp),
+                        .padding(start = 12.dp, end = 2.dp, top = 4.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
@@ -2644,21 +2649,52 @@ private fun RenderBlock(block: MdBlock) {
                         color = MdCodeLangColor,
                         modifier = Modifier.weight(1f),
                     )
-                    Icon(
-                        imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
-                        contentDescription = if (copied) {
-                            stringResource(R.string.image_copied_toast)
-                        } else {
-                            stringResource(R.string.copy_code_block)
-                        },
-                        tint = if (copied) Color(0xFF34C759) else Color.White.copy(alpha = 0.4f),
+                    // [T-android-codeblock-copy-target] iOS gives this button a
+                    // 44x44 hit area with a small glyph ("44x44 hit area per
+                    // Apple HIG, icon stays small visually",
+                    // CodeBlockAttachment.swift). Android had a bare 16dp
+                    // Icon(...).clickable: the 24dp ContentCopy glyph is drawn
+                    // LARGER than that 16dp layout box, so the part of the
+                    // glyph that sticks out was never inside the hit area -
+                    // only the "pressed" overlap was tappable, and the rest
+                    // looked like a dead button. The glyph stays 16dp; the
+                    // tappable box is 36dp, so the whole glyph is reachable.
+                    //
+                    // The feedback stays the green check (the same shape iOS
+                    // swaps in): a toast was tried and dropped - with a phone
+                    // <-> PC clipboard sync over the projection, the clipboard
+                    // can change again right after the copy, and the check is
+                    // the signal that the copy happened.
+                    // The TalkBack label of the clickable Box (the semantics
+                    // lambda is not @Composable, so the string is resolved
+                    // here).
+                    val copyLabel = if (copied) {
+                        stringResource(R.string.image_copied_toast)
+                    } else {
+                        stringResource(R.string.copy_code_block)
+                    }
+                    Box(
                         modifier = Modifier
-                            .size(16.dp)
+                            .size(36.dp)
+                            .clip(CircleShape)
                             .clickable {
                                 clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(block.code))
                                 copied = true
-                            },
-                    )
+                            }
+                            // The clickable is the Box now, so the TalkBack
+                            // label has to live there too - otherwise the
+                            // button reads as an unnamed button next to a
+                            // separate image node.
+                            .semantics { contentDescription = copyLabel },
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = if (copied) Icons.Default.Check else Icons.Default.ContentCopy,
+                            contentDescription = null,
+                            tint = if (copied) Color(0xFF34C759) else Color.White.copy(alpha = 0.4f),
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
                 }
                 // iOS parity (SelectableMarkdownView.swift L971): cap visual
                 // code-block height at ~400 pt and let an internal scroll
