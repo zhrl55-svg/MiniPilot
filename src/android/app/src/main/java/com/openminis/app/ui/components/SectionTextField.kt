@@ -1,6 +1,7 @@
 package com.openminis.app.ui.components
 
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -13,6 +14,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -20,6 +22,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInWindow
+import androidx.compose.ui.platform.LocalTextToolbar
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
@@ -134,58 +139,76 @@ fun SectionTextField(
         // overload's behavior on the same transition.
         fieldValue = TextFieldValue(value, TextRange(value.length))
     }
-    Surface(
-        color = containerColor ?: SectionDesign.cardColor(),
-        shape = SectionDesign.CardShape,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        BasicTextField(
-            value = fieldValue,
-            onValueChange = { newValue ->
-                fieldValue = newValue
-                if (newValue.text != value) onValueChange(newValue.text)
-            },
-            modifier = Modifier
-                .fillMaxWidth()
-                // [T-android-settings-ui-md3] #3 standard MD3 single-line text
-                // field height (56dp) so input rows match the toggle/value rows.
-                .heightIn(min = SectionDesign.TextFieldMinHeight)
-                .then(fieldModifier),
-            enabled = enabled,
-            readOnly = readOnly,
-            textStyle = mergedTextStyle.copy(color = MaterialTheme.colorScheme.onSurface),
-            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-            visualTransformation = visualTransformation,
-            keyboardOptions = keyboardOptions,
-            keyboardActions = keyboardActions,
-            interactionSource = interactionSource,
-            singleLine = singleLine,
-            maxLines = maxLines,
-            decorationBox = { innerTextField ->
-                OutlinedTextFieldDefaults.DecorationBox(
-                    value = fieldValue.text,
-                    visualTransformation = visualTransformation,
-                    innerTextField = innerTextField,
-                    placeholder = placeholder?.let { { Text(it) } },
-                    label = null,
-                    trailingIcon = trailingIcon,
-                    singleLine = singleLine,
+    // [T-android-settings-field-selection-menu] The long-press menu is drawn
+    // INSIDE the app window (see [InWindowTextToolbar]) instead of in the
+    // platform's popup window: the platform bar lives in its own window, so
+    // a pointer coming from a PC screen projection never reaches it and the
+    // bar is dismissed before it can be used.
+    val toolbar = remember { InWindowTextToolbar() }
+    var fieldHeight by remember { mutableStateOf(0.dp) }
+    var fieldTopInWindow by remember { mutableStateOf(0.dp) }
+    CompositionLocalProvider(LocalTextToolbar provides toolbar) {
+        Surface(
+            color = containerColor ?: SectionDesign.cardColor(),
+            shape = SectionDesign.CardShape,
+            modifier = modifier.fillMaxWidth(),
+        ) {
+            Box {
+                BasicTextField(
+                    value = fieldValue,
+                    onValueChange = { newValue ->
+                        fieldValue = newValue
+                        if (newValue.text != value) onValueChange(newValue.text)
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // [T-android-settings-ui-md3] #3 standard MD3 single-line text
+                        // field height (56dp) so input rows match the toggle/value rows.
+                        .heightIn(min = SectionDesign.TextFieldMinHeight)
+                        // Anchor for the in-window selection menu.
+                        .onGloballyPositioned { coords ->
+                            fieldHeight = coords.size.height.toDp()
+                            fieldTopInWindow = coords.positionInWindow().y.toDp()
+                        }
+                        .then(fieldModifier),
                     enabled = enabled,
-                    isError = isError,
+                    readOnly = readOnly,
+                    textStyle = mergedTextStyle.copy(color = MaterialTheme.colorScheme.onSurface),
+                    cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                    visualTransformation = visualTransformation,
+                    keyboardOptions = keyboardOptions,
+                    keyboardActions = keyboardActions,
                     interactionSource = interactionSource,
-                    colors = colors,
-                    contentPadding = contentPadding,
-                    container = {
-                        OutlinedTextFieldDefaults.ContainerBox(
+                    singleLine = singleLine,
+                    maxLines = maxLines,
+                    decorationBox = { innerTextField ->
+                        OutlinedTextFieldDefaults.DecorationBox(
+                            value = fieldValue.text,
+                            visualTransformation = visualTransformation,
+                            innerTextField = innerTextField,
+                            placeholder = placeholder?.let { { Text(it) } },
+                            label = null,
+                            trailingIcon = trailingIcon,
+                            singleLine = singleLine,
                             enabled = enabled,
                             isError = isError,
                             interactionSource = interactionSource,
                             colors = colors,
-                            shape = SectionDesign.CardShape,
+                            contentPadding = contentPadding,
+                            container = {
+                                OutlinedTextFieldDefaults.ContainerBox(
+                                    enabled = enabled,
+                                    isError = isError,
+                                    interactionSource = interactionSource,
+                                    colors = colors,
+                                    shape = SectionDesign.CardShape,
+                                )
+                            },
                         )
                     },
                 )
-            },
-        )
+                InWindowTextToolbarHost(toolbar, fieldHeight, fieldTopInWindow)
+            }
+        }
     }
 }

@@ -1413,6 +1413,9 @@
     <string name="selection_read_from_start">从头朗读</string>
     <string name="read_aloud_group">朗读</string>
     <string name="selection_copy">复制</string>
+    <string name="settings_field_menu_cut">剪切</string>
+    <string name="settings_field_menu_paste">粘贴</string>
+    <string name="settings_field_menu_select_all">全选</string>
     <string name="selection_copy_markdown">复制 Markdown</string>
     <string name="selection_copy_rich_text">复制富文本</string>
     <string name="selection_copy_full_markdown">复制完整 Markdown</string>
