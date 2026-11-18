@@ -13,8 +13,8 @@ Shell、浏览器自动化、技能、持久记忆、语音、音乐、计划任
 应用免费且完全开源，采用 GPLv3。
 
 MiniPilot 是 **[OpenMinis](https://github.com/OpenMinis/OpenMinis) 的
-Android 优先分支**。日常开发集中在 Android 线，当前版本为 `1.20-dev`
-（build 51）。iOS 代码仍保留在仓库中并可持续构建；上游正式版见
+Android 优先分支**。日常开发集中在 Android 线，当前版本为 `1.21-dev`
+（build 56）。iOS 代码仍保留在仓库中并可持续构建；上游正式版见
 [openminis.app](https://openminis.app)。
 
 > **兼容性约定** — MiniPilot 保留所有承载用户数据与深链的标识：Android 包名

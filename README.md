@@ -15,7 +15,7 @@ source under GPLv3.
 
 MiniPilot is an **Android-first fork of [OpenMinis](https://github.com/OpenMinis/OpenMinis)**.
 The Android line is where daily development happens — the current build is
-`1.20-dev` (build 51). The iOS app remains in-tree and buildable; upstream
+`1.21-dev` (build 56). The iOS app remains in-tree and buildable; upstream
 releases live at [openminis.app](https://openminis.app).
 
 > **Compatibility contract** — MiniPilot keeps the identifiers that carry user
