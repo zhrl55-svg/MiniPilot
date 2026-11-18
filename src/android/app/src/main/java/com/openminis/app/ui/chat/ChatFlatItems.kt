@@ -480,16 +480,20 @@ internal sealed class FlatChatItem {
     }
 
     /**
-     * [T-port-fold-tools] One folded run of consecutive tool calls: the
+     * [T-port-fold-tools] One folded run of consecutive activity: the
      * "Ran N tools · 9s" row. Its members follow it as ordinary rows only
      * while [expanded]. Inserted by [applyToolFolds] after the build, never by
      * [buildFlatChatItems] itself.
+     *
+     * [T-android-fold-activity] A run may hold thinking blocks too
+     * ([thinkingCount]); with no tool at all the row reads "Deep Thinking ×N".
      */
     data class AssistantToolGroup(
         val messageId: String,
-        /** The run's expanded-state key: its first tool's tool_use id. */
+        /** The run's expanded-state key: its first tool's tool_use id (or first thinking id). */
         val runKey: String,
         val toolCount: Int,
+        val thinkingCount: Int = 0,
         val failedCount: Int,
         val cancelledCount: Int,
         val durationMs: Long?,

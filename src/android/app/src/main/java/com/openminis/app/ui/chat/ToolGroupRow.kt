@@ -35,10 +35,21 @@ import com.openminis.app.ui.util.expandToggleClickable
  * a folded run of tool calls shows as (iOS ToolGroupRowView): 13 sp secondary
  * text, a 28 dp row, the chevron turned down while open, "failed" in red.
  * Tapping toggles the run open or closed in place.
+ *
+ * [T-android-fold-activity] A run may also hold thinking blocks, which are
+ * never counted as tools but do change the title: thinking + tools reads
+ * "Deep Thinking · Ran 3 tools", thinking alone reads "Deep Thinking ×3".
  */
 @Composable
 internal fun ToolGroupRow(item: FlatChatItem.AssistantToolGroup, onToggle: () -> Unit) {
-    val title = stringResource(R.string.tool_fold_ran_n_tools, item.toolCount)
+    val thinkingLabel = stringResource(R.string.chat_thinking_block_title)
+    val toolsLabel = stringResource(R.string.tool_fold_ran_n_tools, item.toolCount)
+    val title = when {
+        item.toolCount > 0 && item.thinkingCount > 0 -> "$thinkingLabel · $toolsLabel"
+        item.toolCount > 0 -> toolsLabel
+        item.thinkingCount > 1 -> "$thinkingLabel ×${item.thinkingCount}"
+        else -> thinkingLabel
+    }
     val failed = stringResource(R.string.tool_fold_n_failed, item.failedCount)
     val cancelled = stringResource(R.string.tool_fold_n_cancelled, item.cancelledCount)
     val duration = item.durationMs?.let(::formatToolDuration)

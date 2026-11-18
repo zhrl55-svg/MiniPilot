@@ -63,6 +63,7 @@ internal fun applyToolFolds(
                     messageId = messageId,
                     runKey = run.key,
                     toolCount = run.group.toolCount,
+                    thinkingCount = run.group.thinkingCount,
                     failedCount = run.group.failedCount,
                     cancelledCount = run.group.cancelledCount,
                     durationMs = run.durationMs,

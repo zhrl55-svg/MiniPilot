@@ -1,41 +1,50 @@
 package com.openminis.app.ui.chat
 
 /**
- * [T-port-fold-tools] Decides which runs of consecutive tool calls in one
- * assistant message the chat list folds into a single "Ran N tools · 9s" row.
- * Pure: it sees only a compact description of each block, so the rule is
- * unit-tested without the list. Port of iOS `ToolFoldPlanner` (b42f64364,
- * 55a66303b, 1b5d69c60, fe1500201, e5651c84f, 2f59b72ee), final state.
+ * [T-port-fold-tools] Decides which runs of consecutive activity in one
+ * assistant message the chat list folds into a single summary row. Pure: it
+ * sees only a compact description of each block, so the rule is unit-tested
+ * without the list. Ported from iOS `ToolFoldPlanner`; see
+ * [T-android-fold-activity] for where Android deliberately diverges.
  *
- * A run starts at the first tool block and continues through
+ * A run starts at the first thinking block or finished tool block and
+ * continues through
  * - more finished tool blocks (counted),
- * - thinking blocks (folded along, not counted),
+ * - thinking blocks (counted as members),
  * - empty text blocks (a text block that has not received content yet),
  * - one-line remarks between tool calls ([Input.NOTE], see [markingNotes]):
  *   folded along, not counted.
  *
- * It ends at a non-empty text block, an info block, a sub agent / user_ask
- * block, or a tool that has not finished. Only a run of at least
- * [MINIMUM_TOOL_COUNT] tools that ends at a NON-EMPTY text block folds. A fold
- * covers the first tool through the last tool (or note) of the run.
+ * It ends at a non-empty text block, an info block, a sub agent / user_ask /
+ * hub block, a tool that has not finished, or the end of the message. A run
+ * containing thinking folds at any size; a run of tools alone needs at least
+ * [MINIMUM_FOLD_MEMBERS]. A lone tool capsule is left as it is.
  *
- * Thinking right before the run's first tool (only empty text between them)
- * folds with the run too. Thinking after the last member stays outside, next
- * to the reply it leads into.
- *
- * A note is also a soft end: when the run is then cut by an unfinished tool, a
- * barrier or the end of the message, the part up to its latest note still
- * folds.
+ * [T-android-fold-activity] iOS only folds a run that ends at a NON-EMPTY text
+ * block — a tool-heavy turn with no prose between its calls stayed fully
+ * unfolded, which on Android filled whole screens with "Deep Thinking" cards
+ * and tool capsules (field report, 2026-11-18: 48 calls + a dozen thinking
+ * blocks, no reply text yet / scrolled up). Android folds a run at ANY of its
+ * ends listed above: a finished stretch of work is folded away while the
+ * unfinished tool and the streaming thinking block stay visible below the
+ * summary row, and a run left without a reply at the end of the message folds
+ * too. Thinking blocks also count as members here instead of merely riding
+ * along, so "thinking + one tool" and thinking-only stretches fold as well.
  */
 object ToolFoldPlanner {
-    /** The minimum number of tool blocks in a run before it folds. */
+    /**
+     * The fewest block rows a message needs before planning at all — a cheap
+     * skip in [ToolFoldController], not the fold rule itself (that is
+     * [MINIMUM_FOLD_MEMBERS]). Counting every block row, thinking included.
+     */
     const val MINIMUM_TOOL_COUNT = 2
 
     /**
-     * The fewest lines a request's reply needs for the end of that request to
-     * fold the tool runs before it.
+     * The fewest tool members a run WITHOUT thinking needs before it folds.
+     * A run that contains any thinking member folds regardless; a lone tool
+     * capsule stays as it is.
      */
-    const val SEPARATOR_MINIMUM_LINES = 2
+    const val MINIMUM_FOLD_MEMBERS = 2
 
     enum class ToolOutcome { UNFINISHED, SUCCEEDED, FAILED, CANCELLED }
 
@@ -54,6 +63,8 @@ object ToolFoldPlanner {
         /** Indices of the folded blocks, first member through last member. */
         val range: IntRange,
         val toolCount: Int,
+        /** Thinking blocks in the run; drawn in the row's title, never counted as tools. */
+        val thinkingCount: Int,
         val failedCount: Int,
         val cancelledCount: Int,
     )
@@ -62,69 +73,62 @@ object ToolFoldPlanner {
         if (!enabled) return emptyList()
         val groups = mutableListOf<Group>()
         var start: Int? = null
-        var leadThinking: Int? = null
         var lastMember = 0
         var tools = 0
+        var thinking = 0
         var failed = 0
         var cancelled = 0
-        var softEnd: Group? = null
 
         fun reset() {
             start = null
-            tools = 0; failed = 0; cancelled = 0
-            softEnd = null
+            tools = 0; thinking = 0; failed = 0; cancelled = 0
         }
-        fun closeAtSoftEnd() {
-            softEnd?.let { if (it.toolCount >= MINIMUM_TOOL_COUNT) groups.add(it) }
+        fun close() {
+            val s = start
+            // [T-android-fold-activity] Any thinking folds, even a lone card
+            // between two barriers — the thinking cards were the largest part
+            // of the reported wall. A run of tools alone still needs
+            // [MINIMUM_FOLD_MEMBERS], so a single tool capsule keeps its pill.
+            if (s != null && (thinking >= 1 || tools >= MINIMUM_FOLD_MEMBERS)) {
+                groups.add(Group(s..lastMember, tools, thinking, failed, cancelled))
+            }
+            reset()
         }
 
         for ((i, block) in blocks.withIndex()) {
             when (block) {
-                is Input.Barrier -> {
-                    closeAtSoftEnd(); reset(); leadThinking = null
-                }
+                is Input.Barrier -> close()
                 is Input.Tool -> {
                     if (block.outcome == ToolOutcome.UNFINISHED) {
-                        closeAtSoftEnd(); reset(); leadThinking = null
+                        // The running call is never folded: it stays visible as
+                        // its own capsule below the row, and the finished work
+                        // before it closes here.
+                        close()
                         continue
                     }
-                    if (start == null) start = leadThinking ?: i
-                    leadThinking = null
+                    if (start == null) start = i
                     lastMember = i
                     tools += 1
                     if (block.outcome == ToolOutcome.FAILED) failed += 1
                     if (block.outcome == ToolOutcome.CANCELLED) cancelled += 1
                 }
                 is Input.Note -> {
-                    // Only after a tool: a remark before the first call is not
-                    // part of any run, and it separates thinking before it
-                    // from the call after it.
-                    val s = start
-                    if (s == null) {
-                        leadThinking = null
-                        continue
-                    }
+                    // Only after a member: a remark before the first one is not
+                    // part of any run.
+                    if (start == null) continue
                     lastMember = i
-                    softEnd = Group(s..i, tools, failed, cancelled)
                 }
-                is Input.Thinking -> if (start == null && leadThinking == null) leadThinking = i
-                is Input.Text -> {
-                    if (block.isEmpty) continue
-                    val s = start
-                    if (s != null && tools >= MINIMUM_TOOL_COUNT) {
-                        groups.add(Group(s..lastMember, tools, failed, cancelled))
-                    }
-                    reset()
-                    leadThinking = null
+                is Input.Thinking -> {
+                    if (start == null) start = i
+                    lastMember = i
+                    thinking += 1
                 }
+                is Input.Text -> if (!block.isEmpty) close()
             }
         }
-        // A run still open here has no reply after it: only its part up to the
-        // latest note folds.
-        closeAtSoftEnd()
+        close()
         return groups
     }
-
     /**
      * Marks the one-line remarks a model writes between tool calls as
      * [Input.NOTE]: a non-empty text is a note when [isSingleLine] holds AND a
@@ -154,32 +158,6 @@ object ToolFoldPlanner {
 
     /** Lines with at least one visible character. */
     fun nonEmptyLineCount(text: String): Int = lines(text).count { line -> line.any { !it.isWhitespace() } }
-
-    /**
-     * Whether a request whose reply text (all its text blocks, joined) is
-     * [requestText] folds the runs before it when it ends.
-     */
-    fun isFoldSeparator(requestText: String): Boolean {
-        var n = 0
-        for (line in lines(requestText)) {
-            if (line.any { !it.isWhitespace() }) {
-                n += 1
-                if (n >= SEPARATOR_MINIMUM_LINES) return true
-            }
-        }
-        return false
-    }
-
-    /**
-     * For a message whose task is still running: how many leading blocks may
-     * be planned - through the last block of the latest separator request; 0
-     * before the first one. Ids no longer in the message are ignored.
-     */
-    fun <ID> foldHorizon(blockIds: List<ID>, separators: Set<ID>): Int {
-        if (separators.isEmpty()) return 0
-        val last = blockIds.indexOfLast { it in separators }
-        return if (last < 0) 0 else last + 1
-    }
 
     /**
      * Whether a run that is due to fold is held back for now because folding
@@ -235,7 +213,8 @@ object ToolFoldPlanner {
     data class FoldedRun(
         /**
          * Expanded-state key: the first TOOL's id (the provider's tool_use
-         * id, which survives a reload), not a leading thinking block's.
+         * id, which survives a reload), or the first thinking block's id when
+         * the run holds no tool at all.
          */
         val key: String,
         val firstBlockId: String,
@@ -259,54 +238,16 @@ object ToolFoldPlanner {
             )
         }
 
-    /**
-     * [T-port-fold-tools] The live message's fold horizon, from its blocks.
-     *
-     * iOS marks a request's end from inside the agent loop. Android derives it
-     * from the blocks the loop has written, which carry the same information:
-     * - a request is the stretch of blocks one LLM call produced. A new one
-     *   starts at the first non-tool block after a tool block (the model
-     *   speaks again only after the previous call's tools returned);
-     * - a request has ended when a later request has started, or when it has
-     *   tool calls and none of them is still streaming its arguments (the LLM
-     *   stream is over; its tools may still be running). A request with no
-     *   tool calls is the final reply, which ends with the task, and then the
-     *   whole message is planned anyway;
-     * - an ended request whose text has [SEPARATOR_MINIMUM_LINES]+ lines is a
-     *   separator, and the horizon runs through its last block.
-     * Text between parallel calls of one request counts as a new request here,
-     * a small difference from iOS that can only make a separator come later.
-     */
-    fun liveHorizon(blocks: List<AssistantBlock>): Int {
-        if (blocks.isEmpty()) return 0
-        val separators = HashSet<String>()
-        var start = 0
-        var i = 0
-        while (start < blocks.size) {
-            // Extend through the non-tool lead-in, then the tool calls.
-            i = start
-            while (i < blocks.size && blocks[i].kind != "tool_use") i++
-            while (i < blocks.size && blocks[i].kind == "tool_use") i++
-            val end = i - 1 // inclusive
-            val request = blocks.subList(start, end + 1)
-            val isLast = i >= blocks.size
-            val tools = request.filter { it.kind == "tool_use" }
-            val ended = !isLast || (tools.isNotEmpty() && tools.none { it.toolStatus == ToolBlockStatus.STREAMING })
-            if (ended) {
-                val text = request.filter { it.kind == "text" }.joinToString("\n") { it.content }
-                if (isFoldSeparator(text)) separators.add(blocks[end].id)
-            }
-            start = i
-        }
-        return foldHorizon(blocks.map { it.id }, separators)
-    }
-
-    /** Runs to fold in [message]: up to its live horizon while it is running, else all of it. */
+    /** Runs to fold in [message]; while it streams, the live tail stays out. */
     fun foldedRuns(message: ChatMessage): List<FoldedRun> {
         val blocks = message.toolBlocks
         if (blocks.isEmpty()) return emptyList()
-        val horizon = if (message.isStreaming) liveHorizon(blocks) else blocks.size
-        if (horizon <= 0) return emptyList()
-        return foldedRuns(if (horizon >= blocks.size) blocks else blocks.subList(0, horizon))
+        // [T-android-fold-activity] The trailing thinking block of a running
+        // turn is still streaming its content, and ThinkingBlock only ever
+        // auto-expands the last block overall — folding it away would hide
+        // the reasoning as it arrives. Everything before it folds.
+        val end = if (message.isStreaming && blocks.last().kind == "thinking") blocks.size - 1 else blocks.size
+        if (end <= 0) return emptyList()
+        return foldedRuns(blocks.subList(0, end))
     }
 }
