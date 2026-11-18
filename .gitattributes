@@ -5,3 +5,8 @@
 # checkout) Git would rewrite them to CRLF, which breaks /bin/sh scripts
 # such as /usr/local/bin/minis-mcp-cli, minis-open and xdg-open.
 src/android/app/src/main/assets/default_mount/** text eol=lf
+
+# Device-side shell scripts under tools/android run under /system/bin/sh on the
+# phone; CRLF breaks them.
+tools/android/*.sh text eol=lf
+tools/android/classes.dex binary
