@@ -5872,10 +5872,10 @@ fun ChatScreen(
                         colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
                             // [T-android-fab-bg-alpha] The scroll buttons sit on
                             // top of the conversation, so their plate reads as
-                            // a solid disc pasted over the text. 90% keeps the
+                            // a solid disc pasted over the text. 96% keeps the
                             // shape while letting the content behind show
                             // through.
-                            containerColor = ChatColors.inputBg.copy(alpha = 0.9f),
+                            containerColor = ChatColors.inputBg.copy(alpha = 0.96f),
                             contentColor = ChatColors.primaryText,
                         ),
                     ) {
@@ -5927,9 +5927,9 @@ fun ChatScreen(
                             .shadow(4.dp, CircleShape)
                             .size(36.dp),
                         colors = androidx.compose.material3.IconButtonDefaults.filledIconButtonColors(
-                            // [T-android-fab-bg-alpha] Same 90% plate as the
+                            // [T-android-fab-bg-alpha] Same 96% plate as the
                             // up-button above.
-                            containerColor = ChatColors.inputBg.copy(alpha = 0.9f),
+                            containerColor = ChatColors.inputBg.copy(alpha = 0.96f),
                             contentColor = ChatColors.primaryText,
                         ),
                     ) {

@@ -460,7 +460,7 @@ private fun CompactSpeaker(
         Box(
             Modifier
                 .size(40.dp)
-                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.92f), CircleShape)
+                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.96f), CircleShape)
                 .border(0.5.dp, Color.Gray.copy(alpha = 0.25f), CircleShape)
                 .pointerInput(muted) {
                     detectTapGestures(
