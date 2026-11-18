@@ -418,10 +418,10 @@ class VoiceStatusOverlay(private val context: Context) {
         const val BALL_SIZE_DP = 40
         const val ICON_SIZE_DP = 28
 
-        /** Green at 85% opacity. */
-        const val COLOR_ACTIVE = 0xD934C759.toInt()
-        const val COLOR_PAUSED = 0xD9FF9F0A.toInt()
-        const val COLOR_ERROR = 0xD9FF453A.toInt()
-        const val COLOR_OFF = 0xD98E8E93.toInt()
+        /** Green at 90% opacity (0xE6 = 230/255). */
+        const val COLOR_ACTIVE = 0xE634C759.toInt()
+        const val COLOR_PAUSED = 0xE6FF9F0A.toInt()
+        const val COLOR_ERROR = 0xE6FF453A.toInt()
+        const val COLOR_OFF = 0xE68E8E93.toInt()
     }
 }
