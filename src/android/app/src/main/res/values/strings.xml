@@ -1533,9 +1533,6 @@
     <string name="read_aloud_group">Read Aloud</string>
     <!-- T-minis-textkit selection menu actions (Copy / Copy Markdown / Copy Rich Text) -->
     <string name="selection_copy">Copy</string>
-    <string name="settings_field_menu_cut">Cut</string>
-    <string name="settings_field_menu_paste">Paste</string>
-    <string name="settings_field_menu_select_all">Select All</string>
     <string name="selection_copy_markdown">Copy Markdown</string>
     <string name="selection_copy_rich_text">Copy Rich Text</string>
     <string name="selection_copy_full_markdown">Copy Full Markdown</string>
