@@ -1561,7 +1561,7 @@ internal fun HelperTranscript(
                 // [T-android-scheduled-task-card] Same card in the read-only
                 // transcript: a scheduled task can fire into a child session.
                 is FlatChatItem.ScheduledTaskCardItem -> ScheduledTaskCard(marker = item.marker)
-                is FlatChatItem.AssistantHeader -> AssistantHeader()
+                is FlatChatItem.AssistantHeader -> AssistantHeader(timeMs = item.timeMs)
                 is FlatChatItem.AssistantText -> StreamingMarkdownText(content = item.block.content, isStreaming = item.isStreaming)
                 // [T-414-usage-tap-band] The band row scope is also what gives
                 // the text its message id here: this transcript passes no shard

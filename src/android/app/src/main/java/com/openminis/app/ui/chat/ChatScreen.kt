@@ -5182,7 +5182,7 @@ fun ChatScreen(
                                 },
                             )
                             } // close UserBubble SideEffect + UserMessageBubble block
-                            is FlatChatItem.AssistantHeader -> AssistantHeader()
+                            is FlatChatItem.AssistantHeader -> AssistantHeader(timeMs = item.timeMs)
                             is FlatChatItem.AssistantText -> BoundsTrackedBlock(
                                 messageId = item.messageId,
                                 slotKey = "text:${item.block.id}",

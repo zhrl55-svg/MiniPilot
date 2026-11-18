@@ -493,6 +493,25 @@ internal fun UserMessageBubble(
                         }
                     }
                 }
+
+                // [T-chat-message-clock] Send time, right-aligned under the
+                // bubble. Queued prompts hide it: nothing has been sent yet, so
+                // a stamp would claim a delivery that has not happened.
+                if (!isQueued) {
+                    val sentAt = message.createdAt
+                    Text(
+                        text = remember(sentAt) {
+                            formatReplyClock(
+                                epochMs = sentAt,
+                                nowMs = System.currentTimeMillis(),
+                                locale = java.util.Locale.getDefault(),
+                            )
+                        },
+                        fontSize = 10.sp,
+                        color = ChatColors.tertiaryText,
+                        modifier = Modifier.padding(end = 4.dp),
+                    )
+                }
             }
 
             // Long-press context menu — anchored to the bubble itself.

@@ -19615,6 +19615,11 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                     ChatTokenUsage.parse(entity.tokenUsage)
                 } else null,
                 completedAt = if (entity.role == "assistant") entity.createdAt else null,
+                // [T-chat-message-clock] The persisted send time. The data
+                // class default would stamp "now" on every reload, so this
+                // override is load-bearing: without it a three-day-old session
+                // would show every bubble at the time it was just opened.
+                createdAt = entity.createdAt,
                 // [T-error-persist-android] Restore the persisted terminal error
                 // so the inline error banner + Retry button survive a reload.
                 // Coalesce a blank value to null: the UI gate is `error?.let`, so
@@ -19668,6 +19673,10 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                         // larger than any single request carried.
                         tokenUsage = msg.tokenUsage ?: prev.tokenUsage,
                         completedAt = msg.completedAt ?: prev.completedAt,
+                        // [T-chat-message-clock] Same rule as `id` / `error`
+                        // above: the merged bubble reports the LAST turn's
+                        // stamp, which is when the visible reply finished.
+                        createdAt = msg.createdAt,
                     )
                 } else {
                     merged.add(msg)

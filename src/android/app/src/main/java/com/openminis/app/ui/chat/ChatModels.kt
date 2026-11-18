@@ -199,6 +199,15 @@ data class ChatMessage(
     // only when usage is present.
     val tokenUsage: ChatTokenUsage? = null,
     val completedAt: Long? = null,
+    // [T-chat-message-clock] Instant this bubble was created, for the small
+    // clock under a user bubble and under the assistant header.
+    //
+    // Default is "now" so every LIVE append path (send, assistant placeholder,
+    // queued prompt, steer) stamps a real send time without touching each call
+    // site. The DB reload path overrides it with the persisted
+    // `entity.createdAt` — without that, every reloaded message would claim it
+    // was sent at the moment the session was opened.
+    val createdAt: Long = System.currentTimeMillis(),
 ) {
     /**
      * [T-bridge-message-ui-leak-android] True when this UI message is the

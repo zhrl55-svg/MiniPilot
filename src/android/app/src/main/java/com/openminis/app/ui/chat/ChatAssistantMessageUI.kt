@@ -280,7 +280,7 @@ import com.openminis.app.ui.components.decorativePhase
 import androidx.compose.ui.draw.drawWithCache
 
 @Composable
-internal fun AssistantHeader() {
+internal fun AssistantHeader(timeMs: Long? = null) {
     // [T-soul-md] Identity header = icon + SOUL.md-driven `name`.
     //
     // [T-android-soul-custom-icon] The icon is now the user-settable
@@ -292,10 +292,15 @@ internal fun AssistantHeader() {
     // two surfaces were written separately and the chat one silently failed
     // to pick up image icons; sharing the renderer makes that class of
     // divergence impossible rather than merely unlikely.
+    //
+    // [T-chat-message-clock] `timeMs` adds a small send-time line directly
+    // under the name. The clock sits in its own line rather than beside the
+    // name so a long custom SOUL name never gets squeezed by it, and it is
+    // indented to start under the name text (18dp glyph + 6dp gap) so the two
+    // read as one block.
     val soulMeta by com.openminis.app.agent.SoulStore.cachedMetadata.collectAsState()
     val displayName = soulMeta.name.ifBlank { com.openminis.app.agent.SoulMetadata.DEFAULT.name }
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
+    Column(
         modifier = Modifier
             // [T-android-user-assistant-spacing-16] top=10 so the
             // User→Assistant boundary reads ~16dp: user-bubble bottom(4) +
@@ -303,25 +308,41 @@ internal fun AssistantHeader() {
             // inside the turn is unaffected (that's this row's bottom=2).
             .padding(top = 10.dp, bottom = 2.dp),
     ) {
-        val sparkleGradient = Brush.linearGradient(
-            colors = listOf(SparkleColor1, SparkleColor2),
-        )
-        // 18.dp, matching the previous Icon exactly: the row height feeds a
-        // measured-height estimate in the message list, so the icon stays
-        // square and same-sized whichever branch renders.
-        com.openminis.app.ui.settings.SoulIconGlyph(
-            icon = soulMeta.icon,
-            sizeDp = 18.dp,
-            emojiSp = 15.sp,
-            sparkleTint = sparkleGradient,
-        )
-        Spacer(modifier = Modifier.width(6.dp))
-        Text(
-            text = displayName,
-            fontSize = 16.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            val sparkleGradient = Brush.linearGradient(
+                colors = listOf(SparkleColor1, SparkleColor2),
+            )
+            // 18.dp, matching the previous Icon exactly: the row height feeds a
+            // measured-height estimate in the message list, so the icon stays
+            // square and same-sized whichever branch renders.
+            com.openminis.app.ui.settings.SoulIconGlyph(
+                icon = soulMeta.icon,
+                sizeDp = 18.dp,
+                emojiSp = 15.sp,
+                sparkleTint = sparkleGradient,
+            )
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = displayName,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        if (timeMs != null) {
+            Text(
+                text = remember(timeMs) {
+                    formatReplyClock(
+                        epochMs = timeMs,
+                        nowMs = System.currentTimeMillis(),
+                        locale = java.util.Locale.getDefault(),
+                    )
+                },
+                fontSize = 10.sp,
+                color = ChatColors.tertiaryText,
+                modifier = Modifier.padding(start = 24.dp, top = 1.dp),
+            )
+        }
     }
 }
 
@@ -465,7 +486,13 @@ internal fun AssistantMessageView(
             .fillMaxWidth()
             .padding(vertical = 2.dp),
     ) {
-        AssistantHeader()
+        AssistantHeader(
+            // [T-chat-message-clock] Same rule as the flat renderer: finished
+            // turns show their completion (or start) stamp, streaming ones show
+            // nothing so the clock never jumps mid-reply.
+            timeMs = if (message.isStreaming) null
+                     else (message.completedAt ?: message.createdAt),
+        )
 
         // Render blocks in original order — text, thinking, and tool calls interleaved
         // exactly as they arrived in the stream (each assistant turn may contain multiple

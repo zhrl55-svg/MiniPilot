@@ -306,7 +306,13 @@ internal sealed class FlatChatItem {
         override fun hashCode(): Int = message.hashCode() * 31 + precededByUser.hashCode()
     }
 
-    data class AssistantHeader(val messageId: String) : FlatChatItem() {
+    data class AssistantHeader(
+        val messageId: String,
+        /** [T-chat-message-clock] Send time for the clock under the name; null
+         *  while the turn is still streaming so the stamp does not jump from
+         *  start to finish mid-reply. */
+        val timeMs: Long? = null,
+    ) : FlatChatItem() {
         override val key = "header:$messageId"
         override val contentType = "header"
     }
@@ -835,7 +841,15 @@ internal fun buildFlatChatItems(
             .firstOrNull { it.role != "system" && !AssistantHeaderRule.isSystemWrittenTurn(it) }
         val isResumeContinuation = prevNonSystem?.role == "assistant"
         if (!isSystem && !isResumeContinuation) {
-            out.add(dedupe(FlatChatItem.AssistantHeader(message.id)))
+            out.add(dedupe(FlatChatItem.AssistantHeader(
+                messageId = message.id,
+                // [T-chat-message-clock] Show the clock only for a finished
+                // turn: `completedAt` is when the reply landed, `createdAt` is
+                // the turn's start. While streaming, show nothing rather than
+                // a stamp that changes when it completes.
+                timeMs = if (message.isStreaming) null
+                         else (message.completedAt ?: message.createdAt),
+            )))
         }
 
         val blocks = message.toolBlocks
