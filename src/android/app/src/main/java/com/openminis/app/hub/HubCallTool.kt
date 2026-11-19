@@ -118,7 +118,7 @@ object HubCallTool {
             }
             return ToolExecutionResult(prefix + "失败：$why", false)
         }
-        val rendered = render(result.body, context)
+        val rendered = render(result.body, context, sessionId)
         // A screenshot is a picture: hand it to the model as an image, not
         // as a path it has to go and read.
         val image = imageBytes(result.body)
@@ -126,7 +126,7 @@ object HubCallTool {
     }
 
     /** The body of a `shell` result reads like a terminal; the rest is JSON. */
-    private fun render(body: JSONObject?, context: Context): String {
+    private fun render(body: JSONObject?, context: Context, sessionId: String): String {
         if (body == null) return "（空结果）"
         if (body.has("stdout") || body.has("exit_code")) {
             val sb = StringBuilder()
@@ -146,7 +146,7 @@ object HubCallTool {
                 // P2.5: the bytes are the point of the action. Write them
                 // where the model can actually reach them and say where —
                 // a character count made `screen` and `file.get` useless.
-                val landed = land(context, body.optString(k), body.optString("mime", "application/octet-stream"))
+                val landed = land(context, sessionId, body.optString(k), body.optString("mime", "application/octet-stream"))
                 if (landed == null) {
                     slim.put(k, "<${body.optString(k).length} base64 字符，未能落盘>")
                 } else {
@@ -175,36 +175,36 @@ object HubCallTool {
     }
 
     /**
-     * Write the payload into the app's external files dir, which the
-     * sandbox can read (the host's /sdcard is mounted there), and return a
-     * description the model can act on.
+     * Write the payload where the sandbox can actually read it.
+     *
+     * The bytes land in the chat session's own offloads directory
+     * (`filesDir/minis-sessions/<sessionId>/offloads`), which PRoot
+     * bind-mounts at `/var/minis/offloads` for that session (see
+     * [com.openminis.app.sandbox.SessionMounts]) — so the model can read
+     * the file back from inside the sandbox at the path we report.
+     *
+     * The external-files-dir copy the old code used had no such mount:
+     * the guest never saw the `hub` subdirectory, so `file.get` handed
+     * the model a "已落盘" message and nothing it could open.
      */
-    private fun land(context: Context, data: String, mime: String): String? {
+    private fun land(context: Context, sessionId: String, data: String, mime: String): String? {
         if (data.isEmpty()) return null
         return try {
-        val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
-        val dir = context.getExternalFilesDir(null) ?: return null
-        val out = java.io.File(dir, "hub")
-        if (!out.exists()) out.mkdirs()
-        val ext = when {
-            mime.contains("png") -> "png"
-            mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
-            mime.contains("json") -> "json"
-            mime.contains("text") -> "txt"
-            else -> "bin"
-        }
-        val file = java.io.File(out, "remote-${System.currentTimeMillis()}.$ext")
-        file.writeBytes(bytes)
-        "已落盘 ${file.length()} 字节：${file.absolutePath}（沙箱内可见：${sandboxPath(file)}）"
+            val bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT)
+            val out = java.io.File(context.filesDir, "minis-sessions/$sessionId/offloads").also { it.mkdirs() }
+            val ext = when {
+                mime.contains("png") -> "png"
+                mime.contains("jpeg") || mime.contains("jpg") -> "jpg"
+                mime.contains("json") -> "json"
+                mime.contains("text") -> "txt"
+                else -> "bin"
+            }
+            val file = java.io.File(out, "remote-${System.currentTimeMillis()}.$ext")
+            file.writeBytes(bytes)
+            "已落盘 ${file.length()} 字节：/var/minis/offloads/${file.name}"
         } catch (e: Exception) {
             null
         }
-    }
-
-    /** The same file as the sandbox sees it (the host's /sdcard is mounted). */
-    private fun sandboxPath(file: java.io.File): String {
-        val external = android.os.Environment.getExternalStorageDirectory()?.absolutePath ?: return file.absolutePath
-        return file.absolutePath.replaceFirst(external, "/mnt/user/0/emulated/0")
     }
 
     /** The decoded picture of a `screen` result, for the model to look at. */
