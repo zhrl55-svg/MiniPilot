@@ -701,13 +701,15 @@ class AnthropicProvider(
                                 put("type", "text")
                                 put("text", part.content)
                             })
-                            if (part.imageData != null && part.imageMimeType != null) {
+                            val imageData = part.imageData
+                            val imageMimeType = part.imageMimeType
+                            if (imageData != null && imageMimeType != null) {
                                 // T-imgsize: belt-and-braces — history tool-result
                                 // screenshots can be raw 12-megapixel PNGs that
                                 // never went through the composer's budget pass.
                                 // Re-encode in-place if a single part already blows
                                 // the per-image cap so we don't 413 on replay.
-                                resultContent.put(imageBlock(part.imageData, part.imageMimeType))
+                                resultContent.put(imageBlock(imageData, imageMimeType))
                             }
                             contentArray.put(JSONObject().apply {
                                 put("type", "tool_result")
@@ -1270,7 +1272,7 @@ class AnthropicProvider(
         if (error is LLMError) return error
         // [T-android-tls-trust-error] A rejected certificate is not a network
         // blip: named, not retried on the same model, explained to the user.
-        com.openminis.app.provider.TlsFailure.toLLMError(error, basePath)?.let { return it }
+        com.openminis.app.data.model.TlsFailure.toLLMError(error, basePath)?.let { return it }
         if (error is java.io.IOException) return LLMError.NetworkError(error)
         return LLMError.Unknown(error)
     }

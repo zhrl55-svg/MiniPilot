@@ -1,5 +1,6 @@
 package com.openminis.app.data.db
 
+import com.openminis.app.data.DatabaseVersionGuard
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -29,7 +30,9 @@ import java.io.File
  */
 class DatabaseVersionGuardTest {
 
-    private val schemaDir = File("schemas/com.openminis.app.data.db.AppDatabase")
+    // [perf 2026-11-19] The exported schema moved with the database into the
+    // :data module (src/android/data/schemas).
+    private val schemaDir = File("../data/schemas/com.openminis.app.data.db.AppDatabase")
 
     private fun exportedVersions(): List<Int> =
         (schemaDir.listFiles { f -> f.extension == "json" } ?: emptyArray())

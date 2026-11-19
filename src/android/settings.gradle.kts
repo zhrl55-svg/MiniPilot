@@ -29,3 +29,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "Minis"
 include(":app")
+// [perf 2026-11-19] The Room layer and its models. Keeping them out of the
+// app module means Room's KSP processor no longer re-analyzes all 875 files
+// on every change.
+include(":data")

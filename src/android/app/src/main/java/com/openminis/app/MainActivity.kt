@@ -242,7 +242,7 @@ class MainActivity : ComponentActivity() {
         // out.
         if (minisApp != null &&
             minisApp.dbVersionDecision ==
-            com.openminis.app.data.db.DatabaseVersionGuard.Decision.SHOW_NEWER_DB_GUIDANCE
+            com.openminis.app.data.DatabaseVersionGuard.Decision.SHOW_NEWER_DB_GUIDANCE
         ) {
             android.util.Log.w("MainActivity", "showing newer-database guidance screen")
             setContent { NewerDatabaseGuidanceScreen(onExit = { finishAndRemoveTask() }) }

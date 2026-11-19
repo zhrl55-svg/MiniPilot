@@ -19444,11 +19444,12 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             // a session reload.
             val restoredAttachmentUris = mutableListOf<Uri>()
 
-            if (entity.role == "assistant" && !entity.reasoningContent.isNullOrEmpty()) {
+            val reasoningContent = entity.reasoningContent
+            if (entity.role == "assistant" && !reasoningContent.isNullOrEmpty()) {
                 blocks.add(AssistantBlock(
                     id = "thinking_restored_${entity.id}",
                     kind = "thinking",
-                    content = entity.reasoningContent,
+                    content = reasoningContent,
                     toolTitle = "Thinking",
                     toolStatus = ToolBlockStatus.SUCCESS,
                 ))

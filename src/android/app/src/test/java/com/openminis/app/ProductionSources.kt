@@ -21,6 +21,14 @@ object ProductionSources {
 
     private const val MAIN_ROOT = "src/main/java/com/openminis/app"
 
+    /**
+     * [perf 2026-11-19] The Room layer and its models moved to the :data
+     * module, so production sources live under two roots now. A path is
+     * relative to com/openminis/app in BOTH, so "data/model/LLMModel.kt"
+     * keeps working for the guards that read it.
+     */
+    private const val DATA_ROOT = "data/src/main/java/com/openminis/app"
+
     /** The `src/main/java/com/openminis/app` directory, or null if not found. */
     fun mainRoot(): File? {
         var dir: File? = File("").absoluteFile
@@ -43,17 +51,39 @@ object ProductionSources {
      * snippets written with `\n`, while a Windows checkout (core.autocrlf)
      * stores CRLF. The repository's canonical form is LF, so this compares
      * against the same text CI sees.
+     *
+     * [perf 2026-11-19] Two roots are searched: the app module's, and the
+     * :data module's (the Room layer moved there). A path is relative to
+     * `com/openminis/app` in BOTH, so `data/model/LLMModel.kt` keeps working
+     * for the guards that read it.
      */
     fun read(relPath: String): String {
-        val root = mainRoot() ?: error("production source root not found from ${File("").absolutePath}")
-        val f = File(root, relPath)
-        require(f.isFile) { "production source missing: ${f.absolutePath}" }
-        return f.readText().replace("\r\n", "\n")
+        for (root in listOfNotNull(mainRoot(), dataMainRoot())) {
+            val f = File(root, relPath)
+            if (f.isFile) return f.readText().replace("\r\n", "\n")
+        }
+        error("production source missing: $relPath (searched ${mainRoot()} and ${dataMainRoot()})")
+    }
+
+    /**
+     * The :data module's main root (`data/src/main/java/com/openminis/app`),
+     * or null if not found.
+     */
+    fun dataMainRoot(): File? {
+        var dir: File? = File("").absoluteFile
+        while (dir != null) {
+            for (candidate in listOf(DATA_ROOT, "src/android/$DATA_ROOT")) {
+                val f = File(dir, candidate)
+                if (f.isDirectory) return f
+            }
+            dir = dir.parentFile
+        }
+        return null
     }
 
     /** Every `.kt` file under `src/main`, for whole-tree symbol scans. */
-    fun allKotlinFiles(): List<File> {
-        val root = mainRoot() ?: error("production source root not found")
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-    }
+    fun allKotlinFiles(): List<File> =
+        listOfNotNull(mainRoot(), dataMainRoot()).flatMap { root ->
+            root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
+        }
 }

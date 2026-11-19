@@ -34,5 +34,5 @@ data class LLMUsage(
      * (com.openminis.app.usage.UsageChunkMerger). Not serialized.
      */
     @kotlinx.serialization.Transient
-    val chunk: com.openminis.app.usage.UsageChunk? = null,
+    val chunk: UsageChunk? = null,
 )

@@ -1,4 +1,4 @@
-package com.openminis.app.data.db
+package com.openminis.app.data
 
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase

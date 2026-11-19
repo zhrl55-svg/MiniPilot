@@ -2,7 +2,8 @@ package com.openminis.app.provider
 
 import com.openminis.app.ProductionSources
 import com.openminis.app.data.model.LLMError
-import com.openminis.app.provider.TlsFailure.Kind
+import com.openminis.app.data.model.TlsFailure
+import com.openminis.app.data.model.TlsFailure.Kind
 import com.openminis.app.ui.chat.ChatViewModel
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse

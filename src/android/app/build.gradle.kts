@@ -5,8 +5,11 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("com.google.devtools.ksp")
 }
+
+// [perf 2026-11-19] No KSP here anymore: the Room layer moved to the :data
+// module (data/build.gradle.kts), so the processor no longer re-analyzes the
+// whole app on every change.
 
 // Build-time customization values that must NOT ship in the public
 // open-source mirror. `provider-customization.properties` is tracked in the PRIVATE
@@ -202,10 +205,11 @@ android {
     // [T-android-downgrade-compat] MigrationTestHelper loads the exported
     // schema JSON from the TEST APK's assets, not from the project directory —
     // without this it fails with "Cannot find the schema file in the assets
-    // folder" no matter that the files exist on disk.
+    // folder" no matter that the files exist on disk. The schema itself now
+    // lives with the module that owns the database (:data/schemas).
     sourceSets {
         getByName("androidTest") {
-            assets.srcDirs("$projectDir/schemas")
+            assets.srcDirs("../data/schemas")
         }
         // perf shares the debug-only assets (debug-server skill bundle).
         getByName("perf") {
@@ -292,9 +296,10 @@ afterEvaluate {
 // downgrade — still produces the schema the entities expect. Without it the
 // migration chain has no automated check and only a real device install can
 // catch a break.
-ksp {
-    arg("room.schemaLocation", "$projectDir/schemas")
-}
+//
+// [perf 2026-11-19] The database moved to the :data module, so the schema
+// output and the KSP argument live there now
+// (data/build.gradle.kts); this app module no longer runs KSP at all.
 
 // [T-bash-on-demand] Keep the shared bashism rule table / test vectors as a
 // SINGLE source of truth (src/shared/bashism) — copy into assets at build
@@ -442,10 +447,12 @@ dependencies {
     // Navigation
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
-    // Room
+    // Room — the database itself lives in the :data module; the runtime is
+    // still declared here because app code (backup import) touches Room types
+    // directly. The compiler (ksp) is not: it runs in :data.
+    implementation(project(":data"))
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
 
     // DataStore
     implementation("androidx.datastore:datastore-preferences:1.1.1")

@@ -150,9 +150,9 @@ class VoiceModalityInferenceGuardTest {
         // other mechanism while deleting the patterns, and the point of this
         // list is that it stays byte-identical to iOS
         // LLMTypes.asrInferencePatterns.
-        val src = File("src/main/java/com/openminis/app/data/model/VoiceModality.kt")
-        assertTrue("missing ${src.absolutePath}", src.exists())
-        val code = src.readText()
+        // [perf 2026-11-19] The file moved into the :data module; read it
+        // through ProductionSources, which searches both source roots.
+        val code = com.openminis.app.ProductionSources.read("data/model/VoiceModality.kt")
             .lineSequence()
             .filterNot { it.trimStart().startsWith("//") || it.trimStart().startsWith("*") }
             .joinToString("\n")

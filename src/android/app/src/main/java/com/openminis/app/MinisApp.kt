@@ -16,7 +16,7 @@ import coil.ImageLoader
 import coil.ImageLoaderFactory
 import com.openminis.app.browser.BrowserTabPool
 import com.openminis.app.data.db.AppDatabase
-import com.openminis.app.data.db.DatabaseVersionGuard
+import com.openminis.app.data.DatabaseVersionGuard
 import com.openminis.app.data.repository.BackgroundSettingsRepository
 import com.openminis.app.data.repository.ChatRepository
 import com.openminis.app.data.repository.EnvVarRepository
@@ -27,6 +27,7 @@ import com.openminis.app.data.repository.WebAppShortcutRepository
 import com.openminis.app.data.repository.MCPRepository
 import com.openminis.app.data.repository.SkillRepository
 import com.openminis.app.notification.BackgroundTaskNotifier
+import com.openminis.app.data.model.TlsFailure
 import com.openminis.app.logging.AppLogger
 import com.openminis.app.network.NetworkMonitor
 import com.openminis.app.offload.OffloadPermissionManager
@@ -258,6 +259,10 @@ class MinisApp : Application(), ImageLoaderFactory {
     @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
     override fun onCreate() {
         super.onCreate()
+        // [perf 2026-11-19] The :data module cannot log through the app's
+        // logger (that would be a cycle), so it takes a sink. Install it
+        // before anything can fail a TLS handshake.
+        com.openminis.app.data.model.TlsFailure.log = { tag, message -> AppLogger.warning(tag, message) }
         // [T-oauth-wait-fgs] Before anything can start an OAuth callback server:
         // gives it a context to keep the process out of the freezer with.
         com.openminis.app.service.OAuthWaitKeepAlive.install(this)
@@ -275,9 +280,9 @@ class MinisApp : Application(), ImageLoaderFactory {
         com.openminis.app.data.model.CertificateErrorText.resolver = { kind, host ->
             getString(
                 when (kind) {
-                    com.openminis.app.provider.TlsFailure.Kind.UNTRUSTED -> R.string.error_tls_untrusted
-                    com.openminis.app.provider.TlsFailure.Kind.EXPIRED_OR_CLOCK -> R.string.error_tls_expired_or_clock
-                    com.openminis.app.provider.TlsFailure.Kind.HOSTNAME_MISMATCH -> R.string.error_tls_hostname_mismatch
+                    TlsFailure.Kind.UNTRUSTED -> R.string.error_tls_untrusted
+                    TlsFailure.Kind.EXPIRED_OR_CLOCK -> R.string.error_tls_expired_or_clock
+                    TlsFailure.Kind.HOSTNAME_MISMATCH -> R.string.error_tls_hostname_mismatch
                 },
                 host,
             )

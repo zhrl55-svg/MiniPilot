@@ -298,7 +298,7 @@ abstract class AppDatabase : RoomDatabase() {
          * does NOT cover renames, drops, type changes, or changes to the
          * MEANING of existing data (Room cannot detect the last one at all).
          * Those need a real reverse migration — or the version pre-check in
-         * [com.openminis.app.data.db.DatabaseVersionGuard], which is the
+         * [com.openminis.app.data.DatabaseVersionGuard], which is the
          * backstop for exactly this case.
          */
         val MIGRATION_12_11 = object : Migration(12, 11) {

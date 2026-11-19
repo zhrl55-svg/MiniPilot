@@ -82,7 +82,7 @@ data class SubAgentDefinition(
     /**
      * [T-android-provider-iso8601-wire] Epoch millis in memory, but
      * serialized as an ISO-8601 string on the wire (see
-     * [com.openminis.app.backup.Iso8601MillisSerializer]). iOS
+     * [com.openminis.app.data.model.Iso8601MillisSerializer]). iOS
      * `SubAgentDefinition.updatedAt` is a `Date`, encoded with
      * `.iso8601` in the backup exporter — a bare Long here made a restore
      * of an iOS-produced provider_config.json fail JSON decoding entirely
@@ -91,7 +91,7 @@ data class SubAgentDefinition(
      * imported=0. The serializer still accepts a legacy plain numeric epoch
      * for old Android-written packages.
      */
-    @kotlinx.serialization.Serializable(with = com.openminis.app.backup.Iso8601MillisSerializer::class)
+    @kotlinx.serialization.Serializable(with = com.openminis.app.data.model.Iso8601MillisSerializer::class)
     var updatedAt: Long = System.currentTimeMillis(),
 ) {
     /**
@@ -102,11 +102,11 @@ data class SubAgentDefinition(
      * because it is the tool-schema enum value the model must emit.
      */
     fun displayName(context: android.content.Context): String =
-        if (isBuiltIn) context.getString(com.openminis.app.R.string.sub_agent_builtin_name) else name
+        if (isBuiltIn) context.getString(com.openminis.app.data.R.string.sub_agent_builtin_name) else name
 
     /** Localized description for the settings screen, mirroring [displayName]. */
     fun displayDescription(context: android.content.Context): String =
-        if (isBuiltIn) context.getString(com.openminis.app.R.string.sub_agent_builtin_description) else description
+        if (isBuiltIn) context.getString(com.openminis.app.data.R.string.sub_agent_builtin_description) else description
 
     /**
      * Field-level clamp applied on load and on save.

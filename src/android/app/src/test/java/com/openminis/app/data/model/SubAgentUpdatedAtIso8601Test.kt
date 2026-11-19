@@ -1,6 +1,6 @@
 package com.openminis.app.data.model
 
-import com.openminis.app.backup.Iso8601MillisSerializer
+import com.openminis.app.data.model.Iso8601MillisSerializer
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue

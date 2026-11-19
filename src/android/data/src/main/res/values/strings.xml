@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The app module keeps its own (translated) copies of these two strings, and an
+  app's resources win over a library's in the merge, so every locale the app
+  translates keeps its wording. The copies here are the fallback for the
+  locales it does not, and they are what the :data module itself compiles
+  against - a library cannot see the app's R class.
+-->
+<resources>
+    <string name="sub_agent_builtin_name">General Sub Agent</string>
+    <string name="sub_agent_builtin_description">Open-ended work that needs its own tool loop: exploring a codebase or the web over many rounds, digesting bulk output into a conclusion, or running independent branches in parallel.</string>
+</resources>

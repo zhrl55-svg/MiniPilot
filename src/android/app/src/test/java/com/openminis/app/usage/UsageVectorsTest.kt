@@ -1,6 +1,7 @@
 package com.openminis.app.usage
 
 import com.openminis.app.data.model.LLMUsage
+import com.openminis.app.data.model.UsageChunk
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals

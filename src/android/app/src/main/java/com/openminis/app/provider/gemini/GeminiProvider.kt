@@ -701,7 +701,7 @@ class GeminiProvider(
         if (error is LLMError) return error
         // [T-android-tls-trust-error] A rejected certificate is not a network
         // blip: named, not retried on the same model, explained to the user.
-        com.openminis.app.provider.TlsFailure.toLLMError(error, basePath)?.let { return it }
+        com.openminis.app.data.model.TlsFailure.toLLMError(error, basePath)?.let { return it }
         if (error is java.io.IOException) return LLMError.NetworkError(error)
         return LLMError.Unknown(error)
     }

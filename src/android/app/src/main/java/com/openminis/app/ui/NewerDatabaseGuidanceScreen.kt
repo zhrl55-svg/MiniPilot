@@ -17,7 +17,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.openminis.app.R
-import com.openminis.app.data.db.DatabaseVersionGuard
+import com.openminis.app.data.DatabaseVersionGuard
 
 /**
  * [T-android-downgrade-compat] Shown when the chat database on disk was

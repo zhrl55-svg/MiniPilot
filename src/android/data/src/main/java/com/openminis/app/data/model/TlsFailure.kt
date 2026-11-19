@@ -1,6 +1,5 @@
-package com.openminis.app.provider
+package com.openminis.app.data.model
 
-import com.openminis.app.data.model.LLMError
 
 /**
  * [T-android-tls-trust-error] Recognises a TLS handshake that failed because the
@@ -19,6 +18,17 @@ import com.openminis.app.data.model.LLMError
  * for a name mismatch) with the real reason underneath.
  */
 object TlsFailure {
+
+    /**
+     * Where the diagnostic goes. The :data module cannot depend on the app's
+     * logger - that would be a cycle - so the app installs the sink at
+     * startup (MinisApp.onCreate); until then the line goes to logcat.
+     */
+    @Volatile
+    var log: (tag: String, message: String) -> Unit = { tag, message ->
+        android.util.Log.w(tag, message)
+    }
+
 
     enum class Kind {
         /**
@@ -64,7 +74,7 @@ object TlsFailure {
         val kind = classify(error) ?: return null
         val host = hostOf(baseUrl)
         val root = generateSequence(error) { it.cause.takeIf { c -> c !== it } }.take(12).last()
-        com.openminis.app.logging.AppLogger.warning(
+        log(
             "TLS",
             "[TLS] certificate rejected host=$host kind=$kind sdk=${android.os.Build.VERSION.SDK_INT} " +
                 "top=${error.javaClass.simpleName}: ${error.message} root=${root.javaClass.simpleName}: ${root.message}",

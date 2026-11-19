@@ -24,7 +24,10 @@ package com.openminis.app.data.model
  * asserts that agreement over every family, so adding a branch to one function
  * and not the other fails there instead of shipping.
  */
-internal fun inferContextWindowTokens(model: LLMModel): Int {
+// [perf 2026-11-19] public, not internal: the app module's unit test
+// (ContextWindowDefaultsTest) checks it from the other module, and internal
+// does not cross a module boundary.
+fun inferContextWindowTokens(model: LLMModel): Int {
     model.contextWindow?.takeIf { it > 0 }?.let { return it }
     val idLower = model.id.lowercase()
 

@@ -72,8 +72,9 @@ class SessionForkManager(
         // Carry over the user's per-session model binding (the "pinned model"
         // override) so duplicating a coding session pinned to GPT-5 stays
         // pinned to GPT-5 in the copy.
-        if (source.modelBinding != null) {
-            chatRepository.updateSessionBinding(new.id, source.modelBinding, source.modelId)
+        val modelBinding = source.modelBinding
+        if (modelBinding != null) {
+            chatRepository.updateSessionBinding(new.id, modelBinding, source.modelId)
         }
         // Carry over the per-session memory toggle. Sessions default
         // memoryEnabled=1, so we only need to push the disabled state through;

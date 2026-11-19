@@ -37,7 +37,7 @@ sealed class LLMError(message: String, cause: Throwable? = null) : Exception(mes
      */
     class CertificateError(
         val host: String,
-        val kind: com.openminis.app.provider.TlsFailure.Kind,
+        val kind: TlsFailure.Kind,
         cause: Throwable,
     ) : LLMError(CertificateErrorText.describe(kind, host) + "\n(${cause.message})", cause)
     class Cancelled : LLMError("Request was cancelled")
@@ -115,22 +115,22 @@ sealed class LLMError(message: String, cause: Throwable? = null) : Exception(mes
  * process that never ran onCreate) the English text below is used.
  */
 object CertificateErrorText {
-    @Volatile var resolver: ((com.openminis.app.provider.TlsFailure.Kind, String) -> String)? = null
+    @Volatile var resolver: ((TlsFailure.Kind, String) -> String)? = null
 
-    fun describe(kind: com.openminis.app.provider.TlsFailure.Kind, host: String): String =
+    fun describe(kind: TlsFailure.Kind, host: String): String =
         runCatching { resolver?.invoke(kind, host) }.getOrNull() ?: english(kind, host)
 
-    fun english(kind: com.openminis.app.provider.TlsFailure.Kind, host: String): String = when (kind) {
-        com.openminis.app.provider.TlsFailure.Kind.UNTRUSTED ->
+    fun english(kind: TlsFailure.Kind, host: String): String = when (kind) {
+        TlsFailure.Kind.UNTRUSTED ->
             "Couldn't verify the security certificate of $host (no trusted root). Common causes: a proxy, VPN " +
                 "or packet-capture app re-signing HTTPS (official model services only trust system certificates), " +
                 "a self-hosted or relay endpoint with a self-signed certificate or a missing intermediate " +
                 "certificate, or a network that intercepts HTTPS. Turn off the capture tool or proxy and retry, " +
                 "or check that endpoint's certificate setup."
-        com.openminis.app.provider.TlsFailure.Kind.EXPIRED_OR_CLOCK ->
+        TlsFailure.Kind.EXPIRED_OR_CLOCK ->
             "The certificate of $host is expired or not yet valid. Check that this phone's date and time are " +
                 "correct (turn on automatic time); if they are, the service's certificate has expired."
-        com.openminis.app.provider.TlsFailure.Kind.HOSTNAME_MISMATCH ->
+        TlsFailure.Kind.HOSTNAME_MISMATCH ->
             "$host answered with a certificate for a different name, so the connection is probably being " +
                 "intercepted (a public Wi-Fi sign-in page, the carrier, or a proxy). Switch networks or turn off " +
                 "the proxy and retry."

@@ -1,5 +1,7 @@
 package com.openminis.app.backup
 
+import com.openminis.app.data.model.Iso8601MillisNullableSerializer
+import com.openminis.app.data.model.Iso8601MillisSerializer
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -29,60 +31,6 @@ import java.util.TimeZone
  * the wire representation moves to a string. Kept in BackupFormat so both the
  * exporter and importer share one definition.
  */
-object Iso8601MillisSerializer : KSerializer<Long> {
-    override val descriptor: SerialDescriptor =
-        PrimitiveSerialDescriptor("Iso8601Millis", PrimitiveKind.STRING)
-
-    private fun fmt() = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply {
-        timeZone = TimeZone.getTimeZone("UTC")
-    }
-
-    override fun serialize(encoder: Encoder, value: Long) {
-        encoder.encodeString(fmt().format(value))
-    }
-
-    override fun deserialize(decoder: Decoder): Long {
-        // Tolerate both a JSON string (ISO-8601) and a JSON number (legacy
-        // epoch millis). Use JsonDecoder to peek at the actual element type so
-        // an old numeric package doesn't throw.
-        val jd = decoder as? JsonDecoder
-            ?: return runCatching { fmt().parse(decoder.decodeString())?.time }.getOrNull() ?: 0L
-        val el = jd.decodeJsonElement()
-        val prim = el as? JsonPrimitive ?: return 0L
-        prim.longOrNull?.let { return it } // legacy numeric epoch millis
-        val s = prim.content
-        return runCatching { fmt().parse(s)?.time }.getOrNull() ?: 0L
-    }
-}
-
-/**
- * [T-android-provider-iso8601-wire] Nullable peer of [Iso8601MillisSerializer]
- * for optional timestamps (e.g. `ModelEntry.userModifiedAt`, which iOS decodes
- * as `Date?`). null round-trips as JSON null; otherwise identical rules —
- * writes ISO-8601, reads ISO strings or legacy epoch-millis numbers.
- */
-object Iso8601MillisNullableSerializer : KSerializer<Long?> {
-    override val descriptor: SerialDescriptor =
-        PrimitiveSerialDescriptor("Iso8601MillisNullable", PrimitiveKind.STRING)
-
-    override fun serialize(encoder: Encoder, value: Long?) {
-        if (value == null) encoder.encodeNull()
-        else Iso8601MillisSerializer.serialize(encoder, value)
-    }
-
-    override fun deserialize(decoder: Decoder): Long? {
-        val jd = decoder as? JsonDecoder ?: return Iso8601MillisSerializer.deserialize(decoder)
-        val el = jd.decodeJsonElement()
-        if (el is kotlinx.serialization.json.JsonNull) return null
-        val prim = el as? JsonPrimitive ?: return null
-        prim.longOrNull?.let { return it }
-        return runCatching {
-            SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
-                .apply { timeZone = TimeZone.getTimeZone("UTC") }
-                .parse(prim.content)?.time
-        }.getOrNull()
-    }
-}
 
 /**
  * On-the-wire types for the `.minisbak` backup package.
