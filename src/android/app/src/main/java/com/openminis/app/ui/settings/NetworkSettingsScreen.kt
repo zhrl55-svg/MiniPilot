@@ -1,6 +1,7 @@
 package com.openminis.app.ui.settings
 
 import android.net.Uri
+import android.text.format.DateUtils
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -68,6 +69,7 @@ import com.openminis.app.network.NetworkRoute
 import com.openminis.app.network.NetworkScope
 import com.openminis.app.network.NetworkSettings
 import com.openminis.app.network.ProxyServer
+import com.openminis.app.network.TailscalePeer
 import com.openminis.app.network.TailscaleStatus
 import com.openminis.app.network.WebViewNetworkProxy
 import com.openminis.app.ui.components.DialogTextField
@@ -278,11 +280,24 @@ fun NetworkSettingsScreen(
                         value = exit?.displayName ?: stringResource(R.string.network_exit_node_none),
                         onClick = { showExitNode = true },
                     )
+                    // [T-002] Count 「可达」 (recent handshake), not the netmap's
+                    // online flag: an off machine stays "online" for hours.
                     SettingsValueRow(
                         title = stringResource(R.string.network_devices),
-                        value = "${ts.peers.count { it.online }}/${ts.peers.size}",
+                        value = "${ts.peers.count { it.reachable() }}/${ts.peers.size}",
                         onClick = { showDevices = true },
                     )
+                    // [T-002] A dial is the only proof a peer cannot be
+                    // reached; when one fails, say why instead of leaving it
+                    // in the log.
+                    ts.lastDialError?.let { e ->
+                        SettingsValueRow(
+                            title = stringResource(R.string.network_last_dial_failed),
+                            subtitle = e.error,
+                            value = e.target.ifEmpty { "—" },
+                            valueColor = MaterialTheme.colorScheme.error,
+                        )
+                    }
                     SettingsRow(title = stringResource(R.string.network_sign_out), onClick = { NetworkHub.logout() })
                 }
                 SettingsRow(
@@ -529,16 +544,28 @@ fun NetworkSettingsScreen(
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     for (p in ts.peers) {
+                        // [T-002] Green = 「可达」 (a handshake in the last five
+                        // minutes on a known path). Everything else is
+                        // 「已注册」: in the netmap, no local evidence that it
+                        // answers - which is what the old green dot, fed by the
+                        // netmap's online flag, claimed for hours after the
+                        // machine went off.
+                        val reachable = p.reachable()
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Box(
                                 Modifier.size(8.dp).background(
-                                    if (p.online) Color(0xFF34C759) else MaterialTheme.colorScheme.outline,
+                                    if (reachable) Color(0xFF34C759) else MaterialTheme.colorScheme.outline,
                                     CircleShape,
                                 ),
                             )
                             Spacer(Modifier.size(10.dp))
                             Column {
                                 Text(p.displayName, style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    peerReachability(p, reachable),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                                 SelectionContainer {
                                     Text(
                                         listOfNotNull(p.ipv4, p.os.ifEmpty { null }).joinToString(" · "),
@@ -773,6 +800,25 @@ private fun AddProviderRoutesSheet(
             }
         }
     }
+}
+
+/**
+ * [T-002] The 「已注册 / 可达」 line under a peer's name: the path in use and
+ * the age of the last handshake when it is reachable, otherwise plain
+ * registered. It never says 「可达」 without local evidence - the netmap's
+ * online flag does not count.
+ */
+@Composable
+private fun peerReachability(p: TailscalePeer, reachable: Boolean): String {
+    val path = when {
+        p.curAddr.isNotEmpty() -> stringResource(R.string.network_peer_direct, p.curAddr)
+        p.relay.isNotEmpty() -> stringResource(R.string.network_peer_relay, p.relay)
+        else -> null
+    }
+    if (!reachable || path == null) return stringResource(R.string.network_peer_registered)
+    if (p.lastHandshake <= 0) return path
+    val handshake = DateUtils.getRelativeTimeSpanString(p.lastHandshake).toString()
+    return stringResource(R.string.network_peer_path_handshake, path, handshake)
 }
 
 @Composable

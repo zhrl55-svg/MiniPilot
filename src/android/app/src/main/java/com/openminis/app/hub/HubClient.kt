@@ -82,9 +82,6 @@ class HubClient(private val listener: Listener) {
         /** C1.5 — `hub_paused` means "wait a minute", not "retry now". */
         private const val PAUSED_RETRY_MS = 60_000L
 
-        /** [F-007] How often the preferred relay is probed while we sit on an alternative. */
-        private const val PREFERRED_PROBE_MS = 30_000L
-
         /** [F-007] The reconnect delay after deliberately switching back to the preferred relay. */
         private const val SWITCH_RETRY_MS = 500L
 
@@ -312,12 +309,23 @@ class HubClient(private val listener: Listener) {
     private fun startPreferredProbe() {
         probeJob?.cancel()
         probeJob = scope.launch {
+            // [T-003] Consecutive failures double the wait, capped at
+            // RelayChoice.PROBE_MAX_MS; the first success (or a return to the
+            // preferred endpoint) puts it back to PROBE_MS. A PC that is off
+            // for hours is then one probe per five minutes, not one every
+            // 30 s.
+            var delayMs = RelayChoice.PROBE_MS
             while (true) {
-                delay(PREFERRED_PROBE_MS)
+                delay(delayMs)
                 if (stopped) return@launch
                 if (state != State.CONNECTED) continue
-                if (!RelayChoice.shouldProbe(urlIndex, urls.size)) continue
-                if (preferredAlive()) {
+                if (!RelayChoice.shouldProbe(urlIndex, urls.size)) {
+                    delayMs = RelayChoice.PROBE_MS
+                    continue
+                }
+                val alive = preferredAlive()
+                delayMs = RelayChoice.nextProbeDelay(alive, delayMs)
+                if (alive) {
                     AppLogger.info(TAG, "preferred relay is back — switching back")
                     switchToPreferred()
                     // [F-007b] Do NOT end the loop after a successful switch.
@@ -329,6 +337,8 @@ class HubClient(private val listener: Listener) {
                     // there indefinitely. Keep probing for the life of the
                     // client; while on the preferred endpoint shouldProbe()
                     // makes every tick a no-op.
+                } else if (delayMs > RelayChoice.PROBE_MS) {
+                    AppLogger.info(TAG, "preferred relay probe backoff: next attempt in ${delayMs / 1000}s")
                 }
             }
         }

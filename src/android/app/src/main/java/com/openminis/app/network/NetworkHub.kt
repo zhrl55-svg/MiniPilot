@@ -18,6 +18,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** The most recent dial through the node that failed, with its reason (T-002). */
+data class TailscaleDialError(val target: String, val error: String, val at: String = "")
+
 /** One Tailscale peer as shown in Settings. */
 data class TailscalePeer(
     val hostName: String,
@@ -27,10 +30,33 @@ data class TailscalePeer(
     val online: Boolean,
     val exitNodeOption: Boolean,
     val exitNode: Boolean,
+    /** Epoch ms of this node's last WireGuard handshake with the peer; 0 = never. */
+    val lastHandshake: Long = 0L,
+    /** Direct UDP path in use ("1.2.3.4:41641"); empty while relayed or idle. */
+    val curAddr: String = "",
+    /** DERP region carrying the traffic while there is no direct path. */
+    val relay: String = "",
+    /** tailscale's own "packets moved in the last two minutes" flag. */
+    val active: Boolean = false,
 ) {
     /** MagicDNS short name, else the host name. */
     val displayName: String get() = dnsName.substringBefore('.').ifEmpty { hostName }
     val ipv4: String? get() = ips.firstOrNull { !it.contains(':') } ?: ips.firstOrNull()
+
+    /**
+     * [T-002] 「可达」 needs local evidence: a handshake fresh enough to prove
+     * this node exchanged packets with the peer, on a known path. [online] is
+     * the control plane's view and stays true for a machine that has been
+     * off for hours (minis-2026-11-19.log: peer=asus "online" the whole time
+     * every dial to it failed), so on its own it only means 「已注册」.
+     */
+    fun reachable(now: Long = System.currentTimeMillis()): Boolean =
+        lastHandshake > 0 && now - lastHandshake <= REACHABLE_MS && (curAddr.isNotEmpty() || relay.isNotEmpty())
+
+    companion object {
+        /** How fresh a handshake must be to count as evidence of reachability. */
+        const val REACHABLE_MS = 5 * 60 * 1000L
+    }
 }
 
 /** Parsed TsStatus, as iOS `TailscaleStatus`. */
@@ -45,6 +71,12 @@ data class TailscaleStatus(
     val error: String? = null,
     /** tailscale's own warnings (ipnstate.Status.Health). */
     val health: List<String> = emptyList(),
+    /** Why the node restarted itself to heal dead UDP (self-heal, T-001). */
+    val autoRestarts: Int = 0,
+    val lastAutoRestart: String? = null,
+    val lastAutoRestartReason: String? = null,
+    /** The most recent failed dial, while it has not been cleared by a success (T-002). */
+    val lastDialError: TailscaleDialError? = null,
 ) {
     val isLoggedIn: Boolean get() = backendState == "Running"
     val needsLogin: Boolean get() = backendState == "NeedsLogin"
@@ -73,6 +105,10 @@ data class TailscaleStatus(
         private fun JSONArray?.strings(): List<String> =
             if (this == null) emptyList() else (0 until length()).map { optString(it) }
 
+        /** RFC3339 -> epoch ms; "" or garbage -> 0 (never). */
+        private fun instantMs(s: String): Long =
+            if (s.isEmpty()) 0L else runCatching { java.time.Instant.parse(s).toEpochMilli() }.getOrDefault(0L)
+
         fun parse(j: JSONObject): TailscaleStatus = TailscaleStatus(
             running = j.optBoolean("running"),
             backendState = j.optString("backendState"),
@@ -82,6 +118,16 @@ data class TailscaleStatus(
             tailnet = j.optString("tailnet"),
             error = j.optString("error").ifEmpty { null },
             health = j.optJSONArray("health").strings(),
+            autoRestarts = j.optInt("autoRestarts"),
+            lastAutoRestart = j.optString("lastAutoRestart").ifEmpty { null },
+            lastAutoRestartReason = j.optString("lastAutoRestartReason").ifEmpty { null },
+            lastDialError = j.optJSONObject("lastDialError")?.let {
+                TailscaleDialError(
+                    target = it.optString("target"),
+                    error = it.optString("error"),
+                    at = it.optString("at"),
+                )
+            }?.takeIf { it.target.isNotEmpty() || it.error.isNotEmpty() },
             peers = j.optJSONArray("peers")?.let { arr ->
                 (0 until arr.length()).mapNotNull { arr.optJSONObject(it) }.map { p ->
                     TailscalePeer(
@@ -92,6 +138,10 @@ data class TailscaleStatus(
                         online = p.optBoolean("online"),
                         exitNodeOption = p.optBoolean("exitNodeOption"),
                         exitNode = p.optBoolean("exitNode"),
+                        lastHandshake = instantMs(p.optString("lastHandshake")),
+                        curAddr = p.optString("curAddr"),
+                        relay = p.optString("relay"),
+                        active = p.optBoolean("active"),
                     )
                 }.sortedWith(compareBy({ !it.online }, { it.displayName.lowercase() }))
             }.orEmpty(),

@@ -30,6 +30,11 @@
     <string name="network_exit_node_privacy_footer">出口节点 DNS：终端查询域名也经过出口节点。关闭时向本机自己的 DNS 服务器查询，它会看到查询的域名和你的真实网络，但只在本机有效的 DNS（VPN App、公司内网的）仍然可用。tailnet 名字始终经 Tailscale 解析。\n无法经出口节点时阻断终端流量：终端里无法经 Tailscale 发出的连接直接失败，而不是从你的真实地址直连出去。</string>
     <string name="network_peer_offline">%1$s（离线）</string>
     <string name="network_devices">设备</string>
+    <string name="network_peer_direct">直连 %1$s</string>
+    <string name="network_peer_relay">中继 %1$s</string>
+    <string name="network_peer_registered">已注册 · 5 分钟内无握手</string>
+    <string name="network_peer_path_handshake">%1$s · 握手于 %2$s</string>
+    <string name="network_last_dial_failed">最近拨号失败</string>
     <string name="network_sign_out">退出登录</string>
     <string name="network_sign_out_clear_ellipsis">退出登录并清除…</string>
     <string name="network_sign_out_clear_title">退出登录并将此设备从 Tailscale 中移除？</string>

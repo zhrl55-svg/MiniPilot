@@ -31,6 +31,11 @@
     <string name="network_exit_node_privacy_footer">Exit Node DNS: the shell looks names up through the exit node too. Off: it asks this device’s own DNS server, which sees the names and your real network, but DNS that only works on this device (a VPN app’s, a company’s) keeps working. Tailnet names always resolve through Tailscale.\nBlock Shell Traffic If Unreachable: a shell connection that cannot go through Tailscale fails instead of going out directly from your real address.</string>
     <string name="network_peer_offline">%1$s (offline)</string>
     <string name="network_devices">Devices</string>
+    <string name="network_peer_direct">Direct %1$s</string>
+    <string name="network_peer_relay">Relay %1$s</string>
+    <string name="network_peer_registered">Registered · no handshake in 5 min</string>
+    <string name="network_peer_path_handshake">%1$s · handshake %2$s</string>
+    <string name="network_last_dial_failed">Last Dial Failed</string>
     <string name="network_sign_out">Sign Out</string>
     <string name="network_sign_out_clear_ellipsis">Sign Out and Clear…</string>
     <string name="network_sign_out_clear_title">Sign out and remove this device from Tailscale?</string>

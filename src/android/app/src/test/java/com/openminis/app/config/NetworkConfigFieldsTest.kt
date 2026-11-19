@@ -148,6 +148,13 @@ class NetworkConfigFieldsTest {
         val nas = ((connectedOut.getValue("devices") as ConfigValue.Arr).value.first() as ConfigValue.Obj).value
         assertEquals("nas", str(nas.getValue("name")))
         assertEquals(ConfigValue.Bool(true), nas["exitNodeOption"])
+        // [T-002] The netmap says online; without a handshake the device is
+        // only 「已注册」, and the config must not call it reachable.
+        assertEquals(ConfigValue.Bool(true), nas["online"])
+        assertEquals(ConfigValue.Bool(false), nas["reachable"])
+        assertEquals("", str(nas.getValue("curAddr")))
+        assertEquals("", str(nas.getValue("relay")))
+        assertEquals("", str(nas.getValue("lastHandshake")))
     }
 
     @Test

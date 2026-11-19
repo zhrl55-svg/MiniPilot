@@ -39,4 +39,24 @@ class RelayChoiceTest {
         assertFalse(RelayChoice.shouldProbe(currentIndex = 0, size = 2))
         assertFalse(RelayChoice.shouldProbe(currentIndex = 0, size = 1))
     }
+
+    /**
+     * [T-003] The probe used to run every 30 s forever, including at a PC
+     * that had been off for hours (105 probes in one log, strictly 35 s
+     * apart, all failures). Consecutive failures now double the interval up
+     * to five minutes, and one answer restores it.
+     */
+    @Test
+    fun `failed probes back off to the cap and a success resets it`() {
+        var d = RelayChoice.PROBE_MS
+        val seen = mutableListOf(d)
+        repeat(6) {
+            d = RelayChoice.nextProbeDelay(alive = false, current = d)
+            seen += d
+        }
+        // 30s, 60s, 120s, 240s, 300s (cap), 300s, 300s
+        assertEquals(listOf(30_000L, 60_000L, 120_000L, 240_000L, 300_000L, 300_000L, 300_000L), seen)
+        assertEquals(RelayChoice.PROBE_MAX_MS, RelayChoice.nextProbeDelay(alive = false, current = 10_000_000L))
+        assertEquals(RelayChoice.PROBE_MS, RelayChoice.nextProbeDelay(alive = true, current = RelayChoice.PROBE_MAX_MS))
+    }
 }

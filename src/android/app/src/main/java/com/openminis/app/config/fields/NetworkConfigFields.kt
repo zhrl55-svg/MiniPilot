@@ -345,6 +345,15 @@ internal object NetworkConfigTailscale {
                             "ips" to ConfigValue.Arr(p.ips.map { ConfigValue.Str(it) }),
                             "os" to ConfigValue.Str(p.os),
                             "online" to ConfigValue.Bool(p.online),
+                            // [T-002] online is the netmap's view; reachable
+                            // is the local evidence (recent handshake on a
+                            // known path).
+                            "reachable" to ConfigValue.Bool(p.reachable()),
+                            "lastHandshake" to ConfigValue.Str(
+                                p.lastHandshake.takeIf { it > 0 }?.let { java.time.Instant.ofEpochMilli(it).toString() }.orEmpty(),
+                            ),
+                            "curAddr" to ConfigValue.Str(p.curAddr),
+                            "relay" to ConfigValue.Str(p.relay),
                             "exitNodeOption" to ConfigValue.Bool(p.exitNodeOption),
                             "exitNode" to ConfigValue.Bool(p.exitNode),
                         ),
@@ -354,6 +363,17 @@ internal object NetworkConfigTailscale {
         )
         if (st.needsLogin) st.authURL?.let { out["loginURL"] = ConfigValue.Str(it) }
         st.error?.takeIf { it.isNotEmpty() }?.let { out["error"] = ConfigValue.Str(it) }
+        // [T-002] Why the last dial failed, so a client sees the same reason
+        // the Settings row shows.
+        st.lastDialError?.let { e ->
+            out["lastDialError"] = ConfigValue.Obj(
+                linkedMapOf(
+                    "target" to ConfigValue.Str(e.target),
+                    "error" to ConfigValue.Str(e.error),
+                    "at" to ConfigValue.Str(e.at),
+                ),
+            )
+        }
         return ConfigValue.Obj(out)
     }
 
