@@ -19,9 +19,9 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import kotlinx.coroutines.launch
-import androidx.compose.material.icons.outlined.Extension
-import androidx.compose.material.icons.outlined.Language
-import androidx.compose.material.icons.outlined.Terminal
+import com.openminis.app.icons.outlined.Extension
+import com.openminis.app.icons.outlined.Language
+import com.openminis.app.icons.outlined.Terminal
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon

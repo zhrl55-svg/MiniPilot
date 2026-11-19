@@ -1,7 +1,7 @@
 package com.openminis.app.ui.components
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.Speed
+import com.openminis.app.icons.outlined.Speed
 import androidx.compose.ui.graphics.vector.VectorGroup
 import androidx.compose.ui.graphics.vector.VectorPath
 import com.openminis.app.ProductionSources

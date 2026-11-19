@@ -3,17 +3,17 @@ package com.openminis.app.ui.chat
 import com.openminis.app.R
 
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.NoteAdd
+import com.openminis.app.icons.automirrored.filled.NoteAdd
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.EditNote
-import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Psychology
+import com.openminis.app.icons.filled.Description
+import com.openminis.app.icons.filled.EditNote
+import com.openminis.app.icons.filled.Groups
+import com.openminis.app.icons.filled.Image
+import com.openminis.app.icons.filled.Language
+import com.openminis.app.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Terminal
-import androidx.compose.material.icons.filled.TrendingUp
+import com.openminis.app.icons.filled.Terminal
+import com.openminis.app.icons.filled.TrendingUp
 import androidx.compose.ui.graphics.Color
 
 // [T-android-split-chat] Pure tool-label / duration / timestamp formatting

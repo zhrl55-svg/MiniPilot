@@ -45,10 +45,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.InsertDriveFile
-import androidx.compose.material.icons.filled.Android
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.Print
+import com.openminis.app.icons.automirrored.filled.InsertDriveFile
+import com.openminis.app.icons.filled.Android
+import com.openminis.app.icons.filled.Download
+import com.openminis.app.icons.filled.Print
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider

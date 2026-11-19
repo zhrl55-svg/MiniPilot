@@ -17,10 +17,10 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.Memory
+import com.openminis.app.icons.filled.DragHandle
+import com.openminis.app.icons.filled.Memory
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.Psychology
+import com.openminis.app.icons.filled.Psychology
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ButtonDefaults

@@ -11,7 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.SystemUpdate
+import com.openminis.app.icons.outlined.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
@@ -23,8 +23,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.material3.Badge
 import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.clickable
-import androidx.compose.material.icons.outlined.Science
-import androidx.compose.material.icons.outlined.Autorenew
+import com.openminis.app.icons.outlined.Science
+import com.openminis.app.icons.outlined.Autorenew
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember

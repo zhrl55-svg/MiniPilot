@@ -396,7 +396,14 @@ dependencies {
     val composeBom = platform("androidx.compose:compose-bom:2025.09.00")
     implementation(composeBom)
     implementation("androidx.compose.material3:material3")
-    implementation("androidx.compose.material:material-icons-extended")
+    // [perf 2026-11-19] NOT material-icons-extended: that artifact is 11,105
+    // classes / 35.7 MB and the app uses 263 of its icons. Those are copied
+    // (Apache 2.0, verbatim sources from material-icons-extended 1.7.8) into
+    // com.openminis.app.icons; core still provides the Icons object, the
+    // materialIcon/materialPath helpers and the 50 icons it ships itself.
+    // Adding a new icon: copy its file from the same sources jar into
+    // com/openminis/app/icons/<variant>/ and import it from there.
+    implementation("androidx.compose.material:material-icons-core")
 
     // [T-android-tablet-split] Adaptive list-detail layout for tablets/large
     // windows. Version pinned explicitly rather than left to the BOM: the

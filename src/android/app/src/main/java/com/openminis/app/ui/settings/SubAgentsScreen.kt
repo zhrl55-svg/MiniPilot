@@ -13,10 +13,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.Groups
+import com.openminis.app.icons.filled.Groups
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Psychology
+import com.openminis.app.icons.filled.Psychology
 import androidx.compose.material3.Icon
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.material3.LocalTextStyle

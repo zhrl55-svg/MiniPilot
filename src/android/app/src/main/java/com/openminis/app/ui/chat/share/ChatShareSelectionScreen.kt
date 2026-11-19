@@ -43,11 +43,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.VerticalAlignBottom
-import androidx.compose.material.icons.outlined.Psychology
+import com.openminis.app.icons.filled.VerticalAlignBottom
+import com.openminis.app.icons.outlined.Psychology
 import androidx.compose.material.icons.outlined.Share
-import androidx.compose.material.icons.outlined.VerticalAlignBottom
-import androidx.compose.material.icons.outlined.Visibility
+import com.openminis.app.icons.outlined.VerticalAlignBottom
+import com.openminis.app.icons.outlined.Visibility
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon

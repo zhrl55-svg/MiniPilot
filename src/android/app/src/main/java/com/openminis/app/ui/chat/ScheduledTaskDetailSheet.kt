@@ -30,11 +30,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.ContentCopy
-import androidx.compose.material.icons.filled.Error
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.outlined.EventBusy
-import androidx.compose.material.icons.outlined.ContentCopy
+import com.openminis.app.icons.filled.ContentCopy
+import com.openminis.app.icons.filled.Error
+import com.openminis.app.icons.filled.Schedule
+import com.openminis.app.icons.outlined.EventBusy
+import com.openminis.app.icons.outlined.ContentCopy
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon

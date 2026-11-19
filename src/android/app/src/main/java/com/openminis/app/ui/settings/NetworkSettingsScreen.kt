@@ -19,11 +19,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
-import androidx.compose.material.icons.outlined.ContentCopy
-import androidx.compose.material.icons.outlined.Key
-import androidx.compose.material.icons.outlined.OpenInBrowser
-import androidx.compose.material.icons.outlined.Restore
-import androidx.compose.material.icons.outlined.Troubleshoot
+import com.openminis.app.icons.outlined.ContentCopy
+import com.openminis.app.icons.outlined.Key
+import com.openminis.app.icons.outlined.OpenInBrowser
+import com.openminis.app.icons.outlined.Restore
+import com.openminis.app.icons.outlined.Troubleshoot
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme

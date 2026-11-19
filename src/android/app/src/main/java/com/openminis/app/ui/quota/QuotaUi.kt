@@ -17,11 +17,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.OpenInNew
-import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Language
-import androidx.compose.material.icons.filled.Memory
+import com.openminis.app.icons.automirrored.filled.OpenInNew
+import com.openminis.app.icons.filled.Group
+import com.openminis.app.icons.filled.Inventory2
+import com.openminis.app.icons.filled.Language
+import com.openminis.app.icons.filled.Memory
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text

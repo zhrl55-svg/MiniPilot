@@ -15,10 +15,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material.icons.filled.Inventory2
-import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.outlined.ChatBubble
-import androidx.compose.material.icons.outlined.Description
+import com.openminis.app.icons.filled.Inventory2
+import com.openminis.app.icons.filled.Link
+import com.openminis.app.icons.outlined.ChatBubble
+import com.openminis.app.icons.outlined.Description
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
