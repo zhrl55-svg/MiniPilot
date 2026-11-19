@@ -1575,6 +1575,9 @@
     <string name="settings_voice_wake_voiceprint_footer">Only wake and answer to your voice. Your first wake word is enrolled as your voiceprint; later wake words must match it. Turning this off forgets it.</string>
     <string name="settings_voice_wake_threshold">Voiceprint threshold</string>
     <string name="settings_voice_wake_threshold_footer">How closely the voice has to match. Raise it to lock out other people, lower it if you are being ignored.</string>
+    <string name="settings_voice_sleep_window">Voice sleep delay</string>
+    <string name="settings_voice_sleep_window_value">%1$d s</string>
+    <string name="settings_voice_sleep_window_footer">How long a voice conversation waits without new speech after you finish talking before going back to standby.</string>
     <string name="voice_wake_acknowledgement">I’m here</string>
     <string name="settings_voice_wake_entry_subtitle">Wake word, voiceprint, floating ball and wake tone</string>
     <string name="settings_voice_wake_entry_footer">MiniPilot listens for the wake word in the background. On a wake it starts listening for your request and answers out loud, without opening the app.</string>

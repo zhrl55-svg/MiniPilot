@@ -1451,6 +1451,9 @@
     <string name="settings_voice_wake_voiceprint_footer">只响应你本人的声音。开启后第一句唤醒词会注册为你的声纹，之后声纹不通过就不会唤醒；关闭则清除已保存的声纹。</string>
     <string name="settings_voice_wake_threshold">声纹阈值</string>
     <string name="settings_voice_wake_threshold_footer">声音要有多接近才算本人。调高可挡住旁人，调低则不容易被误拒。</string>
+    <string name="settings_voice_sleep_window">语音休眠等待时间</string>
+    <string name="settings_voice_sleep_window_value">%1$d 秒</string>
+    <string name="settings_voice_sleep_window_footer">说完话后，多久没有新语音就自动回到待命。</string>
     <string name="voice_wake_acknowledgement">我在</string>
     <string name="settings_voice_wake_entry_subtitle">唤醒词、声纹、悬浮球与提示音</string>
     <string name="settings_voice_wake_entry_footer">MiniPilot 在后台监听唤醒词；命中后不打开 App，直接进入聆听并语音回复。</string>

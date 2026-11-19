@@ -135,6 +135,7 @@ fun BackgroundSettingsScreen(
     val voiceWakeTone by WakeWordSettings.toneEnabled.collectAsState()
     val voiceWakeVoiceprint by WakeWordSettings.voiceprintEnabled.collectAsState()
         val voiceWakeThreshold by WakeWordSettings.voiceprintThreshold.collectAsState()
+    val voiceSleepWindowMs by WakeWordSettings.voiceSleepWindowMs.collectAsState()
 
     var ignoringOptimizations by remember {
         mutableStateOf(PowerOptimizationManager.isIgnoringBatteryOptimizations(context))
@@ -458,6 +459,33 @@ fun BackgroundSettingsScreen(
                 )
                 BgFooter(stringResource(R.string.settings_voice_wake_threshold_footer))
             }
+
+            // How long a voice dialogue waits for speech before going back
+            // to standby. One setting drives both background wake listening
+            // and hold-to-talk; applied live via the StateFlow.
+            Spacer(Modifier.size(8.dp))
+            BgRow(
+                icon = Icons.Outlined.Timer,
+                iconColor = Color(0xFF30B0C7),
+                title = stringResource(R.string.settings_voice_sleep_window),
+                subtitle = stringResource(
+                    R.string.settings_voice_sleep_window_value,
+                    (voiceSleepWindowMs / 1000).toInt(),
+                ),
+                onClick = null,
+            )
+            Slider(
+                value = voiceSleepWindowMs / 1000f,
+                onValueChange = {
+                    WakeWordSettings.setVoiceSleepWindowMs(context, (it * 1000).toLong())
+                },
+                valueRange = (WakeWordSettings.MIN_VOICE_SLEEP_WINDOW_MS / 1000f)..
+                    (WakeWordSettings.MAX_VOICE_SLEEP_WINDOW_MS / 1000f),
+                steps = ((WakeWordSettings.MAX_VOICE_SLEEP_WINDOW_MS -
+                    WakeWordSettings.MIN_VOICE_SLEEP_WINDOW_MS) / 1000).toInt() - 1,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            BgFooter(stringResource(R.string.settings_voice_sleep_window_footer))
 
             // [T-android-dynamic-island] Live Updates / "dynamic island" toggle.
             // Only interactive when the device is capable (Android 16+ with the

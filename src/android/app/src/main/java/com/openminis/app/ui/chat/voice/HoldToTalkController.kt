@@ -12,6 +12,7 @@ import com.openminis.app.speech.wake.WakeAudioCapture
 import com.openminis.app.speech.wake.WakeEnergyVad
 import com.openminis.app.speech.wake.WakeVoiceprintGate
 import com.openminis.app.speech.wake.WakeWordService
+import com.openminis.app.speech.wake.WakeWordSettings
 import com.openminis.app.speech.wake.WavEncoder
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,9 +39,10 @@ import kotlinx.coroutines.withContext
  * AudioRecord.
  *
  * The voiceprint gate decides whether a sentence counts as "the owner
- * talking". Eight seconds without a sentence that passes the gate put the
- * controller back to sleep — a hold that nobody used must not leave the
- * microphone open forever.
+ * talking". The user-configured voice-sleep window (3–30 s, default 8 s,
+ * shared with background wake listening) without a sentence that passes the
+ * gate puts the controller back to sleep — a hold that nobody used must not
+ * leave the microphone open forever.
  */
 class HoldToTalkController(private val context: Context) {
 
@@ -54,7 +56,7 @@ class HoldToTalkController(private val context: Context) {
         /** A sentence passed the voiceprint and is being transcribed. */
         TRANSCRIBING,
 
-        /** Eight seconds passed without an accepted sentence — back to sleep. */
+        /** The voice-sleep window passed without an accepted sentence — back to sleep. */
         SLEEPING,
     }
 
@@ -237,8 +239,9 @@ class HoldToTalkController(private val context: Context) {
                     continue
                 }
                 val reference = maxOf(startedAt, lastAcceptedAt)
-                if (SystemClock.elapsedRealtime() - reference >= LISTEN_WINDOW_MS) {
-                    AppLogger.info(TAG, "${LISTEN_WINDOW_MS / 1000}s 内没有通过声纹的语音，进入休眠")
+                val listenWindowMs = WakeWordSettings.voiceSleepWindowMs.value
+                if (SystemClock.elapsedRealtime() - reference >= listenWindowMs) {
+                    AppLogger.info(TAG, "${listenWindowMs / 1000}s 内没有通过声纹的语音，进入休眠")
                     sleep()
                     return@launch
                 }
@@ -444,9 +447,6 @@ class HoldToTalkController(private val context: Context) {
 
     private companion object {
         const val TAG = "HoldToTalk"
-
-        /** How long a hold may stay open without an accepted sentence. */
-        const val LISTEN_WINDOW_MS = 8_000L
 
         /** 句中自然停顿：超过这个静音才认为这一句说完了。 */
         const val HOLD_SILENCE_MS = 1_200

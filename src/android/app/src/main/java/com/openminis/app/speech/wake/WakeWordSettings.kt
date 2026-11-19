@@ -24,6 +24,7 @@ object WakeWordSettings {
     const val KEY_VOICEPRINT_ENABLED = "voiceprint"
     const val KEY_VOICE_SESSION_ID = "voiceSessionId"
     const val KEY_VOICEPRINT_THRESHOLD = "voiceprintThreshold"
+    const val KEY_VOICE_SLEEP_WINDOW_MS = "voiceSleepWindowMs"
 
     private const val KEY_OVERLAY_X = "overlayX"
     private const val KEY_OVERLAY_Y = "overlayY"
@@ -44,6 +45,14 @@ object WakeWordSettings {
     const val DEFAULT_VOICEPRINT_THRESHOLD = 0.30f
     const val MIN_VOICEPRINT_THRESHOLD = 0.05f
     const val MAX_VOICEPRINT_THRESHOLD = 0.90f
+
+    /**
+     * How long a voice dialogue waits for new speech before going back to
+     * standby — see [voiceSleepWindowMs].
+     */
+    const val DEFAULT_VOICE_SLEEP_WINDOW_MS = 8_000L
+    const val MIN_VOICE_SLEEP_WINDOW_MS = 3_000L
+    const val MAX_VOICE_SLEEP_WINDOW_MS = 30_000L
 
     @Volatile
     private var prefs: SharedPreferences? = null
@@ -88,6 +97,18 @@ object WakeWordSettings {
     private val _voiceprintThreshold = MutableStateFlow(DEFAULT_VOICEPRINT_THRESHOLD)
     val voiceprintThreshold: StateFlow<Float> = _voiceprintThreshold.asStateFlow()
 
+    /**
+     * Silence window before a voice dialogue returns to standby, in ms.
+     *
+     * A SILENCE window, not a speech cap: it is renewed while the VAD reports
+     * speech, so a long uninterrupted request is never cut off mid-sentence.
+     * 8 s is the old hardcoded value; it is user-tunable because a slow
+     * speaker or a big room needs longer than a quick one. The same value
+     * drives background wake listening and hold-to-talk.
+     */
+    private val _voiceSleepWindowMs = MutableStateFlow(DEFAULT_VOICE_SLEEP_WINDOW_MS)
+    val voiceSleepWindowMs: StateFlow<Long> = _voiceSleepWindowMs.asStateFlow()
+
     fun init(context: Context) {
         if (prefs != null) return
         synchronized(this) {
@@ -106,6 +127,9 @@ object WakeWordSettings {
             _voiceprintThreshold.value = p
                 .getFloat(KEY_VOICEPRINT_THRESHOLD, DEFAULT_VOICEPRINT_THRESHOLD)
                 .coerceIn(MIN_VOICEPRINT_THRESHOLD, MAX_VOICEPRINT_THRESHOLD)
+            _voiceSleepWindowMs.value = p
+                .getLong(KEY_VOICE_SLEEP_WINDOW_MS, DEFAULT_VOICE_SLEEP_WINDOW_MS)
+                .coerceIn(MIN_VOICE_SLEEP_WINDOW_MS, MAX_VOICE_SLEEP_WINDOW_MS)
             // Config CLI writes the same keys directly; without this listener
             // the flows would keep their construction-time values.
             p.registerOnSharedPreferenceChangeListener { sp, key ->
@@ -123,6 +147,10 @@ object WakeWordSettings {
                         _voiceprintThreshold.value = sp
                             .getFloat(key, DEFAULT_VOICEPRINT_THRESHOLD)
                             .coerceIn(MIN_VOICEPRINT_THRESHOLD, MAX_VOICEPRINT_THRESHOLD)
+                    KEY_VOICE_SLEEP_WINDOW_MS ->
+                        _voiceSleepWindowMs.value = sp
+                            .getLong(key, DEFAULT_VOICE_SLEEP_WINDOW_MS)
+                            .coerceIn(MIN_VOICE_SLEEP_WINDOW_MS, MAX_VOICE_SLEEP_WINDOW_MS)
                 }
             }
         }
@@ -173,6 +201,13 @@ object WakeWordSettings {
         val clamped = value.coerceIn(MIN_VOICEPRINT_THRESHOLD, MAX_VOICEPRINT_THRESHOLD)
         prefs?.edit()?.putFloat(KEY_VOICEPRINT_THRESHOLD, clamped)?.apply()
         _voiceprintThreshold.value = clamped
+    }
+
+    fun setVoiceSleepWindowMs(context: Context, value: Long) {
+        init(context)
+        val clamped = value.coerceIn(MIN_VOICE_SLEEP_WINDOW_MS, MAX_VOICE_SLEEP_WINDOW_MS)
+        prefs?.edit()?.putLong(KEY_VOICE_SLEEP_WINDOW_MS, clamped)?.apply()
+        _voiceSleepWindowMs.value = clamped
     }
 
     /**

@@ -84,17 +84,6 @@ class WakeWordService : Service() {
         private const val MAX_PENDING_UTTERANCES = 2
 
         /**
-         * How long the assistant keeps listening for the request.
-         *
-         * This is a SILENCE window, not a speech cap: it starts at the wake
-         * hit / after the reply and is renewed while the VAD reports speech,
-         * so a long uninterrupted request is never cut off mid-sentence
-         * ("长语音只进去前半段"). Once the speaker has been quiet for this
-         * long with nothing buffered, the assistant goes back to sleep.
-         */
-        private const val CONVERSATION_WINDOW_MS = 8_000L
-
-        /**
          * [T-voice-request-silence] Quiet time that ends a spoken request.
          *
          * 1.2 s, not the VAD's 600 ms default: people pause inside long
@@ -318,6 +307,20 @@ class WakeWordService : Service() {
     /** When the current listening window runs out. */
     @Volatile
     private var conversationDeadline = 0L
+
+    /**
+     * How long the assistant keeps listening for the request — user-tunable
+     * (3–30 s, default 8 s), read live so a settings change applies to the
+     * next window without restarting the service.
+     *
+     * A SILENCE window, not a speech cap: it starts at the wake hit / after
+     * the reply and is renewed while the VAD reports speech, so a long
+     * uninterrupted request is never cut off mid-sentence ("长语音只进去前半段").
+     * Once the speaker has been quiet for this long with nothing buffered,
+     * the assistant goes back to sleep.
+     */
+    private val conversationWindowMs: Long
+        get() = WakeWordSettings.voiceSleepWindowMs.value
 
     /** Cuts the user's request out of the live microphone stream. */
     private var vad: WakeEnergyVad? = null
@@ -773,7 +776,7 @@ class WakeWordService : Service() {
         // acknowledgement is spoken, no VAD is armed and no listening
         // window starts. An ambient "小派" therefore never becomes a wake.
         conversationState = ConversationState.VERIFYING
-        conversationDeadline = now + CONVERSATION_WINDOW_MS
+        conversationDeadline = now + conversationWindowMs
         // Do not publish WAKING here: on a false hit the overlay and
         // notification must stay on "waiting", exactly as if the phrase
         // had never matched. The score line is the diagnostic signal.
@@ -894,7 +897,7 @@ class WakeWordService : Service() {
     private fun startConversation() {
         if (conversationState != ConversationState.IDLE) return
         conversationState = ConversationState.LISTENING
-        conversationDeadline = SystemClock.elapsedRealtime() + CONVERSATION_WINDOW_MS
+        conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         // [T-music-pause-on-voice] 音乐会被麦克风录进去，也会盖住「我在」和
         // 用户的请求：整段语音对话期间暂停，回到待命时再恢复。
         suspendPlaybackForConversation()
@@ -992,7 +995,7 @@ class WakeWordService : Service() {
         // The listening window starts when the assistant can actually hear
         // the user: the acknowledgement itself is not listening time.
         if (conversationState == ConversationState.LISTENING) {
-            conversationDeadline = ackEndedAt + CONVERSATION_WINDOW_MS
+            conversationDeadline = ackEndedAt + conversationWindowMs
         }
         return spoken
     }
@@ -1193,7 +1196,7 @@ class WakeWordService : Service() {
                 // of the request; this deadline only closes a quiet mic.
                 val detector = vad
                 if (detector?.isInSpeech == true) {
-                    conversationDeadline = now + CONVERSATION_WINDOW_MS
+                    conversationDeadline = now + conversationWindowMs
                 } else if (detector?.flush() == true) {
                     conversationDeadline = now + FLUSH_GRACE_MS
                     AppLogger.info(TAG, "窗口到点，但 VAD 里还有半句，先处理")
@@ -1402,14 +1405,15 @@ class WakeWordService : Service() {
     /**
      * Back to listening.
      *
-     * @param renewWindow when false the original 8 s deadline stands — the
-     *   turn produced nothing, so the conversation must still end there.
+     * @param renewWindow when false the original sleep-window deadline
+     *   stands — the turn produced nothing, so the conversation must still
+     *   end there.
      */
     private fun resumeListening(renewWindow: Boolean) {
         if (conversationState != ConversationState.REPLYING) return
         conversationState = ConversationState.LISTENING
         if (renewWindow) {
-            conversationDeadline = SystemClock.elapsedRealtime() + CONVERSATION_WINDOW_MS
+            conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         }
         installVad()
         publish(VoiceWakePhase.LISTENING, "正在聆听")
