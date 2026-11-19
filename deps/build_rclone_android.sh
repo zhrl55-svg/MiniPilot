@@ -37,6 +37,20 @@ command -v gomobile >/dev/null || {
   echo "  gomobile init" >&2
   exit 1
 }
+# gomobile generates the Java bindings and compiles them with javac, which it
+# looks up on PATH - a JAVA_HOME alone is not enough (the bind died with
+# "javac: executable file not found in %PATH%" on 2026-11-19).
+if [ -n "${JAVA_HOME:-}" ]; then
+  jbin="$JAVA_HOME/bin"
+  # Git Bash needs a POSIX path in PATH: "D:/Android/jdk-17/bin" is not
+  # looked up, "/d/Android/jdk-17/bin" is.
+  if command -v cygpath >/dev/null 2>&1; then
+    jbin="$(cygpath -u "$JAVA_HOME")/bin"
+  fi
+  PATH="$jbin:$PATH"
+  export PATH
+fi
+command -v javac >/dev/null || { echo "error: javac not found (set JAVA_HOME to a JDK)" >&2; exit 1; }
 [ -n "${ANDROID_NDK_HOME:-}${ANDROID_HOME:-}" ] || {
   echo "error: set ANDROID_NDK_HOME (or ANDROID_HOME) first" >&2; exit 1; }
 

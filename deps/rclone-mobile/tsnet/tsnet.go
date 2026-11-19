@@ -34,10 +34,23 @@ import (
 	ts "tailscale.com/tsnet"
 )
 
+// startArgs remembers how the node was started, so the self-heal watchdog
+// (watchdog.go) can bring it back without the app's involvement.
+type startArgs struct {
+	authKey  string
+	hostname string
+	stateDir string
+}
+
 var (
 	mu    sync.Mutex
 	srv   *ts.Server
 	socks net.Listener
+
+	// args is the parameters of the last successful Start; guarded by mu.
+	args startArgs
+	// lastDialErr is the most recent failed tailnet dial; guarded by mu.
+	lastDialErr dialFailureJSON
 
 	logMu   sync.Mutex
 	logSink func(string)
@@ -148,13 +161,8 @@ func Start(authKey, hostname, stateDir string) error {
 	if buildfeatures.HasLogTail && os.Getenv("TS_NO_LOGS_NO_SUPPORT") == "" {
 		os.Setenv("TS_NO_LOGS_NO_SUPPORT", "true")
 	}
-	s := &ts.Server{
-		Hostname: hostname,
-		Dir:      stateDir,
-		AuthKey:  authKey,
-		Logf:     backendLogf,
-		UserLogf: backendLogf,
-	}
+	a := startArgs{authKey: authKey, hostname: hostname, stateDir: stateDir}
+	s := newServer(a)
 	t0 := time.Now()
 	if err := s.Start(); err != nil {
 		s.Close()
@@ -165,10 +173,25 @@ func Start(authKey, hostname, stateDir string) error {
 		return err
 	}
 	srv = s
+	args = a
+	startWatchdogLocked()
 	invalidateRouteCache()
 	logf("[Net][TS] started in %dms hostname=%s authKey=%s", time.Since(t0).Milliseconds(), hostname,
 		map[bool]string{true: "provided", false: "none"}[authKey != ""])
 	return nil
+}
+
+// newServer builds the tsnet.Server for a set of start parameters. Start and
+// the self-heal watchdog both go through it so a restart cannot drift from
+// the original configuration.
+func newServer(a startArgs) *ts.Server {
+	return &ts.Server{
+		Hostname: a.hostname,
+		Dir:      a.stateDir,
+		AuthKey:  a.authKey,
+		Logf:     backendLogf,
+		UserLogf: backendLogf,
+	}
 }
 
 // Stop closes the SOCKS listener (if any) and the node. The state file stays,
@@ -183,6 +206,7 @@ func Stop() error {
 	if srv == nil {
 		return nil
 	}
+	stopWatchdogLocked()
 	err := srv.Close()
 	srv = nil
 	invalidateRouteCache()
@@ -239,9 +263,35 @@ type peerJSON struct {
 	DNSName      string   `json:"dnsName"`
 	OS           string   `json:"os,omitempty"`
 	TailscaleIPs []string `json:"tailscaleIPs"`
-	Online       bool     `json:"online"`
-	ExitNode     bool     `json:"exitNode,omitempty"`
-	ExitOption   bool     `json:"exitNodeOption,omitempty"`
+	// Online is the control plane's view ("connected to the control
+	// plane"), NOT proof that a dial to the peer succeeds: a machine that
+	// has been off for hours stays online in the netmap until control
+	// notices (T-002, minis-2026-11-19.log: peer=asus "online" while every
+	// dial failed). Reachability is judged from LastHandshake / CurAddr /
+	// Relay, or from an actual dial.
+	Online bool `json:"online"`
+	// LastHandshake is this node's last WireGuard handshake with the peer
+	// (RFC3339; empty = never) - the freshest local evidence of
+	// reachability (T-002).
+	LastHandshake string `json:"lastHandshake,omitempty"`
+	// CurAddr is the direct UDP path in use, empty when traffic is relayed
+	// or idle; Relay is the DERP region in that case. CurAddr wins when
+	// both are set.
+	CurAddr string `json:"curAddr,omitempty"`
+	Relay   string `json:"relay,omitempty"`
+	// Active: packets moved to the peer in the last two minutes.
+	Active     bool `json:"active,omitempty"`
+	ExitNode   bool `json:"exitNode,omitempty"`
+	ExitOption bool `json:"exitNodeOption,omitempty"`
+}
+
+// dialFailureJSON is the last failed tailnet dial, shown in the status UI
+// (T-002: a dial is the only thing that proves a peer cannot be reached,
+// and the reason must reach the user instead of only the log).
+type dialFailureJSON struct {
+	At     string `json:"at,omitempty"`
+	Target string `json:"target,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 type statusJSON struct {
@@ -259,14 +309,32 @@ type statusJSON struct {
 	// last login error was: register request: http 410: auth path not
 	// found" - the only place a dead sign-in URL shows.
 	Health []string `json:"health,omitempty"`
+	// Self-heal record (watchdog.go): how many times a dead magicsock
+	// receive goroutine made the node restart itself, when, and why. Set
+	// only once it has happened, so the fields stay absent on a healthy
+	// node.
+	AutoRestarts          int    `json:"autoRestarts,omitempty"`
+	LastAutoRestart       string `json:"lastAutoRestart,omitempty"`
+	LastAutoRestartReason string `json:"lastAutoRestartReason,omitempty"`
+	// LastDialError is the most recent dial through the node that failed,
+	// with its target and reason. A successful dial to the same target
+	// clears it (T-002).
+	LastDialError *dialFailureJSON `json:"lastDialError,omitempty"`
 }
 
 // StatusJSON reports the node state; it never fails, errors go in "error".
 func StatusJSON() string {
 	mu.Lock()
 	s, ln := srv, socks
+	out := statusJSON{Peers: []peerJSON{}, AutoRestarts: autoRestarts, LastAutoRestartReason: lastAutoRestartReason}
+	if !lastAutoRestart.IsZero() {
+		out.LastAutoRestart = lastAutoRestart.Format(time.RFC3339)
+	}
+	if lastDialErr.Target != "" {
+		le := lastDialErr
+		out.LastDialError = &le
+	}
 	mu.Unlock()
-	out := statusJSON{Peers: []peerJSON{}}
 	if s == nil {
 		return marshal(out)
 	}
@@ -301,7 +369,11 @@ func StatusJSON() string {
 	}
 	for _, p := range st.Peer {
 		pj := peerJSON{HostName: p.HostName, DNSName: p.DNSName, OS: p.OS, Online: p.Online,
+			CurAddr: p.CurAddr, Relay: p.Relay, Active: p.Active,
 			ExitNode: p.ExitNode, ExitOption: p.ExitNodeOption, TailscaleIPs: []string{}}
+		if !p.LastHandshake.IsZero() {
+			pj.LastHandshake = p.LastHandshake.Format(time.RFC3339)
+		}
 		for _, ip := range p.TailscaleIPs {
 			pj.TailscaleIPs = append(pj.TailscaleIPs, ip.String())
 		}
@@ -418,10 +490,33 @@ func Dial(ctx context.Context, network, addr string) (net.Conn, error) {
 		return nil, errors.New("tsnet: not started")
 	}
 	c, err := s.Dial(ctx, network, addr)
-	if err != nil || !strings.HasPrefix(network, "udp") {
+	if err != nil {
+		noteDialFailure(addr, err)
 		return c, err
 	}
+	clearDialFailure(addr)
+	if !strings.HasPrefix(network, "udp") {
+		return c, nil
+	}
 	return trackUDP(s, c), nil
+}
+
+// noteDialFailure keeps the last failed dial for the status UI. It never
+// blocks the dial path beyond a mutex.
+func noteDialFailure(addr string, err error) {
+	mu.Lock()
+	lastDialErr = dialFailureJSON{At: time.Now().Format(time.RFC3339), Target: addr, Error: err.Error()}
+	mu.Unlock()
+}
+
+// clearDialFailure drops the record once a dial to the same target works -
+// a single success proves the path the failure was about.
+func clearDialFailure(addr string) {
+	mu.Lock()
+	if lastDialErr.Target == addr {
+		lastDialErr = dialFailureJSON{}
+	}
+	mu.Unlock()
 }
 
 // QueryDNS answers a raw DNS query with the node's own resolver - what
@@ -470,10 +565,12 @@ func ListenSocks(addr string) (string, error) {
 		return "", err
 	}
 	creds := socksJSON{Addr: ln.Addr().String(), Username: "minis", Password: randomHex(16)}
-	s := srv
 	server := &socks5.Server{
-		Logf:     func(string, ...any) {},
-		Dialer:   s.Dial,
+		Logf: func(string, ...any) {},
+		// Package Dial, not s.Dial: it resolves the current node on every
+		// connection, so a self-heal restart (watchdog.go) does not leave
+		// the already-handed-out entry dialing through a closed node.
+		Dialer:   Dial,
 		Username: creds.Username,
 		Password: creds.Password,
 	}
