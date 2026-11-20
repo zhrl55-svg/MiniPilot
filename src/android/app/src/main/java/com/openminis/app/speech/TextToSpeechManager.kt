@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * Manages Android TextToSpeech engine for reading assistant responses aloud.
@@ -265,7 +268,85 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
      * Automatically detects language from text content.
      */
     fun speak(text: String) {
-        if (text.isBlank()) return
+        speakInternal(text)
+    }
+
+    /**
+     * [T-android-speak-wait] Speak and wait until the engine reports the
+     * utterance as finished (or failed).
+     *
+     * The CLI used to answer `status: "speaking"` the moment the utterance
+     * was queued, so a caller had no way to tell "the phone is talking" from
+     * "the phone will talk in a moment" from "the engine swallowed it". The
+     * 2026-11-20 self-diagnosis caught the agent reporting a voice broadcast
+     * as done and the user hearing nothing.
+     */
+    fun speakAndAwait(text: String, timeoutMs: Long): SpeechOutcome {
+        val started = System.currentTimeMillis()
+        val id = speakInternal(text)
+            ?: return SpeechOutcome(
+                completed = false,
+                error = "引擎拒绝了这次朗读请求（speak() 返回失败）",
+                elapsedMs = 0,
+            )
+        val latch = CountDownLatch(1)
+        completionLatches[id] = latch
+        // The engine may have finished before we registered the waiter.
+        // NOTE: Set.remove returns Boolean, so `remove(id) != null` is ALWAYS
+        // true (false != null) — that version released the latch instantly and
+        // made --wait report "completed" in ~8 ms while the phone was still
+        // speaking.
+        if (finishedUtterances.remove(id)) latch.countDown()
+        Log.i(TAG, "wait register id=$id")
+        val deadline = started + timeoutMs
+        var finished = false
+        var via = "timeout"
+        while (System.currentTimeMillis() < deadline) {
+            if (latch.await(100, TimeUnit.MILLISECONDS)) {
+                finished = true
+                via = "latch"
+                break
+            }
+            // [T-android-speak-wait] Belt and braces: once this utterance is
+            // known to have started, the engine going quiet is also a valid
+            // completion even if no second onDone arrives (the Huawei engine
+            // emits one bogus onDone before onStart, which we drop).
+            if (startedUtterances.contains(id) && !isSpeaking.value) {
+                finished = true
+                via = "quiet"
+                break
+            }
+        }
+        Log.i(TAG, "wait id=$id finished=$finished via=$via elapsed=${System.currentTimeMillis() - started}")
+        val error = completionErrors.remove(id)
+        completionLatches.remove(id)
+        finishedUtterances.remove(id)
+        startedUtterances.remove(id)
+        return SpeechOutcome(
+            completed = finished && error == null,
+            error = when {
+                error != null -> error
+                !finished -> "等待朗读结束超时（${timeoutMs}ms）：引擎仍未回报完成，不能确认是否念完"
+                else -> null
+            },
+            elapsedMs = System.currentTimeMillis() - started,
+        )
+    }
+
+    /** Result of [speakAndAwait]. */
+    data class SpeechOutcome(
+        val completed: Boolean,
+        val error: String?,
+        val elapsedMs: Long,
+    )
+
+    /**
+     * The engine-facing call. Returns the utterance id, or null when the
+     * engine rejected the request (which is how a missing language pack
+     * shows up).
+     */
+    private fun speakInternal(text: String): String? {
+        if (text.isBlank()) return null
         if (!isInitialized) {
             // [T-android-tts-silent-blackhole] Engine still binding (or dead).
             // Buffer instead of dropping; onInit replays in order. On a failed
@@ -277,7 +358,7 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
                 }
                 _isSpeaking.value = true
             }
-            return
+            return null
         }
 
         isPaused = false
@@ -296,13 +377,15 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
         // flight and no progress callback ever coming — ReadAloudPlayer's
         // completion poll then spun forever and the whole read-aloud queue
         // wedged for the rest of the process.
-        val rc = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, generateUtteranceId())
+        val utteranceId = generateUtteranceId()
+        val rc = tts?.speak(text, TextToSpeech.QUEUE_FLUSH, params, utteranceId)
         if (rc != TextToSpeech.SUCCESS) {
             Log.w(TAG, "speak rejected by engine (rc=$rc len=${text.length})")
             _isSpeaking.value = false
-            return
+            return null
         }
         _isSpeaking.value = true
+        return utteranceId
     }
 
     /**
@@ -540,14 +623,56 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
 
     private fun generateUtteranceId(): String = UUID.randomUUID().toString()
 
+    /**
+     * [T-android-speak-wait] Waiters parked on a single utterance. The CLI's
+     * `--wait` flag blocks here until the engine reports done/error.
+     */
+    private val completionLatches = ConcurrentHashMap<String, CountDownLatch>()
+
+    /** Utterances that finished before their waiter registered. */
+    private val finishedUtterances = ConcurrentHashMap.newKeySet<String>()
+
+    /**
+     * [T-android-speak-wait] Utterances whose onStart we have seen.
+     *
+     * Observed on the Huawei engine (2026-11-20): `speak()` returns and the
+     * engine fires `onDone` for the NEW utterance id synchronously, before
+     * `onStart`, while the audio only starts later. Accepting that onDone
+     * made `--wait` answer "completed" in ~10 ms while `--status` still
+     * reported `speaking: true`. A completion is therefore only trusted after
+     * the matching onStart; an early onDone is dropped and the caller times
+     * out into `unconfirmed` instead of being told a lie.
+     */
+    private val startedUtterances = ConcurrentHashMap.newKeySet<String>()
+
+    /** Engine-reported failure per utterance, if any. */
+    private val completionErrors = ConcurrentHashMap<String, String>()
+
     private fun createProgressListener(): UtteranceProgressListener =
         object : UtteranceProgressListener() {
 
             override fun onStart(utteranceId: String?) {
+                utteranceId?.let {
+                    startedUtterances.add(it)
+                    Log.i(TAG, "evt start id=$it inst=${System.identityHashCode(this@TextToSpeechManager)} thread=${Thread.currentThread().name}")
+                }
                 _isSpeaking.value = true
             }
 
             override fun onDone(utteranceId: String?) {
+                // [T-android-speak-wait] Release a `--wait` caller — but only
+                // for an utterance we have actually seen start. The Huawei
+                // engine emits a bogus onDone synchronously inside speak()
+                // before onStart; trusting it reported "completed" in ~10 ms
+                // while the phone was still speaking.
+                utteranceId?.let { id ->
+                    val started = startedUtterances.remove(id)
+                    Log.i(TAG, "evt done id=$id started=$started inst=${System.identityHashCode(this@TextToSpeechManager)} thread=${Thread.currentThread().name}")
+                    if (started) {
+                        finishedUtterances.add(id)
+                        completionLatches.remove(id)?.countDown()
+                    }
+                }
                 // [T-android-tts-init-thread] Progress callbacks arrive on a
                 // binder thread. This used to bump pausedAtIndex and read
                 // pendingTexts.size straight from there, while togglePause()
@@ -566,12 +691,22 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
 
             @Deprecated("Deprecated in API level 21")
             override fun onError(utteranceId: String?) {
-                Log.e(TAG, "TTS error for utterance: $utteranceId")
+                Log.e(TAG, "evt error id=$utteranceId code=none")
+                utteranceId?.let { id ->
+                    completionErrors[id] = "朗读出错（引擎未给出错误码）"
+                    finishedUtterances.add(id)
+                    completionLatches.remove(id)?.countDown()
+                }
                 _isSpeaking.value = false
             }
 
             override fun onError(utteranceId: String?, errorCode: Int) {
-                Log.e(TAG, "TTS error for utterance $utteranceId, code: $errorCode")
+                Log.e(TAG, "evt error id=$utteranceId code=$errorCode")
+                utteranceId?.let { id ->
+                    completionErrors[id] = "朗读出错（引擎错误码 $errorCode）"
+                    finishedUtterances.add(id)
+                    completionLatches.remove(id)?.countDown()
+                }
                 _isSpeaking.value = false
             }
         }

@@ -569,6 +569,15 @@ class SessionsOffloadHandler(
         ): JSONObject {
             val (lastAssistant, tool) = com.openminis.app.agent.jobs.SubAgentTerminationRules.lastActivity(rows)
             val lastMessage = lastAssistant.ifEmpty { session.lastMessage.orEmpty() }
+            // [T-sessions-cli-preview-only] `updated_at` is ALSO bumped by the
+            // live preview path (updateSessionPreview writes the preview and
+            // the timestamp but no message row), so a session can look active
+            // today while its last stored turn is days old. The 2026-11-20
+            // self-diagnosis hit exactly that and could not tell "the work
+            // happened but was never persisted" from "only a preview was
+            // written". Say which one it is.
+            val lastStoredAt = rows.maxOfOrNull { it.createdAt } ?: 0L
+            val previewOnly = lastStoredAt > 0L && session.updatedAt > lastStoredAt
             val data = JSONObject()
                 .put("session_id", session.id)
                 .put("title", session.title.orEmpty())
@@ -579,6 +588,11 @@ class SessionsOffloadHandler(
                 .put("updated_at", DATE_FMT.format(Date(session.updatedAt)))
                 .put("group", group)
                 .put("icon", session.category.orEmpty())
+                .put(
+                    "last_message_at",
+                    if (lastStoredAt > 0L) DATE_FMT.format(Date(lastStoredAt)) else JSONObject.NULL,
+                )
+                .put("preview_only", previewOnly)
             tool?.let {
                 if (it.status.isNotEmpty()) data.put("last_tool_status", it.status)
                 if (it.summary.isNotEmpty()) data.put("last_tool_result", it.summary)
@@ -690,7 +704,10 @@ OUTPUT (search):
 OUTPUT (status):
   session_id, title, model_name, is_running, last_message, last_tool,
   updated_at, group, icon; when known: last_tool_status (success|failed|cancelled|running),
-  last_tool_result (one-line summary), parent_session_id. Sub agent sessions
+  last_tool_result (one-line summary), parent_session_id, last_message_at
+  (timestamp of the last STORED message), preview_only (true when updated_at
+  is newer than the last stored message — the activity was a live preview,
+  not a persisted turn). Sub agent sessions
   also carry termination_reason (running|completed|timeout|tool_error|
   cancelled|interrupted|model_error), termination_detail, last_tool_name,
   partial_output_available, closing_attempted, delivery_state

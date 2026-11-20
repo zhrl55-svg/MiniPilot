@@ -72,14 +72,54 @@ struct BrowserActionInput {
     }
 
     static func parse(from json: String) -> BrowserActionInput? {
-        guard let data = json.data(using: .utf8),
-              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let actionStr = dict["action"] as? String,
-              let action = BrowserAction(rawValue: actionStr) else {
-            return nil
+        switch parseDetailed(from: json) {
+        case .ok(let input): return input
+        case .invalid: return nil
+        }
+    }
+
+    /// [T-ios-browser-field-errors] Field-level parse diagnostics, mirroring
+    /// Android's BrowserActionInput.parseDetailed. A bare "Invalid browser_use
+    /// input" names no field, so the model cannot correct the call — the
+    /// 2026-11-20 self-diagnosis caught exactly that after a gateway left
+    /// `<arg_key:…>` template markers inside the action value.
+    enum ParseOutcome {
+        case ok(BrowserActionInput)
+        case invalid(String)
+    }
+
+    private static let templateMarker = try? NSRegularExpression(
+        pattern: "</?arg_(?:key|value)(?::[0-9a-fA-F]{4,})?>"
+    )
+
+    static func parseDetailed(from json: String) -> ParseOutcome {
+        if let marker = templateMarker?.firstMatch(
+            in: json,
+            range: NSRange(json.startIndex..<json.endIndex, in: json)
+        ).map({ (json as NSString).substring(with: $0.range) }) {
+            return .invalid("参数里混入了模板占位标记（\(marker)）：相邻参数被拼进了同一个值。请把每个参数写进各自的字段——action 只写动作名（如 get_backbone），其余数值/文本参数分别放到 max_depth、url、selector 等对应字段。")
         }
 
-        return BrowserActionInput(
+        guard let data = json.data(using: .utf8),
+              let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return .invalid("参数不是合法 JSON")
+        }
+        guard let actionStr = dict["action"] as? String,
+              !actionStr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .invalid("缺少 action 字段（可选值：\(BrowserAction.allCases.map(\.rawValue).joined(separator: ", "))）")
+        }
+        guard let action = BrowserAction(rawValue: actionStr) else {
+            return .invalid("未知 action \"\(actionStr)\"（可选值：\(BrowserAction.allCases.map(\.rawValue).joined(separator: ", "))）")
+        }
+
+        guard let input = build(from: dict, action: action) else {
+            return .invalid("参数解析失败")
+        }
+        return .ok(input)
+    }
+
+    private static func build(from dict: [String: Any], action: BrowserAction) -> BrowserActionInput? {
+        BrowserActionInput(
             action: action,
             url: dict["url"] as? String,
             selector: dict["selector"] as? String,

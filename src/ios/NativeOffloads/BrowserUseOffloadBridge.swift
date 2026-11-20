@@ -196,9 +196,14 @@ import Foundation
             return 0
         }
 
-        guard let input = BrowserActionInput.parse(from: json) else {
+        // [T-ios-browser-field-errors] Name the offending field instead of a
+        // bare "Invalid browser_use input".
+        let parsed = BrowserActionInput.parseDetailed(from: json)
+        guard case .ok(let input) = parsed else {
+            let reason: String
+            if case .invalid(let why) = parsed { reason = why } else { reason = "参数不合法" }
             completion([
-                "text": "Error: Invalid browser_use input. Required: 'action' parameter.",
+                "text": "Error: Invalid browser_use input — \(reason)",
                 "success": false,
             ] as NSDictionary)
             return 0

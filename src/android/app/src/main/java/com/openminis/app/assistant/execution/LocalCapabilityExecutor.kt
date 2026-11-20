@@ -627,8 +627,20 @@ class LocalCapabilityExecutor(private val context: Context) {
     ): NativeOffloadResult {
         return when (action) {
             "create" -> {
-                val prompt = args.optString("prompt")
-                if (prompt.isBlank()) return NativeOffloadResult(2, "定时任务内容为空。")
+                val rawPrompt = args.optString("prompt")
+                if (rawPrompt.isBlank()) return NativeOffloadResult(2, "定时任务内容为空。")
+                // [T-android-cjk-punct-repair] The model/provider's tool-call
+                // template rewrites full-width Chinese punctuation into ASCII
+                // and can drop whole spans of the text on the way here: a
+                // request to "每天晚上7点半，检查壁挂炉水压" was stored as
+                // ", ,检查壁挂炉水压," with the first segment gone (observed
+                // 2026-11-20). Restore the punctuation we can restore, and
+                // tell the caller when the text looks damaged — the agent
+                // can then re-create the task instead of reporting a wrong
+                // schedule as done.
+                val prompt = repairCjkPunctuation(rawPrompt)
+                val label = repairCjkPunctuation(args.optString("label", prompt.take(40)))
+                val damage = detectDamagedText(rawPrompt)
                 val at = args.optString("at")
                 val after = args.optLong("after", 0L)
                 if (at.isBlank() && after <= 0L) return NativeOffloadResult(2, "需要指定定时任务时间。")
@@ -638,7 +650,7 @@ class LocalCapabilityExecutor(private val context: Context) {
                 val repeat = args.optString("repeat", "ONCE")
                 val task = if (after > 0L) {
                     ScheduledTask(
-                        label = args.optString("label", prompt.take(40)),
+                        label = label,
                         timeOfDayHour = LocalDateTime.now().hour,
                         timeOfDayMinute = LocalDateTime.now().minute,
                         repeatMode = ScheduledRepeatMode.ONCE,
@@ -653,7 +665,7 @@ class LocalCapabilityExecutor(private val context: Context) {
                 } else {
                     val dt = dateTime ?: return NativeOffloadResult(2, "无法解析定时任务时间。")
                     ScheduledTask(
-                        label = args.optString("label", prompt.take(40)),
+                        label = label,
                         timeOfDayHour = dt.hour,
                         timeOfDayMinute = dt.minute,
                         repeatMode = when (repeat) {
@@ -672,14 +684,19 @@ class LocalCapabilityExecutor(private val context: Context) {
                     )
                 }
                 val created = scheduled.create(task)
-                NativeOffloadResult(
-                    0,
-                    JSONObject()
-                        .put("created", true)
-                        .put("id", created.id)
-                        .put("label", created.label)
-                        .toString(2),
-                )
+                val receipt = JSONObject()
+                    .put("created", true)
+                    .put("id", created.id)
+                    .put("label", created.label)
+                if (damage != null) {
+                    // [T-android-cjk-punct-repair] Say the stored text looks
+                    // damaged instead of silently storing it. The agent can
+                    // delete and re-create the task; the user would otherwise
+                    // get a schedule that quietly says something else.
+                    receipt.put("warning", damage)
+                        .put("stored_prompt", created.prompt)
+                }
+                NativeOffloadResult(0, receipt.toString(2))
             }
             "list" -> {
                 val arr = JSONArray()
@@ -1174,4 +1191,59 @@ internal fun musicPlaybackText(title: String, artist: String?, understood: Strin
     }
     val aside = SpeechAside.wrap(understood)
     return if (aside.isBlank()) head else "$head\n$aside"
+}
+
+/**
+ * [T-android-cjk-punct-repair] Restore full-width Chinese punctuation that
+ * the provider's tool-call template flattened to ASCII.
+ *
+ * Only punctuation sitting BETWEEN two CJK characters is rewritten — an ASCII
+ * comma inside a path, a URL, a JSON blob or a shell command must stay
+ * ASCII. The observed damage (2026-11-20) was exactly this: "，真实执行：" and
+ * "、" arrived as "," and ":".
+ */
+internal fun repairCjkPunctuation(text: String): String {
+    if (text.isEmpty() || text.none { it.isCjkChar() }) return text
+    val out = StringBuilder(text.length)
+    for (i in text.indices) {
+        val c = text[i]
+        val replacement = when (c) {
+            ',' -> if (text.cjkNeighbours(i)) '，' else c
+            ':' -> if (text.cjkNeighbours(i)) '：' else c
+            ';' -> if (text.cjkNeighbours(i)) '；' else c
+            else -> c
+        }
+        out.append(replacement)
+    }
+    return out.toString()
+}
+
+/**
+ * [T-android-cjk-punct-repair] Detect text that lost a chunk on the way
+ * here. Only strong signals count — a leading separator or two separators
+ * in a row mean an empty segment, i.e. words that vanished. A rewritten
+ * full-width comma is NOT reported: that one is repaired silently.
+ */
+internal fun detectDamagedText(text: String): String? {
+    val signals = mutableListOf<String>()
+    if (Regex("(?:[,，]\\s*){2,}").containsMatchIn(text)) {
+        signals.add("出现了连续的分隔符，中间有一段是空的")
+    }
+    val trimmedStart = text.trimStart()
+    if (trimmedStart.startsWith(",") || trimmedStart.startsWith("，")) {
+        signals.add("开头就是一个分隔符，开头的文字可能丢了")
+    }
+    if (signals.isEmpty()) return null
+    return "落库的定时任务文本疑似在传输中被改写（${signals.joinToString("；")}）。" +
+        "请用 minis-scheduled list 回读落库内容并与用户原话核对；不一致就删掉重建并如实说明。"
+}
+
+private fun Char.isCjkChar(): Boolean =
+    this in '一'..'鿿' || this in '㐀'..'䶿' || this in '豈'..'﫿'
+
+/** True when the characters on both sides of [index] are CJK. */
+private fun String.cjkNeighbours(index: Int): Boolean {
+    val before = getOrNull(index - 1) ?: return false
+    val after = getOrNull(index + 1) ?: return false
+    return before.isCjkChar() && after.isCjkChar()
 }

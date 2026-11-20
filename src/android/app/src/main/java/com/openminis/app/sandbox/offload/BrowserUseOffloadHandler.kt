@@ -88,10 +88,17 @@ class BrowserUseOffloadHandler(private val app: MinisApp) : NativeOffloadHandler
                 compact = compact, quiet = quiet, exit = 2)
         }
 
-        val input = BrowserActionInput.parse(inputJson.toString())
-            ?: return emitError(action = "execute", code = ERR_INVALID_ARGS,
-                message = "Invalid browser_use input. Required: 'action' (one of ${BrowserAction.allValues.joinToString(", ")})",
-                compact = compact, quiet = quiet, exit = 2)
+        // [T-android-browser-field-errors] Name the offending field instead of
+        // a bare "Invalid browser_use input".
+        val parsed = BrowserActionInput.parseDetailed(inputJson.toString())
+        val input = when (val result = parsed) {
+            is BrowserActionInput.ParseResult.Ok -> result.input
+            is BrowserActionInput.ParseResult.Invalid -> return emitError(
+                action = "execute", code = ERR_INVALID_ARGS,
+                message = result.reason,
+                compact = compact, quiet = quiet, exit = 2,
+            )
+        }
 
         val actionName = input.action.value
 

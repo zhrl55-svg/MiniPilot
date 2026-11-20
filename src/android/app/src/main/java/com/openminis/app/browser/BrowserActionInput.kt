@@ -46,14 +46,65 @@ data class BrowserActionInput(
      */
     val cookies: List<Map<String, Any?>>? = null,
 ) {
-    companion object {
-        fun parse(json: String): BrowserActionInput? {
-            return try {
-                val obj = JSONObject(json)
-                val actionStr = obj.optString("action", "")
-                val action = BrowserAction.fromString(actionStr) ?: return null
+    /**
+     * [T-android-browser-field-errors] Field-level parse result.
+     *
+     * The 2026-11-20 self-diagnosis caught a browser_use call whose
+     * `action` value had a neighbouring parameter glued into it
+     * (`get_backbone<arg_key:6124c78e>max_depth</arg_key>...4`). The tool
+     * answered "Invalid browser_use input" — which names no field, so the
+     * model could not tell what to fix and fell back to screenshot /
+     * execute_js. The error now says which field is wrong and what the
+     * correct shape is.
+     */
+    sealed interface ParseResult {
+        data class Ok(val input: BrowserActionInput) : ParseResult
+        data class Invalid(val reason: String) : ParseResult
+    }
 
-                BrowserActionInput(
+    companion object {
+        /** Template placeholders a model gateway can leave inside a value. */
+        private val TEMPLATE_MARKER =
+            Regex("</?arg_(?:key|value)(?::[0-9a-fA-F]{4,})?>")
+
+        fun parse(json: String): BrowserActionInput? =
+            when (val r = parseDetailed(json)) {
+                is ParseResult.Ok -> r.input
+                is ParseResult.Invalid -> null
+            }
+
+        fun parseDetailed(json: String): ParseResult {
+            val obj = try {
+                JSONObject(json)
+            } catch (e: Exception) {
+                return ParseResult.Invalid("参数不是合法 JSON：${e.message ?: "无法解析"}")
+            }
+
+            // A gateway that expands tool-call templates can leave the markers
+            // inside the payload; catch that before anything else, because
+            // the symptom otherwise looks like "unknown action".
+            TEMPLATE_MARKER.find(json)?.let { marker ->
+                return ParseResult.Invalid(
+                    "参数里混入了模板占位标记（${marker.value}）：相邻参数被拼进了同一个值。" +
+                        "请把每个参数写进各自的字段——action 只写动作名（如 get_backbone），" +
+                        "其余数值/文本参数分别放到 max_depth、url、selector 等对应字段。",
+                )
+            }
+
+            val actionStr = obj.optString("action", "").trim()
+            if (actionStr.isEmpty()) {
+                return ParseResult.Invalid(
+                    "缺少 action 字段（可选值：${BrowserAction.allValues.joinToString(", ")}）",
+                )
+            }
+            val action = BrowserAction.fromString(actionStr)
+                ?: return ParseResult.Invalid(
+                    "未知 action \"$actionStr\"（可选值：${BrowserAction.allValues.joinToString(", ")}）",
+                )
+
+            return try {
+                ParseResult.Ok(
+                    BrowserActionInput(
                     action = action,
                     url = obj.optString("url").ifEmpty { null },
                     selector = obj.optString("selector").ifEmpty { null },
@@ -80,9 +131,10 @@ data class BrowserActionInput(
                     timeoutMs = if (obj.has("timeout")) obj.optInt("timeout") else null,
                     fullPage = obj.optBoolean("full_page", false),
                     cookies = parseCookies(obj),
+                    ),
                 )
-            } catch (_: Exception) {
-                null
+            } catch (e: Exception) {
+                ParseResult.Invalid("参数解析失败：${e.message ?: e.javaClass.simpleName}")
             }
         }
 

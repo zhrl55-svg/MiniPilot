@@ -107,7 +107,7 @@ object NewsSearchTool {
         return when (range) {
             "24h" -> {
                 val day = fetchFeed(query, "1d")
-                if (!day.ok) return unavailable()
+                if (!day.ok) return unavailable(day.error)
                 val items = within(day.items, dayStart, now).take(limit)
                 if (items.isEmpty()) {
                     val message = "最近 24 小时没有找到“$query”的新闻。可以换个关键词再搜。"
@@ -123,7 +123,7 @@ object NewsSearchTool {
 
             "7d" -> {
                 val week = fetchFeed(query, "7d")
-                if (!week.ok) return unavailable()
+                if (!week.ok) return unavailable(week.error)
                 val items = within(week.items, weekStart, now).take(limit)
                 if (items.isEmpty()) {
                     val message = "最近 7 天没有找到“$query”的新闻。可以换个关键词再搜。"
@@ -162,7 +162,7 @@ object NewsSearchTool {
         val week = fetchFeed(query, "7d")
         if (!week.ok) {
             return when {
-                !day.ok -> unavailable()
+                !day.ok -> unavailable(day.error)
                 dayItems.isEmpty() -> {
                     val message = "最近 24 小时没有找到“$query”的新闻，7 天数据源暂时不可用。"
                     ToolExecutionResult(message, true, spokenSummary = message)
@@ -204,12 +204,18 @@ object NewsSearchTool {
         items.filter { it.publishedAt in start..(now + FUTURE_SKEW_MS) }
             .sortedByDescending { it.publishedAt }
 
-    private fun unavailable(): ToolExecutionResult =
-        ToolExecutionResult("新闻服务暂时不可用（网络或数据源不可达），请稍后重试。", false)
+    private fun unavailable(reason: String? = null): ToolExecutionResult =
+        ToolExecutionResult(
+            reason ?: "新闻服务暂时不可用（网络或数据源不可达），请稍后重试。",
+            false,
+        )
 
     // ---------------------------------------------------------------- http
 
-    private data class Feed(val ok: Boolean, val items: List<NewsItem>)
+    // [T-android-tool-error-semantics] Keep WHY a feed failed: the agent
+    // used to see one generic "网络或数据源不可达" for both a dead DNS and an
+    // HTTP error, and spent several turns guessing.
+    private data class Feed(val ok: Boolean, val items: List<NewsItem>, val error: String? = null)
 
     private fun fetchFeed(query: String, range: String): Feed {
         val encoded = URLEncoder.encode("$query when:$range", StandardCharsets.UTF_8.name())
@@ -224,7 +230,7 @@ object NewsSearchTool {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     AppLogger.warning(TAG, "RSS HTTP ${response.code} range=$range")
-                    Feed(false, emptyList())
+                    Feed(false, emptyList(), "新闻数据源返回 HTTP ${response.code}（$range 窗口）：数据源拒绝了这次请求，不是本机网络故障。")
                 } else {
                     val xml = response.body?.bytes()?.toString(Charsets.UTF_8).orEmpty()
                     Feed(true, parseRss(xml))
@@ -232,7 +238,7 @@ object NewsSearchTool {
             }
         }.getOrElse {
             AppLogger.warning(TAG, "RSS fetch failed range=$range: ${it.javaClass.simpleName}")
-            Feed(false, emptyList())
+            Feed(false, emptyList(), NetworkFailure.describe(it, "新闻数据源", "news.google.com"))
         }
     }
 

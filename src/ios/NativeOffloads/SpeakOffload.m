@@ -38,6 +38,12 @@ static NSString *const HELP_TEXT =
      "  --pitch <0.5-2.0>    Pitch multiplier (default: 1.0)\n"
      "  --volume <0.0-1.0>   Volume (default: 1.0)\n"
      "\n"
+     "  speak WAITS for the utterance to finish (up to 60 s) and answers\n"
+     "  status \"completed\" or \"timeout\". Android's android-speak is the\n"
+     "  other way round: it answers status \"speaking\" immediately, and only\n"
+     "  waits when --wait is passed. Report a broadcast as delivered only\n"
+     "  after a \"completed\" status.\n"
+     "\n"
      "VOICES OPTIONS:\n"
      "  --language <prefix>  Filter by language prefix (e.g. \"en\")\n"
      "  --quality <level>    Filter by quality: default, enhanced, premium\n"
@@ -277,6 +283,11 @@ static int cmd_speak(int argc, char **argv, int stdin_fd, int stdout_fd, int std
         @"rate": @(rate),
         @"characters": @(text.length),
         @"status": status,
+        // [T-ios-speak-wait] Say what the status MEANS, so a caller can
+        // report a broadcast as delivered only on a real completion receipt.
+        @"note": [status isEqualToString:@"completed"]
+            ? @"引擎已回报本条朗读结束"
+            : @"没有拿到「念完」的回执，不要把这次播报当作已送达",
     };
     noff_emit_json(stdout_fd, noff_json_envelope(TOOL_NAME, @"speak", data), compact, quiet);
     return NOFF_EXIT_SUCCESS;

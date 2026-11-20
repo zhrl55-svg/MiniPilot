@@ -48,7 +48,10 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
     private val tts = TextToSpeechManager().also { it.init(context) }
 
     override fun handle(request: NativeOffloadRequest): NativeOffloadResult {
-        val args = OffloadArgs(request.argv.drop(1))
+        // [T-android-speak-wait] `--wait` must be declared boolean: otherwise
+        // `--wait 文本` would parse the text as the flag's value and the
+        // utterance would be lost.
+        val args = OffloadArgs(request.argv.drop(1), booleanFlags = setOf(WAIT_FLAG))
         if (args.hasFlag("h", "help")) return NativeOffloadResult(0, HELP)
 
         // Legacy `--stop` flag — pre-T60 callers used it as a synonym for
@@ -79,7 +82,7 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
                 .put("error", "internal")
                 .put("message", e.message ?: "unknown")
                 .toString()
-            NativeOffloadResult(1, OffloadOutput.formatBody(body, args) + "\n")
+            NativeOffloadResult(1, OffloadOutput.formatBody(body.toString(), args) + "\n")
         }
     }
 
@@ -106,7 +109,7 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
                 )
                 .put("available_engines", JSONArray(probeEngineNames()))
                 .toString()
-            return NativeOffloadResult(1, OffloadOutput.formatBody(body, args) + "\n")
+            return NativeOffloadResult(1, OffloadOutput.formatBody(body.toString(), args) + "\n")
         }
 
         // Voice / language: --voice takes precedence and is treated as a
@@ -121,7 +124,15 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
         args.getDouble("pitch")?.let { tts.speechPitch = it.toFloat() }
         args.getDouble("volume")?.let { tts.speechVolume = it.toFloat() }
 
-        tts.speak(text)
+        // [T-android-speak-wait] `--wait` turns the "queued" receipt into a
+        // "finished" receipt. Without it the tool answered `status: speaking`
+        // the moment the utterance was handed to the engine, so the caller
+        // could not tell "talking" from "about to talk" from "swallowed" —
+        // the 2026-11-20 self-diagnosis caught the agent reporting a voice
+        // broadcast as delivered while the user heard nothing.
+        val wait = args.hasFlag("wait")
+        val waitTimeoutMs = args.getLong("wait-timeout") ?: DEFAULT_WAIT_TIMEOUT_MS
+
         val preview = if (text.length > 100) text.take(100) + "..." else text
         val body = JSONObject()
             .put("text", preview)
@@ -129,15 +140,37 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
             .put("rate", tts.speechRate.toDouble())
             .put("pitch", tts.speechPitch.toDouble())
             .put("characters", text.length)
-            .put("status", "speaking")
-            .toString()
-        return NativeOffloadResult(0, OffloadOutput.formatBody(body, args) + "\n")
+
+        if (!wait) {
+            tts.speak(text)
+            body.put("status", "speaking")
+                .put(
+                    "note",
+                    "status=speaking 只表示已交给引擎、还没念完；要确认念完请加 --wait",
+                )
+            return NativeOffloadResult(0, OffloadOutput.formatBody(body.toString(), args) + "\n")
+        }
+
+        val outcome = tts.speakAndAwait(text, waitTimeoutMs)
+        body.put("status", if (outcome.completed) "completed" else "unconfirmed")
+            .put("elapsed_ms", outcome.elapsedMs)
+        if (outcome.error != null) {
+            body.put("error", outcome.error)
+                .put(
+                    "note",
+                    "没有拿到「念完」的回执，不要把这次播报当作已送达；" +
+                        "可能是音频焦点被抢占、引擎被拒或超时",
+                )
+            return NativeOffloadResult(1, OffloadOutput.formatBody(body.toString(), args) + "\n")
+        }
+        body.put("note", "引擎已回报本条朗读结束")
+        return NativeOffloadResult(0, OffloadOutput.formatBody(body.toString(), args) + "\n")
     }
 
     private fun cmdStop(args: OffloadArgs): NativeOffloadResult {
         tts.stop()
         val body = JSONObject().put("status", "stopped").toString()
-        return NativeOffloadResult(0, OffloadOutput.formatBody(body, args) + "\n")
+        return NativeOffloadResult(0, OffloadOutput.formatBody(body.toString(), args) + "\n")
     }
 
     /**
@@ -156,7 +189,7 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
                 .put("voices", JSONArray())
                 .put("count", 0)
                 .toString()
-            return NativeOffloadResult(1, OffloadOutput.formatBody(body, args) + "\n")
+            return NativeOffloadResult(1, OffloadOutput.formatBody(body.toString(), args) + "\n")
         }
         val languagePrefix = args.get("language")
         val items = JSONArray()
@@ -205,7 +238,7 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
             .put("voices", items)
             .put("count", items.length())
             .toString()
-        return NativeOffloadResult(0, OffloadOutput.formatBody(body, args) + "\n")
+        return NativeOffloadResult(0, OffloadOutput.formatBody(body.toString(), args) + "\n")
     }
 
     // ── Diagnostics (Android-only, no iOS analogue) ──────────────────────────
@@ -261,6 +294,10 @@ class SpeakOffloadHandler(private val context: Context) : NativeOffloadHandler {
 
     companion object {
         private const val TAG = "SpeakOffload"
+        private const val WAIT_FLAG = "wait"
+
+        /** [T-android-speak-wait] Default budget for waiting on an utterance. */
+        private const val DEFAULT_WAIT_TIMEOUT_MS = 30_000L
         private const val HELP = """android-speak — speak text aloud via Android TTS
 
 Usage:
@@ -282,6 +319,11 @@ SPEAK OPTIONS:
   --rate <0.1-3.0>     Speech rate (default: 1.0)
   --pitch <0.5-2.0>    Pitch multiplier (default: 1.0)
   --volume <0.0-1.0>   Volume (default: 1.0)
+  --wait               Block until the engine reports the utterance finished;
+                       returns status "completed" (exit 0) or "unconfirmed"
+                       (exit 1). Without it status is "speaking", which only
+                       means the utterance was handed to the engine.
+  --wait-timeout <ms>  How long --wait waits (default: 30000)
 
 VOICES OPTIONS:
   --language <prefix>  Filter by language prefix (e.g. "en")
@@ -289,6 +331,7 @@ VOICES OPTIONS:
 EXAMPLES:
   android-speak speak "Hello world"
   android-speak speak --text "Bonjour" --voice fr-FR --rate 0.5
+  android-speak speak --wait "播报结束后再继续"
   android-speak voices --language en
   android-speak stop
 

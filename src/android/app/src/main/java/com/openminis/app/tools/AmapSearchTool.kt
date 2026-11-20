@@ -125,7 +125,14 @@ object AmapSearchTool {
 
     // ----------------------------------------------------------------- http
 
-    private fun httpJson(url: String, timeoutMs: Int = 12_000): JSONObject? = runCatching {
+    /**
+     * [T-android-tool-error-semantics] Return the failure reason instead of a
+     * bare null: "网络或超时" hid whether the key was rejected or the host
+     * was unreachable.
+     */
+    private data class HttpResult(val body: JSONObject?, val error: String?)
+
+    private fun httpJson(url: String, timeoutMs: Int = 12_000): HttpResult = runCatching {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.connectTimeout = timeoutMs
         conn.readTimeout = timeoutMs
@@ -135,11 +142,17 @@ object AmapSearchTool {
             val code = conn.responseCode
             val stream = if (code in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() } ?: ""
-            if (text.isBlank()) null else JSONObject(text)
+            if (text.isBlank()) {
+                HttpResult(null, "高德接口返回空响应（HTTP $code）")
+            } else {
+                HttpResult(JSONObject(text), null)
+            }
         } finally {
             conn.disconnect()
         }
-    }.getOrNull()
+    }.getOrElse {
+        HttpResult(null, NetworkFailure.describe(it, "高德接口", "restapi.amap.com"))
+    }
 
     private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
 
@@ -184,7 +197,8 @@ object AmapSearchTool {
             val cityPart = if (city.isEmpty()) "" else "&city=${enc(city)}"
             "$BASE/text?key=$key&keywords=${enc(keyword)}$cityPart&citylimit=false&offset=10"
         }
-        val body = httpJson(url) ?: return SearchOutcome(null, "网络或超时")
+        val response = httpJson(url)
+        val body = response.body ?: return SearchOutcome(null, response.error ?: "高德接口无响应")
         if (body.optString("status") != "1") {
             return SearchOutcome(
                 null,
@@ -257,14 +271,14 @@ object AmapSearchTool {
                     .map { kw -> pool.submit(Callable { kw to searchPois(key, kw, loc, radius, city) }) }
                     .map { future ->
                         runCatching { future.get() }.getOrNull()
-                            ?: ("?" to SearchOutcome(null, "网络或超时"))
+                            ?: ("?" to SearchOutcome(null, "高德接口请求失败或超时"))
                     }
             } finally {
                 pool.shutdown()
             }
         }
         if (responses.all { it.second.pois == null }) {
-            val reason = responses.firstNotNullOfOrNull { it.second.error } ?: "网络或超时"
+            val reason = responses.firstNotNullOfOrNull { it.second.error } ?: "高德接口无响应"
             return ToolExecutionResult("请求高德接口失败（$reason）", false)
         }
         val ranked = responses.mapNotNull { (kw, outcome) -> outcome.pois?.let { kw to it } }

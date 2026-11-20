@@ -733,14 +733,17 @@ extension AIChatViewModel {
                 break
             }
             var browserResult: BrowserActionResult
-            if let input = BrowserActionInput.parse(from: argsJson) {
+            // [T-ios-browser-field-errors] Field-level error instead of a bare
+            // "Invalid browser_use input".
+            switch BrowserActionInput.parseDetailed(from: argsJson) {
+            case .ok(let input):
                 do {
                     browserResult = try await browserTabPool.execute(action: input, owner: sessionId)
                 } catch {
                     browserResult = .error(error.localizedDescription)
                 }
-            } else {
-                browserResult = .error("Invalid browser_use input. Required: 'action' parameter.")
+            case .invalid(let why):
+                browserResult = .error("Invalid browser_use input — \(why)")
             }
 
             if browserTakeoverActive {

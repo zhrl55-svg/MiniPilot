@@ -16803,8 +16803,14 @@ class ChatViewModel(
         )
 
     private suspend fun executeBrowserUseTool(argsJson: String): ToolExecutionResult {
-        val input = BrowserActionInput.parse(argsJson)
-            ?: return ToolExecutionResult("Error: Invalid browser_use input", false)
+        // [T-android-browser-field-errors] Field-level error instead of a bare
+        // "Invalid browser_use input", so the model can correct the call.
+        val parsed = BrowserActionInput.parseDetailed(argsJson)
+        val input = when (val result = parsed) {
+            is BrowserActionInput.ParseResult.Ok -> result.input
+            is BrowserActionInput.ParseResult.Invalid ->
+                return ToolExecutionResult("Error: Invalid browser_use input — ${result.reason}", false)
+        }
 
         return try {
             val result = browserTabPool.execute(input, owner = browserOwnerId)
@@ -17744,8 +17750,17 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
     }
 
     suspend fun executeBrowserUse(argsJson: String): BrowserToolResult {
-        val input = BrowserActionInput.parse(argsJson)
-            ?: return BrowserToolResult(text = "Error: Invalid browser_use input. Required: 'action' parameter.", success = false)
+        // [T-android-browser-field-errors] Field-level error instead of a bare
+        // "Invalid browser_use input", so the model can correct the call.
+        val parsed = BrowserActionInput.parseDetailed(argsJson)
+        val input = when (val result = parsed) {
+            is BrowserActionInput.ParseResult.Ok -> result.input
+            is BrowserActionInput.ParseResult.Invalid ->
+                return BrowserToolResult(
+                    text = "Error: Invalid browser_use input — ${result.reason}",
+                    success = false,
+                )
+        }
 
         return try {
             val result = browserTabPool.execute(input, owner = browserOwnerId)

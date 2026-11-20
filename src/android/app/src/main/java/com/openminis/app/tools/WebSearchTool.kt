@@ -102,14 +102,23 @@ object WebSearchTool {
             }
         }.getOrElse {
             AppLogger.warning(TAG, "search failed: ${it.javaClass.simpleName}")
-            ToolExecutionResult("网页搜索失败（网络或超时），请检查网络后重试。", false)
+            ToolExecutionResult(
+                NetworkFailure.describe(it, "网页搜索", "api.search.brave.com"),
+                false,
+            )
         }
     }
 
     private fun httpErrorMessage(code: Int): String = when (code) {
         401, 403 -> "网页搜索密钥无效或没有权限（HTTP $code），请在设置里检查 Brave Search API Key。"
         429 -> "网页搜索额度已用完或请求过于频繁（HTTP 429），请稍后再试。"
-        else -> "网页搜索暂时不可用（HTTP $code），请稍后重试。"
+        // [T-android-tool-error-semantics] A 4xx is a request/credential
+        // problem, not a network problem; the agent used to be told both were
+        // "网络或超时" and chased the wrong cause.
+        400, 422 -> "网页搜索请求被拒（HTTP $code）：请求参数或 API Key 不被接受，不是网络故障。" +
+            "下一步：先用 curl 带同样的 X-Subscription-Token 请求同一端点，看是否同样返回 $code。"
+        in 500..599 -> "网页搜索服务端故障（HTTP $code）：服务端返回错误，不是本机网络问题，可换源或稍后重试。"
+        else -> "网页搜索返回异常状态（HTTP $code），不是网络故障；可用 curl 直连同一端点核对。"
     }
 
     // ------------------------------------------------------------- query

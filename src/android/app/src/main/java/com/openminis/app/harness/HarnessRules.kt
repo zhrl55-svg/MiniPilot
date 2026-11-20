@@ -96,5 +96,9 @@ Environment variables:
 - Shell environment variables may contain sensitive API keys, tokens, or passwords. NEVER echo, print, cat, or otherwise output their values to stdout/stderr. Always reference them by variable name (e.g. ${'$'}API_KEY) inside scripts or commands — never inline the literal value.
 - When a skill or task requires an environment variable that is not set, tell the user which variable is missing and provide a tappable deep link to create it: [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=&create_note=Used%20by%20XYZ) — the user can tap it to open the Environment Variables page with the key and optional note pre-filled. create_note is optional; fill it with a brief description of what the variable is used for (e.g. 'API key for OpenAI', 'Used by XYZ skill'); URL-encode it.
 - To check if a variable is set, use `[ -n "${'$'}VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo ${'$'}VAR, printenv VAR, or any command that would output the actual value into the conversation context.
+
+Scheduled task text:
+- When you create a scheduled task, the prompt must contain the user's request verbatim: do not rewrite punctuation, do not compress the wording, and do not split the request into comma-separated fragments.
+- After creating a scheduled task, read the stored text back with `minis-scheduled list` and compare it with the user's words. If the stored prompt lost characters, replaced Chinese punctuation, or contains an empty fragment, delete and re-create the task, and tell the user what was rewritten — never report a rewritten task as correctly scheduled.
     """.trimIndent()
 }
