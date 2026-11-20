@@ -2,3 +2,6 @@ runs/
 __pycache__/
 # Harvested from the owner's real chat sessions: local-only, never committed.
 real_tasks.jsonl
+# Issue cards and dossiers quote real conversations — never commit them.
+cards/
+proposals/

@@ -95,7 +95,10 @@ Findings from the first run (already useful):
 
 - **Phase 2 (PC side)**: a consumer that turns cards into candidate rule
   diffs (`/var/minis/harness/rules.md` overlays) and ranks by frequency ×
-  severity.
-- **Phase 3**: A/B the candidates with `tools/probe/run_device.py
-  --system-overlay`, adopt into the rules file only when the targeted probes
-  improve without regressions.
+  severity. → Done, see `self-improve-phase2.md`: the pipeline is
+  `pull_cards.py` → `improve.py` → `improve_propose.py` → `improve_ab.py`,
+  and the first full cycle adopted **nothing** (every candidate came back
+  `no-diff`: the rule layer is already saturated for these failure classes;
+  the real work is code and documentation fixes).
+- **Phase 3**: apply the code/doc fixes the cards point at, then re-run the
+  cycle. Rule-file adoption only happens when a candidate earns an `adopt`.

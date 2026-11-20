@@ -251,11 +251,34 @@ debug server（例如 iOS 设备经 SSH 隧道转发的 5321）。
 
 设计、调度记录与首次真机验证见 `docs/specs/self-improve-loop.md`。
 
+## 自我改进 Phase 2：PC 侧消费者
+
+四步流水线，全部在 PC 上跑，卡片与档案**一律落在仓库外**（含用户会话
+原文，不进版本库）：
+
+```bash
+# 1) 把设备上的问题单取到 PC（tar|base64 走 debug.shellExecute）
+python tools/probe/pull_cards.py --date 2026-11-20
+# 2) 校验 + 归并 + 排序 → dossier.md / clusters.json / worksheets/
+python tools/probe/improve.py
+# 3) headless claude 为每组写候选规则 + 探针任务
+python tools/probe/improve_propose.py --only C01,C07
+# 4) 真机 A/B（baseline vs systemPromptAppend）+ 随机顺序裁判
+python tools/probe/improve_ab.py --only C01,C07 \
+    --model-entry <entry-id>
+```
+
+判决只有三种：`adopt` / `no-diff` / `regress`；只有 `adopt` 才允许写进
+rules.md。首次完整跑完 9 张卡 → 9 组 → 3 条候选规则 → **全部 no-diff**
+（规则层对这些失败类型已经饱和），结论与产品修复清单见
+`docs/specs/self-improve-phase2.md`。
+
 ## 待办
 
 - 任务集人工分拣：32 条里 11 条协议噪声 + 若干「验收/报告」类，真正可做
   的工程任务约 5–7 条。建议在 tasks.jsonl 加 `kind` 字段人工标注。
 - 轨迹完整性：agent 需要能读到仓库代码才有真实行为；当前靠全局 Read 白名单
   偶然可达。可选方案：`--add-dir D:/minis-src` 只读挂载 + 写仍 deny。
-- Phase 2：PC 侧消费者，把问题单变成候选规则 diff 并用 `--system-overlay`
-  做 A/B。
+- Phase 3：把问题单指向的 7 项产品/文档修复排成一批落地（android-speak
+  完成回执、scheduled_task 全角标点、搜索工具报错语义、browser_use 参数
+  校验、会话落库、技能文档命令写法、早安脚本前置检查）。
