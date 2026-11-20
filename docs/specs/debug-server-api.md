@@ -1257,6 +1257,7 @@ Send a prompt — to a new session or into an existing one. Equivalent to `SendP
 | `modelGroupId`  | `string`   | `null`  | Pin to a specific model group (from `chat.models.list.groups[].id`). The group's routing strategy decides which member runs the turn. |
 | `wait`          | `bool`     | `false` | If `true`, block until the agent finishes and return the full response text.                        |
 | `waitTimeout`   | `int`      | `600`   | Seconds to wait when `wait=true`. Clamped to `[1, 1800]`. On timeout, returns `status: "Timeout"` with the session still running. |
+| `systemPromptAppend` | `string` | `null` | **Probe-only.** Candidate harness text appended to this session VM's system prompt (A/B without rebuilding). Persists for the VM's lifetime; the VM is cached per session. |
 
 **Response:**
 

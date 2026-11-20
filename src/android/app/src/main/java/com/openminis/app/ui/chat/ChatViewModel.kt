@@ -943,6 +943,16 @@ class ChatViewModel(
      */
     @Volatile private var userAskBatchSnapshot: Pair<String, List<String>>? = null
 
+    /**
+     * [T-probe-overlay] Debug-probe harness overlay, set by the debug RPC's
+     * chat.prompt `systemPromptAppend` param (HeadlessChatRunner). Appended at
+     * the very end of buildSystemPrompt so a probe can A/B a candidate rule
+     * against the real system prompt WITHOUT rebuilding the app. Null for
+     * every ordinary turn; per-VM (and the runner caches one VM per session),
+     * so it lasts for the probe session only.
+     */
+    @Volatile internal var debugSystemPromptAppend: String? = null
+
     /** [T-port-user-ask-recovery] Persistence + recovery hooks; idempotent. */
     private fun ensureUserAskRecovery() {
         com.openminis.app.agent.userask.UserAskRecoveryCoordinator.ensureInstalled(
@@ -17595,12 +17605,12 @@ Tone and style:
 - Reply in the language that best matches the user's input. Only switch languages when the user explicitly asks.
 - Be concise. Prefer action over explanation — when the user asks for something that can be done via shell, do it directly.
 
-Self-reference (avoid re-discovery): `minis-self` renders this build's own manual from the live registries at call time — `minis-self tools` (agent tools + params), `minis-self cli [name]` (every android-*/minis-* command), `minis-self settings [topic]` (all setting paths/types/descriptions), `minis-self links` (settings deep links), `minis-self features [kw]` (feature → settings → module), `minis-self arch` (module map). Prefer it over `minis-config topic-help`, source scans, or filesystem searches when the question is about Minis itself.
+Self-reference (avoid re-discovery): `minis-self` renders this build's own manual from the live registries at call time — `minis-self tools` (agent tools + params), `minis-self cli [name]` (every android-*/minis-* command), `minis-self settings [topic]` (all setting paths/types/descriptions), `minis-self links` (settings deep links), `minis-self features [kw]` (feature → settings → module), `minis-self arch` (module map). Prefer it over `minis-config topic-help`, source scans, or filesystem searches when the question is about MiniPilot itself.
 
 Android framework commands (available to run via shell_execute):
 CLI tools at /usr/local/bin with the `android-` prefix give you access to Android framework capabilities and on-device control. Invoke them from shell_execute like any other binary — they are already on PATH. Each tool prints JSON (or a short human-readable line) and supports --help for full usage. Tools gated by Shizuku or AccessibilityService return permission_denied when not granted — handle that gracefully and point the user at [Settings → Permissions](minis://settings/permissions). Full per-command manual: `minis-self cli`.
 Available: android-alarm, android-calendar, android-clipboard, android-contacts, android-device, android-location, android-notification, android-open, android-photos, android-player, android-speak, android-speech, android-weather, android-shizuku-cli, android-a11y-cli. Run `minis-self cli <name>` for exact subcommands and flags.
-- minis-open <url-or-path>: Opens a resource inside Minis without leaving the chat — http/https → built-in preview; /var/minis/** paths → built-in file preview by extension. Prefer it over android-open for anything previewable in-app; use android-open for non-web schemes (tel:, mailto:, geo:, intent:).
+- minis-open <url-or-path>: Opens a resource inside MiniPilot without leaving the chat — http/https → built-in preview; /var/minis/** paths → built-in file preview by extension. Prefer it over android-open for anything previewable in-app; use android-open for non-web schemes (tel:, mailto:, geo:, intent:).
 - minis-sessions-cli: Read chat history — `list` recent/by date, `search --keywords` cross-session, `messages --id` (add `--tools` for each tool call's exact input and output).
 - minis-model-use: Invoke other configured models — `list` first (modalities), then `run --model <id_or_name>` with an OpenAI-compatible messages request (--input <json_file> or stdin; output to stdout/--output). Standard params are auto-converted per provider; read `warnings`/`applied_extras` to self-correct; `--help` has the full contract before multimodal use.${modelUseDelegateNote}
 - minis-config: Read or change settings — `list-topics`, `topic-help <topic>`, `get/set <path>`, `add`, `set-batch`, `audit-*`. Every write shows a confirmation sheet and is revertable; relay the response's `user_message`. `get` never echoes API keys/tokens/env values. For discovery prefer `minis-self settings`; for network/Tailscale status use the `network` topic.
@@ -17613,7 +17623,7 @@ Environment variables:
 - Settings deep links: prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Run `minis-self links` for the full path list (providers, model-groups, usage, skills, memory, storage, shared-folders, mount-external, logs, appearance, background, about, permissions, environments, rootfs, network, tailscale, proxy, dns). Unknown paths fall back to Settings home; these are app deep links — render them as Markdown links in chat (only /var/minis resource URLs may go to browser_use).
 - To check if a variable is set, use `[ -n "${'$'}VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo ${'$'}VAR, printenv VAR, or any command that would output the actual value into the conversation context.${memorySystemSection}
 
-Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended, so in-app scheduled scripts may not run as expected. For follow-ups and recurring prompts, run `minis-scheduled create …` via shell_execute: it fires through a system alarm, so it runs a new turn even when Minis is in the background or closed (a force-stop cancels pending tasks until the app is next opened). For a plain reminder that only needs to notify the user, running `android-alarm` via shell_execute (the system Clock app) or a system-level schedule (Google Calendar event, Tasker automation, etc.) also works. (Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"""
+Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended, so in-app scheduled scripts may not run as expected. For follow-ups and recurring prompts, run `minis-scheduled create …` via shell_execute: it fires through a system alarm, so it runs a new turn even when MiniPilot is in the background or closed (a force-stop cancels pending tasks until the app is next opened). For a plain reminder that only needs to notify the user, running `android-alarm` via shell_execute (the system Clock app) or a system-level schedule (Google Calendar event, Tasker automation, etc.) also works. (Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"""
 
         // Match iOS order exactly: skills → global memory → recent daily memory.
         // See ios/Agent/Chat/AIChatViewModel.swift:4375-4387. Each fragment is
@@ -17693,6 +17703,16 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
                 if (deviceContext.isNotBlank()) {
                     append("\n\n")
                     append(deviceContext)
+                }
+            }
+            // [T-probe-overlay] Debug-probe only: a candidate harness text
+            // injected through chat.prompt's `systemPromptAppend` param. It is
+            // appended LAST so the cache-stable prefix above is untouched, and
+            // stays null for every ordinary turn. Never written to the DB.
+            debugSystemPromptAppend?.let { overlay ->
+                if (overlay.isNotBlank()) {
+                    append("\n\n")
+                    append(overlay)
                 }
             }
         }

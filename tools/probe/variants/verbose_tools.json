@@ -1,0 +1,5 @@
+{
+  "name": "verbose_tools",
+  "description": "Example variant: ask the model to prefer dedicated tools (file_read/file_edit/Read/Edit) over shell for file work, so we can measure whether the tool distribution shifts.",
+  "system_prompt_append": "\n\n## Harness variant: verbose_tools\n\nWhen reading or editing files, prefer dedicated file tools (Read, Edit, Write) over shell commands (cat, sed, echo >). Use shell only for what those tools cannot do (search across many files, run tests, git operations). This is an A/B probe variant; the goal is to observe whether the tool distribution changes measurably on the same task set."
+}

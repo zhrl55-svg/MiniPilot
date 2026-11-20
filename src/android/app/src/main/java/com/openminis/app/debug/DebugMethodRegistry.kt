@@ -1116,6 +1116,7 @@ object DebugMethodRegistry {
                 ParamSpec("thinkingLevel", "string", required = false, description = "off / low / medium / high / xhigh / max / ultra — applies before send; leaves the VM setting alone when omitted."),
                 ParamSpec("wait", "bool", required = false, default = false, description = "Block until completion."),
                 ParamSpec("waitTimeout", "int", required = false, default = 600, description = "Seconds; clamped to [1, 1800]."),
+                ParamSpec("systemPromptAppend", "string", required = false, description = "Probe-only: candidate harness text appended to this session VM's system prompt (A/B without rebuilding). Persists for the VM's lifetime."),
             ),
             returns = "{sessionId, isNewSession, modelName, status, prompt, responseText, userMessageId, timedOut?}",
             example = ex("prompt" to "Hello", "wait" to true),

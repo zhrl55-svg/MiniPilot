@@ -1,0 +1,5 @@
+{
+  "name": "baseline",
+  "description": "No harness delta. Used to establish a trajectory baseline before any variant is proposed.",
+  "system_prompt_append": ""
+}

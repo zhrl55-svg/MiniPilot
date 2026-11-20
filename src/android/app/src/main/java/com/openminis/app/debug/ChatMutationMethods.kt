@@ -86,6 +86,10 @@ internal object ChatMutationMethods {
         val wait = params.optBoolean("wait", false)
         val timeoutSec = params.optInt("waitTimeout", 600).coerceIn(1, 1800)
         val thinkingLevel = parseThinkingLevel(params)
+        // [T-probe-overlay] Probe-only: candidate harness text appended to the
+        // system prompt (A/B without rebuilding). Absent in normal use.
+        val systemPromptAppend = if (params.has("systemPromptAppend") && !params.isNull("systemPromptAppend"))
+            params.optString("systemPromptAppend").ifEmpty { null } else null
         val result = HeadlessChatRunner.prompt(
             context = context,
             sessionId = sessionId,
@@ -94,6 +98,7 @@ internal object ChatMutationMethods {
             thinkingLevel = thinkingLevel,
             wait = wait,
             timeoutMs = timeoutSec * 1000L,
+            systemPromptAppend = systemPromptAppend,
         )
 
         // Re-read DB to pick up the latest message metadata after the run.

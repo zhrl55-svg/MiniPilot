@@ -226,9 +226,15 @@ internal object HeadlessChatRunner {
         // of the loop this prompt starts, before any model request. Empty =
         // an ordinary prompt.
         prefill: List<com.openminis.app.scheduled.PrefilledToolCall> = emptyList(),
+        // [T-probe-overlay] Probe-only candidate harness text appended to the
+        // system prompt for this VM. The VM is cached per session, so the
+        // overlay lasts for the whole probe session and dies with it. Null
+        // clears any overlay left from an earlier call on the same VM.
+        systemPromptAppend: String? = null,
     ): PromptResult = ChatViewModelStore.holdingForSend(sessionId) {
         withContext(Dispatchers.Main) {
             val vm = viewModel(context, sessionId)
+            vm.debugSystemPromptAppend = systemPromptAppend
             // Apply per-call thinking override BEFORE sendMessage so streamMessage
             // picks up the new level. Caller passes null to keep the VM's existing
             // setting (default OFF for a fresh VM, last user-set value otherwise).
