@@ -994,6 +994,9 @@ extension AIChatViewModel {
             (Self.minisSkillsPersistentDir, Self.minisSkillsLinuxDir),
             (Self.minisSharedPersistentDir, Self.minisSharedLinuxDir),
             (Self.minisMcpServersPersistentDir, Self.minisMcpServersLinuxDir),
+            // [T-harness-rules-file] The agent edits /var/minis/harness/rules.md
+            // from its shell; the app reads the same host file at prompt build.
+            (Self.minisHarnessPersistentDir, Self.minisHarnessLinuxDir),
         ]
 
         for (persistDir, linuxDir) in mappings {

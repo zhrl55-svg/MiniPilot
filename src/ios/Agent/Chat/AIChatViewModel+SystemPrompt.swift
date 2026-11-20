@@ -63,20 +63,10 @@ extension AIChatViewModel {
             + "Use `which <cmd>` to check if a tool is already installed before running apk add — many packages persist across sessions. "
             + "When you need to wait before checking results (e.g. polling, waiting for a process), use the `delay` parameter instead of `sleep` in the command — "
             + "delay blocks the agent flow without occupying the iSH shell, so other concurrent tasks can use it during the wait. This avoids resource contention. "
-            // [T-agent-prompt-no-phantom-checkins] Device log 2026-07-17: the agent
-            // promised "I'll check every 1-2 minutes" after dispatching a long task,
-            // then went silent — it assumed some scheduler would wake it. Recurred
-            // 2026-07-20 in a variant the old wording didn't name: one status check,
-            // then "let's keep waiting" and the turn ended. Rewritten borrowing
-            // Hermes Agent's execution-discipline phrasing (act immediately instead
-            // of describing intentions / keep working until complete / never end a
-            // turn with a promise of future action), plus an HONEST off-ramp —
-            // Minis has no in-app scheduler (see 'Scheduled tasks'), so the only
-            // truthful alternatives are poll-now or tell-the-user-nothing-runs.
-            + "Execution discipline for long-running or dispatched work: make tool calls immediately instead of describing intentions, and keep working until the task is complete. "
-            + "Within a turn, `delay` is your wait mechanism — to follow up on something still running, chain delay-then-check calls at a task-appropriate interval until you have the result or hit a sensible retry cap. For a check that should happen AFTER this turn ends, register it by running `minis-scheduled create …` via shell_execute (see the CLI list) — it fires a new turn later, best effort while the app is alive. "
-            + "NEVER end a turn with a promise of future action: 'I'll keep monitoring', 'will sync the result later', and ending right after a single still-running status check with 'let's keep waiting' are all the same violation — once your turn ends, NOTHING runs until the user's next message. "
-            + "If polling to completion is genuinely not worth blocking the turn, close honestly instead: either register a `minis-scheduled` follow-up (say so, with its id) or state that you will only learn the outcome when the user next messages; for anything that must fire even if the app is killed, point them to an Apple Shortcuts automation per 'Scheduled tasks' later in this prompt.\n"
+            // [T-harness-rules-file] The execution-discipline block (formerly
+            // [T-agent-prompt-no-phantom-checkins]) moved to the runtime file
+            // /var/minis/harness/rules.md and is appended at the end of this
+            // prompt by HarnessRules; the compiled default lives there.
             + "- file_read: Read file contents (faster than cat).\n"
             + "- file_write: Create new files or overwrite existing files (faster than echo/tee).\n"
             + "- file_edit: Edit existing files with exact string replacement (old_string → new_string). Preferred over file_write for modifications — always file_read first.\n"
@@ -255,6 +245,9 @@ extension AIChatViewModel {
             + "For follow-ups and recurring prompts that only need to fire while Minis stays open, run `minis-scheduled create …` via shell_execute (it is best effort and dies with the app process). "
             + "For recurring tasks that must fire even after the app is killed, tell the user to set up an automation in Apple Shortcuts — that is the only guaranteed way to trigger periodic execution on iOS. "
             + "(Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"
+            // [T-harness-rules-file] Runtime-editable rules (/var/minis/harness/rules.md);
+            // the compiled default only seeds that file.
+            + HarnessRules.promptFragment
             // [T-probe-overlay] Debug-probe only: candidate harness text passed
             // through chat.prompt's `systemPromptAppend`. Appended last so the
             // cache-stable prefix above is untouched; nil for ordinary turns.
@@ -286,4 +279,66 @@ extension AIChatViewModel {
                 + "- SOUL.md (your persona / identity) is unaffected and remains active above."
         }
     }
+}
+
+// MARK: - Runtime harness rules  [T-harness-rules-file]
+
+/// Runtime-editable harness rules.
+///
+/// Mirrors Android `com.openminis.app.harness.HarnessRules`. The behavioural
+/// rules used to be compiled into `baseSystemPrompt`; they now live in a file
+/// the user (or a probe, or a future improvement loop) can edit WITHOUT
+/// rebuilding:
+///
+///   shell/agent path: /var/minis/harness/rules.md
+///   host path:        <AppGroup>/MinisFileProvider/harness/rules.md
+///
+/// Precedence: file content wins; missing/blank falls back to `defaultText`,
+/// so first launch matches the old compiled prompt. `ensureSeeded()` writes
+/// the default once and never overwrites edits.
+///
+/// IMPORTANT: `defaultText` must stay byte-identical with Android
+/// `HarnessRules.DEFAULT_RULES` — one shared rules file, no platform drift.
+///
+/// Lives in this file rather than a new one: `Agent/` is not a synchronized
+/// Xcode group, so a new file would need a hand-edited project.pbxproj.
+enum HarnessRules {
+
+    static let runtimeLinuxPath = "/var/minis/harness/rules.md"
+
+    static var fileURL: URL {
+        AIChatViewModel.minisHarnessPersistentDir
+            .appendingPathComponent("rules.md", isDirectory: false)
+    }
+
+    /// Active rules text (file when usable, else the factory default).
+    static func read() -> String {
+        if let text = try? String(contentsOf: fileURL, encoding: .utf8),
+           !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return text
+        }
+        return defaultText
+    }
+
+    /// Fragment for the end of the system prompt ("" would leave no separator).
+    static var promptFragment: String {
+        let text = read()
+        return text.isEmpty ? "" : "\n\n" + text
+    }
+
+    /// Seed the default rules file on first launch. Never overwrites edits.
+    static func ensureSeeded() {
+        let fm = FileManager.default
+        guard !fm.fileExists(atPath: fileURL.path) else { return }
+        try? fm.createDirectory(at: fileURL.deletingLastPathComponent(),
+                                withIntermediateDirectories: true)
+        try? defaultText.write(to: fileURL, atomically: true, encoding: .utf8)
+    }
+
+    /// Factory default. Keep platform-specific phrasing OUT: the concrete
+    /// scheduling mechanics are described by each platform's "Scheduled tasks"
+    /// section. Must match Android DEFAULT_RULES byte-for-byte.
+    static let defaultText = """
+    Execution discipline for long-running or dispatched work: make tool calls immediately instead of describing intentions, and keep working until the task is complete. Within a turn, `delay` is your wait mechanism — to follow up on something still running, chain delay-then-check calls at a task-appropriate interval until you have the result or hit a sensible retry cap. For a check that should happen AFTER this turn ends, register it with `minis-scheduled create …` via shell_execute (see the CLI list and 'Scheduled tasks' later in this prompt). NEVER end a turn with a promise of future action: 'I'll keep monitoring', 'will sync the result later', and ending right after a single still-running status check with 'let's keep waiting' are all the same violation — once your turn ends, NOTHING runs until the user's next message. If polling to completion is genuinely not worth blocking the turn, close honestly instead: either register a `minis-scheduled` follow-up (say so, with its task id) or state that you will only learn the outcome when the user next messages; for anything that must fire even if the app is killed, point the user at a platform-level automation that survives the app process.
+    """
 }

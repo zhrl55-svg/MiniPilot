@@ -33,7 +33,9 @@ object SessionMounts {
     val SESSION_SUBDIRS = listOf("attachments", "offloads", "workspace", "browser")
 
     /** Subdirs under `minis-global/`, shared by every session. */
-    val GLOBAL_SUBDIRS = listOf("memory", "skills", "shared", "mcp-servers")
+    // [T-harness-rules-file] harness: /var/minis/harness/rules.md is read by
+    // the app on every prompt build and edited by the agent's shell.
+    val GLOBAL_SUBDIRS = listOf("memory", "skills", "shared", "mcp-servers", "harness")
 
     /**
      * Soft ceiling on the bytes the `-b` arguments add to PRoot's argv. The

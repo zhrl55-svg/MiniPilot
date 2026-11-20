@@ -855,8 +855,9 @@ struct MinisApp: App {
 
         let root = AIChatViewModel.minisAppGroupRoot
         let fm = FileManager.default
-        // Ensure all three subdirectories exist.
-        for sub in ["memory", "skills", "shared"] {
+        // Ensure all subdirectories exist (harness holds runtime-editable
+        // behavioural rules — see HarnessRules).
+        for sub in ["memory", "skills", "shared", "harness"] {
             try? fm.createDirectory(at: root.appendingPathComponent(sub, isDirectory: true),
                                     withIntermediateDirectories: true)
         }
@@ -872,6 +873,10 @@ struct MinisApp: App {
         // sidebar title render stale first. App.init() already pre-loads it; this
         // keeps the cache fresh after ensureExists() seeds a first-launch SOUL.md.
         SoulStore.refreshCache()
+
+        // [T-harness-rules-file] Seed the runtime rules file on first launch
+        // (safe no-op afterwards; never overwrites edits).
+        HarnessRules.ensureSeeded()
 
         // Clean up stale directory created by a bug where workingSet identifier
         // was passed through as a subdirectory name.

@@ -672,6 +672,11 @@ class MinisApp : Application(), ImageLoaderFactory {
         com.openminis.app.agent.SoulStore.ensureExists(this)
         com.openminis.app.agent.SoulStore.refreshCache(this)
 
+        // [T-harness-rules-file] Seed /var/minis/harness/rules.md with the
+        // default behavioural rules on first launch. Safe no-op afterwards —
+        // never overwrites user (or probe) edits.
+        com.openminis.app.harness.HarnessRules.ensureSeeded(this)
+
         // T-config: minis-config CLI surface — registry / audit log /
         // master-switch store. Initialized eagerly here so
         // ConfigRegistry.get() is safe from any thread for the rest of

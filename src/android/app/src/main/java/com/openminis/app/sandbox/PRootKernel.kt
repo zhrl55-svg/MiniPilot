@@ -282,9 +282,24 @@ object PRootKernel {
         // [T-mcp-integration-android] mcp-servers is global (like memory/skills):
         // binding it here makes the in-PRoot minis-mcp-cli read/write the SAME
         // servers.json the Android Settings UI does (host: minis-global/mcp-servers).
-        listOf("memory", "skills", "shared", "mcp-servers").forEach { subdir ->
+        // [T-harness-rules-file] harness is global too: the agent edits
+        // /var/minis/harness/rules.md from its shell, and the app reads the
+        // same host file on every prompt build.
+        listOf("memory", "skills", "shared", "mcp-servers", "harness").forEach { subdir ->
             val hostDir = File(globalBase, subdir).also { it.mkdirs() }
             bindMounts["/var/minis/$subdir"] = hostDir.absolutePath
+            Log.i(TAG, "global bind: /var/minis/$subdir -> ${hostDir.absolutePath} " +
+                "hostExists=${hostDir.exists()} files=${hostDir.listFiles()?.size ?: -1}")
+            // [T-harness-rules-file] PRoot binds onto an existing guest path —
+            // memory/skills/shared/mcp-servers exist in the shipped rootfs
+            // image, a newly added global dir does not. Materialize it the
+            // same way materializeMountTargets does for external mounts.
+            runCatching {
+                File(RootfsManager.getInstance(context).rootfsDir,
+                     "var/minis/$subdir").mkdirs()
+            }.onFailure {
+                Log.w(TAG, "global bind target mkdir failed for $subdir: ${it.message}")
+            }
         }
     }
 

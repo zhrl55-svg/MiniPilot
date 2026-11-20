@@ -453,6 +453,15 @@ extension AIChatViewModel {
         minisAppGroupRoot.appendingPathComponent("shared", isDirectory: true)
     }
 
+    /// [T-harness-rules-file] Persistent storage for runtime-editable harness
+    /// rules (/var/minis/harness/rules.md). Under minisAppGroupRoot so the
+    /// Guest symlink table and the app read the same file; unlike mcp-servers
+    /// it holds no secrets, so Files-app visibility is acceptable (and makes
+    /// the rules hand-editable).
+    nonisolated static var minisHarnessPersistentDir: URL {
+        minisAppGroupRoot.appendingPathComponent("harness", isDirectory: true)
+    }
+
     /// Persistent storage directory for MCP server configs (servers.json,
     /// daemon log). Deliberately under MinisConfig, NOT minisAppGroupRoot:
     /// servers.json carries credentials (Authorization headers, API keys) and
