@@ -51,35 +51,46 @@ import com.openminis.app.ui.navigation.safeNavigate
  * opens that setting - the proxy's editor, or the Tailscale page - where the
  * user decides whether to keep using it; the close button snoozes it for
  * this subject.
+ *
+ * [T-hub-approval-banner] [below] is rendered in the SAME column, right
+ * under this banner. Both want the top of the screen, and two top banners
+ * in the same spot would cover each other — the approval one is the one
+ * that must not be missed.
  */
 @Composable
-fun NetworkAlertBannerHost(navController: NavController) {
+fun NetworkAlertBannerHost(
+    navController: NavController,
+    below: @Composable () -> Unit = {},
+) {
     val banner by NetworkAlertCenter.banner.collectAsState()
     // Keeps the last event while the exit animation runs.
     val shown = remember { mutableStateOf<NetworkAlertEvent?>(null) }
     banner?.let { shown.value = it }
     Box(Modifier.fillMaxSize().statusBarsPadding(), contentAlignment = Alignment.TopCenter) {
-        AnimatedVisibility(
-            visible = banner != null,
-            enter = slideInVertically { -it } + fadeIn(),
-            exit = slideOutVertically { -it } + fadeOut(),
-        ) {
-            shown.value?.let { e ->
-                NetworkAlertBanner(
-                    event = e,
-                    onOpen = {
-                        val taken = NetworkAlertCenter.takeBanner() ?: return@NetworkAlertBanner
-                        when (val s = taken.subject) {
-                            is NetworkAlertEvent.Subject.Proxy -> {
-                                NetworkHub.pendingProxyEditor.value = s.id
-                                navController.safeNavigate(Routes.NETWORK_PROXIES)
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            AnimatedVisibility(
+                visible = banner != null,
+                enter = slideInVertically { -it } + fadeIn(),
+                exit = slideOutVertically { -it } + fadeOut(),
+            ) {
+                shown.value?.let { e ->
+                    NetworkAlertBanner(
+                        event = e,
+                        onOpen = {
+                            val taken = NetworkAlertCenter.takeBanner() ?: return@NetworkAlertBanner
+                            when (val s = taken.subject) {
+                                is NetworkAlertEvent.Subject.Proxy -> {
+                                    NetworkHub.pendingProxyEditor.value = s.id
+                                    navController.safeNavigate(Routes.NETWORK_PROXIES)
+                                }
+                                NetworkAlertEvent.Subject.Tailscale -> navController.safeNavigate(Routes.NETWORK_TAILSCALE)
                             }
-                            NetworkAlertEvent.Subject.Tailscale -> navController.safeNavigate(Routes.NETWORK_TAILSCALE)
-                        }
-                    },
-                    onDismiss = { NetworkAlertCenter.dismissBanner() },
-                )
+                        },
+                        onDismiss = { NetworkAlertCenter.dismissBanner() },
+                    )
+                }
             }
+            below()
         }
     }
 }

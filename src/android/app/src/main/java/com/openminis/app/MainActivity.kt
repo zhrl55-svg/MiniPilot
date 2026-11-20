@@ -623,7 +623,12 @@ class MainActivity : ComponentActivity() {
 
                 // [FEAT-261021-05] A proxy or Tailscale that keeps failing:
                 // a floating banner over every screen (iOS ContentView).
-                com.openminis.app.ui.settings.NetworkAlertBannerHost(navController)
+                // [T-hub-approval-banner] The slot below holds the remote
+                // approval banner: it shares the same column, so the two
+                // never cover each other.
+                com.openminis.app.ui.settings.NetworkAlertBannerHost(navController) {
+                    com.openminis.app.ui.chat.HubApprovalBanner()
+                }
             }
         }
     }
