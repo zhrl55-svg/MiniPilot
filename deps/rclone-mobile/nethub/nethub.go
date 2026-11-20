@@ -96,6 +96,16 @@ type ExitOnlineReporter interface {
 	ExitNodeOnline() bool
 }
 
+// PeerOnlineReporter is optionally implemented by a Tailnet: the peer
+// behind a tailnet address. known is false when the host is not a peer of
+// this tailnet (a public name behind an exit node, an address of an
+// accepted subnet route); online is the control plane's view of that
+// peer - false means the peer is known to be down (its machine is off).
+// Must not block.
+type PeerOnlineReporter interface {
+	PeerOnline(host string) (known bool, online bool)
+}
+
 // errExitOffline: the exit node is offline, and the node would otherwise
 // send the connection out through the system network - a silent direct
 // connection the user's route never asked for (FIX-261025-27). Classified
@@ -522,6 +532,22 @@ func (h *Hub) describePeer(host string) string {
 		return pd.DescribePeer(host)
 	}
 	return ""
+}
+
+// peerKnownOffline: the dial target is a peer of this tailnet and the
+// control plane says it is down. Dialing such a peer is EXPECTED to fail
+// (the machine behind it is off) and says nothing about the node's own
+// health, so such a failure must not count towards the "tailscale keeps
+// failing" banner: one powered-off machine raised it (FIX-261120-01).
+// A host the tailnet does not know (a public name, a subnet route) is
+// never "offline" - its failures still count.
+func (h *Hub) peerKnownOffline(host string) bool {
+	r, ok := h.ts.(PeerOnlineReporter)
+	if !ok {
+		return false
+	}
+	known, online := r.PeerOnline(host)
+	return known && !online
 }
 
 // DialVia opens a connection for `tag` to addr exactly as a SOCKS client of

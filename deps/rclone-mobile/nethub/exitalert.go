@@ -15,7 +15,10 @@ import (
 // Only failures that implicate the path itself count:
 //   - proxy:     proxy-connect, proxy-tls, proxy-handshake. "proxy-target"
 //     (the proxy works but cannot reach that host) does not.
-//   - tailscale: tailnet (the dial through the node failed).
+//   - tailscale: tailnet (the dial through the node failed), except when
+//     the target is a peer the tailnet knows is offline: dialing a
+//     machine that is off is EXPECTED to fail and says nothing about the
+//     node, so it must not raise the banner (FIX-261120-01).
 //
 // Direct dials are never counted: they are not a setting to switch off.
 //
@@ -50,18 +53,28 @@ func exitKey(d Decision) string {
 	return ""
 }
 
-func countsAgainstExit(d Decision, stage string) bool {
+// countsAgainstExit: does this failure count against the exit's streak?
+// addr is the dial target ("host:port").
+func (h *Hub) countsAgainstExit(d Decision, addr, stage string) bool {
 	switch d.Kind {
 	case "proxy":
 		return stage == "proxy-connect" || stage == "proxy-tls" || stage == "proxy-handshake"
 	case "tailscale":
-		return stage == "tailnet"
+		if stage != "tailnet" {
+			return false
+		}
+		// The tailnet knows the peer and says it is down (its machine is
+		// off): the dial failing is the expected outcome, not a fault of
+		// the node (FIX-261120-01).
+		return !h.peerKnownOffline(hostOf(addr))
 	}
 	return false
 }
 
-// recordExit is called once per dial with its outcome.
-func (h *Hub) recordExit(d Decision, err error) {
+// recordExit is called once per dial with its outcome. addr is the dial
+// target ("host:port"): the tailscale branch needs it to tell a failure
+// at the node from a failure at a peer that is offline.
+func (h *Hub) recordExit(d Decision, addr string, err error) {
 	key := exitKey(d)
 	if key == "" {
 		return
@@ -79,7 +92,7 @@ func (h *Hub) recordExit(d Decision, err error) {
 		return
 	}
 	stage := Stage(err)
-	if !countsAgainstExit(d, stage) {
+	if !h.countsAgainstExit(d, addr, stage) {
 		return
 	}
 	t.mu.Lock()

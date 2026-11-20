@@ -237,7 +237,7 @@ func (ProxyView) IsTailnetName(host string) bool {
 // for dial logs; "" when the host is not a known peer.
 func (ProxyView) DescribePeer(host string) string {
 	r := currentRoutes()
-	b := r.peers[strings.ToLower(strings.TrimSuffix(host, "."))]
+	b := peerBriefFor(r, host)
 	if b == nil {
 		if !r.running {
 			return "node " + orDash(r.state)
@@ -249,4 +249,32 @@ func (ProxyView) DescribePeer(host string) string {
 		status = "online"
 	}
 	return fmt.Sprintf("%s %s %s", b.name, status, b.path)
+}
+
+// peerBriefFor: the peer behind a tailnet address in this snapshot, by its
+// tailnet IP, its full MagicDNS name or its short name.
+func peerBriefFor(r routeCache, host string) *peerBrief {
+	return r.peers[strings.ToLower(strings.TrimSuffix(host, "."))]
+}
+
+// peerOnline: the peer behind a tailnet address in this snapshot. known
+// says the tailnet knows the host at all (a public name behind an exit
+// node or an address of an accepted subnet route is not a peer); online
+// is the control plane's view of that peer - false means the peer is
+// known to be down, its machine is off.
+func peerOnline(r routeCache, host string) (known bool, online bool) {
+	b := peerBriefFor(r, host)
+	if b == nil {
+		return false, false
+	}
+	return true, b.online
+}
+
+// PeerOnline (nethub.PeerOnlineReporter): the peer behind a tailnet
+// address, for the dial paths that must tell a failure at the node from a
+// failure at a peer that is off. A peer that is "online" may still be
+// unreachable (see peerJSON.Online), so online=true only says the failure
+// is not explained by the peer being off.
+func (ProxyView) PeerOnline(host string) (bool, bool) {
+	return peerOnline(currentRoutes(), host)
 }

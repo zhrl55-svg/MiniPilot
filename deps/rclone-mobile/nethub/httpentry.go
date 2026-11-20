@@ -192,7 +192,7 @@ func (h *Hub) handleHTTP(c net.Conn) {
 	cancel()
 	ms := time.Since(t0).Milliseconds()
 	h.conns.Add(1)
-	h.recordExit(d, err)
+	h.recordExit(d, addr, err)
 	if err != nil {
 		h.failures.Add(1)
 		h.logFailure(id, tag, addr, d, ms, err)

@@ -444,7 +444,7 @@ func (h *Hub) dialUDPRoute(id, tag, dst, host string) (net.Conn, Decision, int64
 	}
 	cancel()
 	ms := time.Since(t0).Milliseconds()
-	h.recordExit(d, err)
+	h.recordExit(d, dst, err)
 	if err != nil {
 		h.udp.dialFailures.Add(1)
 		h.logFailure(id, tag, dst, d, ms, err)

@@ -217,7 +217,7 @@ func (x *XMap) handle(c net.Conn) {
 	cancel()
 	ms := time.Since(t0).Milliseconds()
 	x.conns.Add(1)
-	h.recordExit(d, err)
+	h.recordExit(d, addr, err)
 	if err != nil {
 		x.failures.Add(1)
 		h.logFailure(id, x.tag, addr, d, ms, err)
