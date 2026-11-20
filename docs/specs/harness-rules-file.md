@@ -43,12 +43,31 @@ Placement in the prompt: appended at the very end, after the memory fragments
 and device context, before the debug-probe overlay. The cache-stable prefix is
 untouched.
 
-## First migrated group
+## Migrated groups
 
-The **execution-discipline** block (formerly `[T-agent-prompt-no-phantom-checkins]`):
-act immediately, `delay`-chain within a turn, register `minis-scheduled` for
-after the turn, never promise future action, close honestly. Platform-specific
-scheduling mechanics stay in each platform's "Scheduled tasks" section.
+| group | status | note |
+|---|---|---|
+| Execution discipline | ✅ migrated 2026-11-20 | platform-neutral wording; scheduling mechanics stay in each platform's "Scheduled tasks" section |
+| Tone and style | ✅ migrated 2026-11-20 | text was byte-identical on both platforms |
+
+## Audit result for the remaining groups
+
+The two platform prompts have **drifted**, so most groups cannot be moved
+without first deciding which version is correct:
+
+| group | blocker |
+|---|---|
+| Shared directory list | GLOBAL.md line differs: Android "writable, you may update it", iOS "read-only, user-maintained"; mounts line names different entry points |
+| minis:// URL rules | iOS has auto-play + tappable-preview bullets; Android has an inline media-type list and a browser-gated note |
+| File creation guidelines | **contradictory**: Android says heredocs "may mis-parse … avoid whenever possible"; iOS says heredocs "work reliably". Also Android-only ICMP/Java/rg bullets |
+| Environment variables | Android points at `minis-self links`; iOS lists paths inline |
+| Self-reference (`minis-self`) | Android-only command set |
+| Scheduled tasks | genuinely platform-specific (alarm vs best-effort/Shortcuts) |
+| Tool bullets / schemas / switches | must match the compiled schema; guardrails — never self-editable |
+
+Next migration requires a **two-platform text decision** first (pick one
+authentic version per group), then the mechanical move. Do not blindly copy
+one side into the shared file.
 
 ## How to migrate another rule group
 

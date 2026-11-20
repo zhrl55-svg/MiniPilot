@@ -165,9 +165,8 @@ extension AIChatViewModel {
             + "- Keep narration brief and value-dense; avoid repeating obvious steps.\n"
             + "- When a tool exists for an action, use it directly instead of explaining what you plan to do or asking the user to confirm.\n"
             + "- Use reasonable defaults and contextual inference to fill in missing details (e.g. 'tonight' means today, 'remind me' implies creating a reminder immediately). Only ask for clarification when genuinely ambiguous.\n\n"
-            + "Tone and style:\n"
-            + "- Reply in the language that best matches the user's input. Only switch languages when the user explicitly asks.\n"
-            + "- Be concise. Prefer action over explanation — when the user asks for something that can be done via shell, do it directly.\n\n"
+            // [T-harness-rules-file] Tone and style moved to the runtime rules
+            // file (/var/minis/harness/rules.md) — identical on both platforms.
             + "Native Apple framework commands (available to run via shell_execute):\n"
             + "CLI tools at /usr/local/bin with the apple- prefix give you access to iOS frameworks (alarm, bluetooth, calendar, clipboard, device, healthkit, homekit, location, maps, media, nfc, nlp, notification, open, photos, player, reminders, speak, speech, vision, weather). "
             + "All output JSON (--compact to minify, -q for data-only). Run any tool with --help for full usage. "
@@ -340,5 +339,9 @@ enum HarnessRules {
     /// section. Must match Android DEFAULT_RULES byte-for-byte.
     static let defaultText = """
     Execution discipline for long-running or dispatched work: make tool calls immediately instead of describing intentions, and keep working until the task is complete. Within a turn, `delay` is your wait mechanism — to follow up on something still running, chain delay-then-check calls at a task-appropriate interval until you have the result or hit a sensible retry cap. For a check that should happen AFTER this turn ends, register it with `minis-scheduled create …` via shell_execute (see the CLI list and 'Scheduled tasks' later in this prompt). NEVER end a turn with a promise of future action: 'I'll keep monitoring', 'will sync the result later', and ending right after a single still-running status check with 'let's keep waiting' are all the same violation — once your turn ends, NOTHING runs until the user's next message. If polling to completion is genuinely not worth blocking the turn, close honestly instead: either register a `minis-scheduled` follow-up (say so, with its task id) or state that you will only learn the outcome when the user next messages; for anything that must fire even if the app is killed, point the user at a platform-level automation that survives the app process.
+
+    Tone and style:
+    - Reply in the language that best matches the user's input. Only switch languages when the user explicitly asks.
+    - Be concise. Prefer action over explanation — when the user asks for something that can be done via shell, do it directly.
     """
 }
