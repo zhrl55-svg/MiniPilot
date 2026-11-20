@@ -58,7 +58,10 @@ object HubCallTool {
                 "The arguments of the action: shell → {command, cwd?, timeout_ms?}; files → {path?, depth?}; " +
                     "file.get → {path, offset?, length?}; file.put → {path, mime, data(base64)}; " +
                     "screen → {display?}; info → {}; mode.set → {mode: ask|smart|auto}; " +
-                    "notify → {title?, body?} — both optional, title defaults to \"minis\".",
+                    "notify → {title?, body?, receipt?} — title/body optional, title defaults to \"minis\"; " +
+                    "receipt is an optional machine-readable handover " +
+                    "{re, status: working|done|blocked, summary, artifacts:[{path, sha256?, lines?}], needs:[…]} " +
+                    "that the other side can read without parsing the text.",
             ),
         ),
         required = listOf("tool_title", "device", "action", "args"),
@@ -103,6 +106,17 @@ object HubCallTool {
         }
         if (!ACTIONS.contains(action)) {
             return ToolExecutionResult("不支持的动作：$action", false)
+        }
+
+        // [T-hub-receipt] A notify may carry a machine-readable handover.
+        // It is checked here, before anything goes on the wire, so the model
+        // learns that the object was wrong instead of the other side storing
+        // a half-valid receipt.
+        if (action == "notify") {
+            val problem = receiptProblem(actionArgs)
+            if (problem != null) {
+                return ToolExecutionResult("receipt 不合法：$problem", false)
+            }
         }
 
         val result = Hub.call(device.id, action, actionArgs, sessionId, toolCallId)
@@ -157,6 +171,21 @@ object HubCallTool {
             }
         }
         return slim.toString(2)
+    }
+
+    /**
+     * [T-hub-receipt] Why a notify's receipt is refused, or null when it is
+     * fine.
+     *
+     * The check happens before anything goes on the wire, so the model learns
+     * that the object was wrong instead of the other side storing a
+     * half-valid receipt.
+     */
+    internal fun receiptProblem(args: JSONObject): String? {
+        if (!args.has("receipt") || args.isNull("receipt")) return null
+        val problems = HubReceipt.problems(args.optJSONObject("receipt"))
+        if (problems.isEmpty()) return null
+        return problems.joinToString("；")
     }
 
     /**

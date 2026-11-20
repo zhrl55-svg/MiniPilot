@@ -24,9 +24,20 @@ import time
 
 import executor
 import hubkit
+import receipt
 from hubkit import ActionError
 
 passed: list[str] = []
+
+
+class FakeSocket:
+    """Collects the frames the executor writes, in order."""
+
+    def __init__(self) -> None:
+        self.sent: list[dict] = []
+
+    async def send(self, text: str) -> None:
+        self.sent.append(json.loads(text))
 
 
 def ok(name: str) -> None:
@@ -121,6 +132,52 @@ def main() -> int:
     assert info.get("shell_program") == program, info
     assert info.get("roots"), info
     ok("info reports the shell program and the allowed roots")
+
+    # ---- working: the PC says the call is running -------------------------
+    socket = FakeSocket()
+    talking = executor.Executor(make_cfg(tmp))
+    talking.ws = socket
+    asyncio.run(talking._handle_call({
+        "id": "call-1",
+        "from": {"id": "phone-1", "name": "PHONE"},
+        "action": "shell",
+        "args": {"command": "echo hello"},
+    }))
+    kinds = [frame.get("type") for frame in socket.sent]
+    assert "working" in kinds, socket.sent
+    working = next(frame for frame in socket.sent if frame.get("type") == "working")
+    assert working["id"] == "call-1", working
+    assert working.get("body", {}).get("message"), working
+    assert kinds.index("working") < kinds.index("result"), kinds
+    ok("a shell call is acknowledged with a working frame before its result")
+
+    # ---- notify carries a machine-readable receipt ------------------------
+    receipts_cfg = make_cfg(tmp)
+    receipts_ex = executor.Executor(receipts_cfg)
+    body = asyncio.run(receipts_ex._do_notify({
+        "title": "done",
+        "body": "the task is finished",
+        "receipt": receipt.build(re="m-1", status="done", summary="finished"),
+    }))
+    assert body.get("delivered") is False, body
+    assert body.get("receipt", {}).get("re") == "m-1", body
+    with open(receipts_cfg.receipts, "r", encoding="utf-8") as fh:
+        stored = [json.loads(line) for line in fh if line.strip()]
+    assert len(stored) == 1, stored
+    assert stored[0]["status"] == "done", stored
+    ok("a notify stores the machine-readable receipt next to the journal")
+
+    try:
+        asyncio.run(receipts_ex._do_notify({
+            "title": "x",
+            "body": "y",
+            "receipt": {"re": "m-1", "status": "finished"},
+        }))
+    except ActionError as exc:
+        assert "receipt" in exc.message, exc.message
+        ok("an invalid receipt is refused with a clear reason")
+    else:
+        raise AssertionError("an invalid receipt must be refused")
 
     print(f"\nPASS - {len(passed)} checks")
     return 0

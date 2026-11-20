@@ -2,10 +2,14 @@ package com.openminis.app.hub
 
 import android.content.Context
 import com.openminis.app.logging.AppLogger
+import com.openminis.app.service.SessionActivityTracker
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.util.UUID
@@ -37,11 +41,33 @@ object Hub {
     )
 
     class PendingCall(
+        val id: String,
         val deferred: CompletableDeferred<HubResult>,
         val target: String,
         val sessionId: String,
         val toolCallId: String,
-    )
+    ) {
+        /**
+         * [T-hub-working] Whether the PC acknowledged this call.
+         *
+         * The state belongs to THIS call: a working frame carries the call
+         * id, and a frame whose id is not in flight is dropped. So a stale
+         * hint can never land on a newer call.
+         */
+        @Volatile
+        var working: Boolean = false
+            private set
+
+        /** The PC's own wording, e.g. "PC 已受理，正在执行…". */
+        @Volatile
+        var workingMessage: String = ""
+            private set
+
+        fun markWorking(message: String) {
+            working = true
+            workingMessage = message
+        }
+    }
 
     private var client: HubClient? = null
     private var appContext: Context? = null
@@ -49,6 +75,15 @@ object Hub {
     private var configStamp: String? = null
     private val deviceTable = CopyOnWriteArrayList<HubDevice>()
     private val pending = ConcurrentHashMap<String, PendingCall>()
+
+    /**
+     * [T-hub-working] The calls the PC acknowledged, and what it said.
+     *
+     * The UI reads this to show progress instead of a silent wait. The map
+     * is keyed by call id and an entry leaves when its call ends.
+     */
+    private val _workingCalls = MutableStateFlow<Map<String, String>>(emptyMap())
+    val workingCalls: StateFlow<Map<String, String>> = _workingCalls.asStateFlow()
 
     @Volatile
     var status: Status = Status.OFFLINE
@@ -209,7 +244,7 @@ object Hub {
         val ctx = appContext ?: return HubResult(false, null, "offline", "hub 未初始化")
         val id = nextCallId(ctx)
         val deferred = CompletableDeferred<HubResult>()
-        pending[id] = PendingCall(deferred, target, sessionId, toolCallId)
+        pending[id] = PendingCall(id, deferred, target, sessionId, toolCallId)
         // [H-004] The command as the phone is about to send it. The PC logs
         // the same string as a repr; comparing the two tells us which hop
         // mangled the quotes.
@@ -223,6 +258,7 @@ object Hub {
         val result = withTimeoutOrNull(timeoutMs) { deferred.await() }
         if (result == null) {
             pending.remove(id)
+            clearWorking(id)
             return HubResult(false, null, "timeout", "远程设备没有在期限内回应")
         }
         return result
@@ -239,7 +275,31 @@ object Hub {
         val ids = pending.keys.toList()
         for (id in ids) {
             pending.remove(id)?.deferred?.complete(HubResult(false, null, "disconnected", reason))
+            clearWorking(id)
         }
+    }
+
+    /**
+     * [T-hub-working] The PC took the call; show that something is running.
+     *
+     * A remote call can take minutes (the phone's ceiling is 15 minutes),
+     * and until the PC answers there is nothing on screen but a spinner.
+     */
+    private fun onWorking(call: PendingCall, message: String) {
+        val text = message.ifBlank { HubWorking.DEFAULT_MESSAGE }
+        call.markWorking(text)
+        _workingCalls.value = _workingCalls.value + (call.id to text)
+        AppLogger.info(TAG, "hub call ${call.id} accepted by ${call.target}: $text")
+        // The tool status is what the notification and the floating overlay
+        // render. It is the only progress surface a hub call has today.
+        SessionActivityTracker.updateToolStatus(text)
+    }
+
+    /** [T-hub-working] The call is over; its progress hint goes with it. */
+    private fun clearWorking(id: String) {
+        val current = _workingCalls.value
+        if (!current.containsKey(id)) return
+        _workingCalls.value = current - id
     }
 
     // ── inbound frames ─────────────────────────────────────────────────────
@@ -260,6 +320,7 @@ object Hub {
             HubFrames.TYPE_RESULT -> {
                 val id = frame.optString("id")
                 val call = pending.remove(id) ?: return
+                clearWorking(id)
                 val ok = frame.optBoolean("ok", false)
                 call.deferred.complete(
                     HubResult(
@@ -276,6 +337,7 @@ object Hub {
             HubFrames.TYPE_ERROR -> {
                 val id = frame.optString("id")
                 val call = if (id.isEmpty()) null else pending.remove(id)
+                clearWorking(id)
                 call?.deferred?.complete(
                     HubResult(
                         false,
@@ -284,6 +346,18 @@ object Hub {
                         frame.optString("message", ""),
                     )
                 )
+            }
+            HubFrames.TYPE_WORKING -> {
+                // The id must match a call that is still in flight. A working
+                // frame for an unknown id is stale — that call already got
+                // its result — and dropping it keeps an old hint from
+                // landing on a newer call.
+                val id = HubWorking.target(frame, pending.keys) ?: run {
+                    AppLogger.info(TAG, "working for an unknown call")
+                    return
+                }
+                val call = pending[id] ?: return
+                onWorking(call, HubWorking.message(frame))
             }
             HubFrames.TYPE_EVENT -> {
                 val body = frame.optJSONObject("body") ?: return

@@ -69,6 +69,8 @@ class Config:
     limits: dict[str, Any] = field(default_factory=dict)
     shell: dict[str, Any] = field(default_factory=dict)
     journal: str = ""
+    #: Where the machine-readable receipts land (one JSON line each).
+    receipts: str = ""
 
     @property
     def file_max(self) -> int:
@@ -140,6 +142,9 @@ def load_config(path: str) -> Config:
         limits=raw.get("limits") or {},
         shell=raw.get("shell") or {},
         journal=here(raw.get("journal") or "journal.jsonl"),
+        # [T-hub-receipt] The receipts file sits next to the journal: one
+        # JSON line per handover, machine-readable, appended only.
+        receipts=here(raw.get("receipts") or "receipts.jsonl"),
     )
     if not cfg.actions:
         raise SystemExit("config: `actions` is empty — declare what this device can do")
@@ -174,6 +179,21 @@ def hello_frame(cfg: Config) -> dict[str, Any]:
 
 def ok(call_id: str, body: dict[str, Any]) -> dict[str, Any]:
     return {"type": "result", "id": call_id, "ok": True, "body": body}
+
+
+def working(call_id: str, message: str = "PC 已受理，正在执行…") -> dict[str, Any]:
+    """[T-hub-working] Progress acknowledgement for a call that is running.
+
+    The phone waits for the result with a 15-minute ceiling (C6) and has
+    nothing to show meanwhile. A `working` frame says "this call is running",
+    so the transcript can show that instead of going quiet. It changes
+    nothing about the result: the same call still ends in exactly one
+    `result` frame.
+
+    The id is the call's own id. A phone that does not know the id drops the
+    frame, so a stale hint can never land on a newer call.
+    """
+    return {"type": "working", "id": call_id, "body": {"message": message}}
 
 
 def fail(call_id: str, code: str, message: str) -> dict[str, Any]:

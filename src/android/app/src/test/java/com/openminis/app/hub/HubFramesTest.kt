@@ -65,6 +65,18 @@ class HubFramesTest {
         assertEquals("bad_frame", err.optString("code"))
     }
 
+    /**
+     * [T-hub-working] The progress frame carries the call's own id, so the
+     * phone can drop one that belongs to a call it no longer waits for.
+     */
+    @Test
+    fun `a working frame carries the call id and the message`() {
+        val frame = HubFrames.working("phone-abcd1234:7:1a2b", "PC 已受理，正在执行…")
+        assertEquals("working", frame.optString("type"))
+        assertEquals("phone-abcd1234:7:1a2b", frame.optString("id"))
+        assertEquals("PC 已受理，正在执行…", frame.optJSONObject("body").optString("message"))
+    }
+
     @Test
     fun `a frame that is not an object does not parse`() {
         assertNull(HubFrames.parse("not json at all"))

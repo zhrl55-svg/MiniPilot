@@ -58,6 +58,20 @@ object HubFrames {
 
     fun ping(): JSONObject = JSONObject().put("type", TYPE_PING)
 
+    /**
+     * [T-hub-working] The PC acknowledged the call and is running it.
+     *
+     * The id is the call's own id: the phone drops a working frame whose id
+     * it does not know, so a stale hint can never land on a newer call. The
+     * frame says nothing about the outcome — the same call still ends in
+     * exactly one result.
+     */
+    fun working(id: String, message: String): JSONObject =
+        JSONObject()
+            .put("type", TYPE_WORKING)
+            .put("id", id)
+            .put("body", JSONObject().put("message", message))
+
     fun error(code: String, message: String): JSONObject =
         JSONObject().put("type", TYPE_ERROR).put("code", code).put("message", message)
 

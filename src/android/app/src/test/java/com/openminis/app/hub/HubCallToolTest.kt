@@ -2,6 +2,8 @@ package com.openminis.app.hub
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -51,5 +53,46 @@ class HubCallToolTest {
     @Test
     fun `desktop notification is offered`() {
         assertTrue("notify" in HubCallTool.ACTIONS)
+    }
+
+    /**
+     * [T-hub-receipt] A notify may carry a machine-readable handover. A
+     * broken one is refused on the phone — before anything goes on the wire
+     * — so the model learns why instead of the other side storing half-valid
+     * data.
+     */
+    @Test
+    fun `a notify without a receipt is fine`() {
+        assertNull(HubCallTool.receiptProblem(JSONObject()))
+        assertNull(HubCallTool.receiptProblem(JSONObject().put("title", "done")))
+    }
+
+    @Test
+    fun `a valid receipt passes`() {
+        val args = JSONObject().put(
+            "receipt",
+            JSONObject()
+                .put("re", "m-20261120-003")
+                .put("status", "done")
+                .put("summary", "finished"),
+        )
+        assertNull(HubCallTool.receiptProblem(args))
+    }
+
+    @Test
+    fun `a broken receipt is refused with a reason`() {
+        val args = JSONObject().put(
+            "receipt",
+            JSONObject().put("re", "m-20261120-003").put("status", "finished"),
+        )
+        val problem = HubCallTool.receiptProblem(args)
+        assertNotNull(problem)
+        assertTrue(problem!!.contains("status"))
+    }
+
+    @Test
+    fun `a receipt that is not an object is refused`() {
+        val problem = HubCallTool.receiptProblem(JSONObject().put("receipt", "not an object"))
+        assertNotNull(problem)
     }
 }

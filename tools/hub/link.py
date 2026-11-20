@@ -321,6 +321,8 @@ class Link:
             await self.on_result(peer, frame)
         elif kind == "event":
             await self.on_event(peer, frame, raw)
+        elif kind == "working":
+            await self.on_working(peer, frame)
         elif kind == "devices":
             await self._send(peer.ws, self.devices_frame())
         elif kind == "rename":
@@ -332,7 +334,7 @@ class Link:
             await self._send(peer.ws, {"type": "pong"})
         elif kind == "hello":
             self._error(peer.ws, "bad_frame", "hello only once per connection")
-        elif kind in ("pong", "profile", "sync", "working", "stop", "devices_ack"):
+        elif kind in ("pong", "profile", "sync", "stop", "devices_ack"):
             pass
         else:
             self._error(peer.ws, "bad_frame", f"unknown frame type {kind!r}")
@@ -393,6 +395,18 @@ class Link:
 
     async def on_event(self, peer: Peer, frame: dict[str, Any], raw: str | bytes) -> None:
         self.log.debug("dropping inbound %s event from %s", (frame.get("body") or {}).get("stage"), peer.name)
+
+    async def on_working(self, peer: Peer, frame: dict[str, Any]) -> None:
+        """[T-hub-working] Where does a progress frame go?
+
+        The direct endpoint never routes it: the executor writes it straight
+        onto the phone's socket, because the phone and the executor share one
+        connection. A relay has to decide, and the answer is the same as for
+        the result that follows — the peer that made the call. The relay in
+        this repo does that in dev_relay.Relay.on_working; the cloud relay
+        needs the same routing, or the frame is dropped there.
+        """
+        self.log.debug("dropping inbound working frame from %s", peer.name)
 
     async def on_forget(self, peer: Peer, device_id: str) -> None:
         if device_id in self.peers:

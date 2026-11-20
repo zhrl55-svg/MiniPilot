@@ -82,6 +82,25 @@ class Relay(Link):
             self.log.info("call %s failed: %s", call_id, frame.get("error"))
         await self._send(caller.ws, out)
 
+    async def on_working(self, peer: Peer, frame: dict[str, Any]) -> None:
+        """[T-hub-working] Forward a progress frame to the caller of the call.
+
+        The relay never interprets a frame, but it does decide where it goes:
+        a `working` frame belongs to the call it names, so it goes to the
+        peer that made that call — the same peer the result will go to.
+        """
+        call_id = str(frame.get("id") or "")
+        record = self.pending.get(call_id)
+        if record is None:
+            self.log.debug("working for an unknown call %s", call_id)
+            return
+        caller = self.peers.get(record.caller.device_id)
+        if caller is None:
+            return
+        out = dict(frame)
+        out["from"] = {"id": peer.device_id, "name": peer.name, "kind": peer.kind}
+        await self._send(caller.ws, out)
+
     async def on_event(self, peer: Peer, frame: dict[str, Any], raw: str | bytes) -> None:
         call_id = frame.get("id")
         body = frame.get("body") or {}

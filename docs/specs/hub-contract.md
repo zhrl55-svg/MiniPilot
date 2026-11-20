@@ -104,6 +104,8 @@
 
 **C2.1 未知帧**：回 `error bad_frame`，**socket 保持打开** `[源]`。不要学「未知帧就断连接」，那会让新旧版本无法共存。
 
+**C2.4 `working` 帧**：PC 一受理就发 `{type:"working", id:<call 的 id>, body:{message}}`。手机等结果的上限是 15 分钟（C6），中间不能只有一片沉默。`id` 必须是**那次 call 的 id**：手机只认自己还在等的 id，不认识的直接丢掉，所以旧提示不会落到新 call 上。`working` 只是进度提示，**不改变 result/error 的掉落逻辑**——同一次 call 仍然只落一个结果。中继要把它转给发起方（和 result 同一个方向），否则这一帧到不了手机。
+
 **C2.2 `actions[]` 必须诚实**：`hello` 里声明什么就代表「我能执行什么」，对方据此派活。声明了却没实现，等于给自己埋一个必超时的洞。`[定]`
 
 **C2.3 web 设备不是目标**：`app` 永不把 `kind:"web"` 放进取目标列表 `[源]`。
@@ -266,6 +268,8 @@ notify   {title, body}                         → {}
 | `HubIdentity` | 持久化 `device_id` / 凭据 / seq | DataStore |
 | `HubClient` | OkHttp WS、hello/welcome、ping、退避、帧编解码 | OkHttp |
 | `Hub` | `devices[]` 表、`call(action,args)`、`find(name)`、挂起 call 的 Map | HubClient |
+| `HubWorking` | `working` 帧的归属判定：帧的 id 不在等待列表里就是旧帧，丢掉 | — |
+| `HubReceipt` | 机器可读回执 schema（`minis.receipt/1`）与校验 | — |
 | `HubActions` | 执行侧动作实现 + `RemoteActionGate` | service API |
 | `HubService` | 前台服务 + 常驻通知，宿主 | `AgentForegroundService` |
 
@@ -283,6 +287,30 @@ notify   {title, body}                         → {}
 **M5 前台与保活**：`HubService` 前台化 + 常驻通知；被 EMUI 杀掉后由 `AccessibilityRecoveryManager` 的同类路径重启。通知文案不许写成广告（否则用户会关掉通知，服务随之降级）。
 
 **M6 设备列表 UI**：会话页顶部显示「已连接：Desk / buntu」，离线灰掉并给重连按钮。
+
+### 10.1 机器可读回执 schema（R 条款）
+
+**R1 目的**：只说「做完了，看文件」的回执，逼着对方解析人话。回执里带一份机器可读的对象，两边读同一组字段。
+
+```json
+{
+  "schema":    "minis.receipt/1",
+  "re":        "m-20261120-003",
+  "status":    "working" | "done" | "blocked",
+  "summary":   "一行，给程序读的",
+  "artifacts": [{"path": "...", "sha256": "...", "lines": 12}],
+  "needs":     ["需要对方做什么"]
+}
+```
+
+**R2 两条通道，同一个对象**：
+
+- PC → Minis：`claude-to-minis.jsonl` 的回执行**额外**带 `summary` / `artifacts` / `needs`；原来的 `message`（人话版）**保留**——schema 是附加，不是替换。
+- Minis → PC：hub 的 `notify` 动作多一个 `receipt` 字段；`title` / `body` 原样照旧（桌面弹窗照旧），PC 把对象落进 `receipts.jsonl`，一行一个。
+
+**R3 校验**：两端各自校验后再落地（手机端 `HubReceipt.problems`，PC 端 `tools/hub/receipt.py` 的 `validate`）。不合法的回执当场拒绝，不要落半份。未知字段一律忽略——schema 会长大，旧读端不能因为多一个字段就拒收。
+
+**R4 `status` 词表**：`working` / `done` / `blocked`。旧信封里的 `received` / `rejected` 对应 `working` / `blocked`。
 
 ---
 
@@ -334,3 +362,4 @@ A1/A2 是 ② 的最小可用闭环；A3–A6 是「敢长期开着」的门槛�
 ## 14. 变更记录
 
 - v0.1（2026-11-07）：初稿。场景 ② 定案；协议对齐 nanoMuse Hub 0.31；删去自造 `approve` 帧（改为 `call{action:"approve"}`）；更正「校验只在发起侧」为双侧判定；动作白名单按可判定性分层；新增幂等、背压、审计、验收条款。
+- v0.2（2026-11-20）：新增 C2.4 `working` 帧（PC 一受理就发，id 对齐 call）与 R 条款回执 schema（`minis.receipt/1`，两条通道）。

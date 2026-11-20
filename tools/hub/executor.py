@@ -33,6 +33,7 @@ from websockets.exceptions import ConnectionClosed
 import hubkit
 import link
 import policy
+import receipt as receipt_mod
 from hubkit import ActionError, Config, brief, fail, hello_frame, load_config, ok, setup_logging
 
 TAG = "executor"
@@ -403,6 +404,15 @@ class Executor:
                 # this action without asking again for grant_s (policy).
                 self.gate.note_approval(sender_id, action)
 
+            if action == "shell":
+                # [T-hub-working] The phone waits for this result with a
+                # 15-minute ceiling (C6) and has nothing to show meanwhile.
+                # Tell it the call is running, so the transcript can say
+                # "已受理" instead of going quiet. The result that follows
+                # is untouched: a working frame is a heartbeat, not an
+                # answer.
+                await self._send(hubkit.working(call_id))
+
             body = await self._dispatch(action, args)
             frame_out = ok(call_id, body)
             self._remember(call_id, frame_out)
@@ -730,12 +740,33 @@ class Executor:
     async def _do_notify(self, args: dict[str, Any]) -> dict[str, Any]:
         title = str(args.get("title") or "minis")
         text = str(args.get("body") or "")
+        # [T-hub-receipt] A notify may carry a machine-readable handover.
+        # The text still pops on the desktop exactly as before; the object is
+        # stored where a program can read it, and an invalid one is refused
+        # instead of being stored half-valid.
+        stored: dict[str, Any] | None = None
+        if args.get("receipt") is not None:
+            problems = receipt_mod.validate(args.get("receipt"))
+            if problems:
+                raise ActionError(
+                    "bad_frame",
+                    "notify receipt is invalid: " + "; ".join(problems),
+                )
+            stored = args["receipt"]
         self.log.info("notify: %s — %s", title, text)
+        body: dict[str, Any] = {}
+        if stored is not None:
+            receipt_mod.append_line(self.cfg.receipts, stored)
+            self.log.info("receipt stored: %s", self.cfg.receipts)
+            body["receipt"] = stored
         hook = (self.cfg.shell or {}).get("notify_command")
         if hook:
             await self._do_shell({"command": f"{hook} {json.dumps(title)} {json.dumps(text)}"})
-            return {"delivered": True}
-        return {"delivered": False, "reason": "no notify_command configured"}
+            body["delivered"] = True
+            return body
+        body["delivered"] = False
+        body["reason"] = "no notify_command configured"
+        return body
 
     # ---------------------------------------------------------------- helpers
     def _remember(self, call_id: str, frame: dict[str, Any]) -> None:
