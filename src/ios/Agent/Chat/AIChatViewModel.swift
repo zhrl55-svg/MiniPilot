@@ -694,6 +694,14 @@ final class AIChatViewModel: ObservableObject, SpeechControlling {
     // MARK: - Published State
 
     @Published var messages: [ChatMessage] = []
+
+    /// [T-probe-overlay] Debug-probe harness overlay, set by the debug RPC's
+    /// chat.prompt `systemPromptAppend` param. Appended at the very end of
+    /// baseSystemPrompt so a probe can A/B a candidate rule against the real
+    /// system prompt WITHOUT rebuilding the app. Nil for every ordinary turn;
+    /// per-VM, and the debug RPC caches one VM per session, so it lasts for
+    /// the probe session only. Never persisted.
+    var debugSystemPromptAppend: String?
     /// [T-in-chat-search] "Search in Chat" for this conversation. Not
     /// @Published: the search bar and the highlighted rows observe it
     /// directly, so typing a query never re-renders the whole chat page.

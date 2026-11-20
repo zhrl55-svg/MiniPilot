@@ -161,6 +161,9 @@ def main() -> int:
                         "use --label to name the artifacts")
     p.add_argument("--serial", default=DEFAULT_SERIAL, help="adb serial of the phone")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
+    p.add_argument("--endpoint", default="",
+                   help="host:port of an already-reachable debug server (e.g. an iOS "
+                        "device over an SSH tunnel). Skips the adb forward step.")
     p.add_argument("--model-entry", default=None, help="modelEntryId to pin (determinism)")
     p.add_argument("--thinking", default="high", help="thinkingLevel to pin")
     p.add_argument("--overlay", default="", help="candidate harness rule prepended to the user turn")
@@ -199,8 +202,12 @@ def main() -> int:
     run_dir = args.runs_dir / f"{run_id}-device"
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    forward(args.serial, args.port)
-    dev = Device(port=args.port)
+    if args.endpoint:
+        host, _, port_s = args.endpoint.partition(":")
+        dev = Device(host=host, port=int(port_s or args.port))
+    else:
+        forward(args.serial, args.port)
+        dev = Device(port=args.port)
 
     manifest = {
         "run_id": run_id,
@@ -251,6 +258,13 @@ def main() -> int:
                       f"timedOut={status.get('timedOut', False)}  tools={len(calls)}\n")
         seq = [c["tool"] for c in calls]
         report.append(f"- tool sequence: {seq}\n")
+        # The behavior of an answer-only probe is the answer itself; keep a
+        # short excerpt in the human report so review does not mean opening
+        # the full messages JSON.
+        answers = [m.get("content", "") for m in messages if m.get("role") == "assistant"]
+        if answers:
+            excerpt = answers[-1].strip().replace("\n", " ")[:220]
+            report.append(f"- answer: {excerpt}\n")
 
     (run_dir / "report.md").write_text("\n".join(report), encoding="utf-8")
     print(f"\nwrote {run_dir}/report.md", file=sys.stderr)

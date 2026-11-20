@@ -1177,6 +1177,13 @@ enum DebugRPCChat {
             store.setInferenceConfig(cfg, for: sid)
         }
 
+        // [T-probe-overlay] Probe-only: candidate harness text appended to the
+        // system prompt (A/B without rebuilding). Assigned on every call so a
+        // reused VM cannot carry an overlay from an earlier probe; absent or
+        // empty clears it.
+        vm.debugSystemPromptAppend = (params["systemPromptAppend"] as? String)
+            .flatMap { $0.isEmpty ? nil : $0 }
+
         // [T-paste-single-split] Faithful E2E driver for the paste pipeline:
         // each entry in `pastedTexts` is stashed exactly as PastableUITextView's
         // paste branch would, and its `[Pasted#N]` literal lands in the prompt —

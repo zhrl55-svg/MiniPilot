@@ -168,6 +168,47 @@ device_safe 为 0**——信箱里的任务要么是协议、要么是验收报�
 `run_device.py` 批量跑时默认只取 `device_safe=true`；显式 `--only-task`
 可越过该过滤；`--include-unsafe` 放开全量（自担风险）。
 
+### iOS 侧 parity（2026-11-20）
+
+iOS 的 App 本身仍叫 **Minis**（`PRODUCT_NAME=$(TARGET_NAME)`、Share 扩展
+"Share to Minis"），所以 iOS 提示词中的 Minis **没有**改成 MiniPilot——
+改了反而会让 agent 自称 MiniPilot 而 App 叫 Minis。iOS 只补探针注入口：
+
+- `AIChatViewModel.debugSystemPromptAppend` 字段
+- `baseSystemPrompt` 尾部追加（与 Android 同位置语义）
+- `DebugRPCProviderChat` 从 `chat.prompt` 参数读取并赋值（每次调用都赋值，
+  省略或空串即清除，避免复用 VM 残留）
+- `DebugMethodRegistry` 声明参数
+
+Windows 上没有 Xcode，iOS 侧只做了源码级实现与人工核对，未编译验证。
+
+### 跨平台 endpoint
+
+`run_device.py --endpoint host:port` 跳过 adb forward，直连任何可达的
+debug server（例如 iOS 设备经 SSH 隧道转发的 5321）。
+
+### 首个 A/B 结果（2026-11-20，Android 真机）
+
+同一批 10 条探针，baseline vs 候选规则「回答 ≤120 汉字，先结论后要点」
+（经 `systemPromptAppend` 注入，零重编译）：
+
+| task | chars A | chars B | len ratio | similarity |
+|---|---|---|---|---|
+| dev-identity | 665 | 149 | 0.22 | 0.297 |
+| dev-selfref | 727 | 157 | 0.22 | 0.192 |
+| dev-discipline | 765 | 174 | 0.23 | 0.173 |
+| dev-watch | 1276 | 177 | 0.14 | 0.146 |
+| dev-tools | 1677 | 210 | 0.13 | 0.038 |
+| dev-links | 488 | 174 | 0.36 | 0.438 |
+| dev-memory | 1137 | 272 | 0.24 | 0.085 |
+| dev-tooltitle | 551 | 189 | 0.34 | 0.189 |
+| dev-approval | 1404 | 266 | 0.19 | 0.099 |
+| dev-scheduled | 755 | 185 | 0.25 | 0.196 |
+
+结论：规则生效且可量化（长度全部收敛到 0.13–0.36，要点保留）。
+这正是 Harness² 的用法——不需要标准答案，同一批任务上的行为差异本身
+就是判据。`compare_runs.py` 生成同样格式的报告。
+
 ### 首个真机结论（2026-11-20）
 
 任务「你运行在哪个应用里？应用叫什么名字？」→ 模型答「**Minis**」；

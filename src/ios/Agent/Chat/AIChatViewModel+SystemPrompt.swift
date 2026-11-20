@@ -255,6 +255,10 @@ extension AIChatViewModel {
             + "For follow-ups and recurring prompts that only need to fire while Minis stays open, run `minis-scheduled create …` via shell_execute (it is best effort and dies with the app process). "
             + "For recurring tasks that must fire even after the app is killed, tell the user to set up an automation in Apple Shortcuts — that is the only guaranteed way to trigger periodic execution on iOS. "
             + "(Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"
+            // [T-probe-overlay] Debug-probe only: candidate harness text passed
+            // through chat.prompt's `systemPromptAppend`. Appended last so the
+            // cache-stable prefix above is untouched; nil for ordinary turns.
+            + (debugSystemPromptAppend.map { "\n\n" + $0 } ?? "")
     }
 
     /// [T-memory-toggle-gates-injection-and-tools-ios]

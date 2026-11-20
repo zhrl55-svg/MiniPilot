@@ -1392,6 +1392,7 @@ enum DebugMethodRegistry {
                 ParamSpec(name: "wait", type: "bool", required: false, default: false, description: "Block until completion."),
                 ParamSpec(name: "waitTimeout", type: "int", required: false, default: 600, description: "Seconds when wait=true. Clamped to [1, 1800]."),
                 ParamSpec(name: "pastedTexts", type: "[string]", required: false, default: nil, description: "Stash each string as a long-paste placeholder before sending; its [Pasted#N] literal replaces a {{PASTE<i>}} token in prompt, or is appended."),
+                ParamSpec(name: "systemPromptAppend", type: "string", required: false, default: nil, description: "Probe-only: candidate harness text appended to this session VM's system prompt (A/B without rebuilding). Cleared when omitted or empty."),
             ],
             returns: "{sessionId, isNewSession, modelName, status, prompt, responseText, userMessageId, tokenUsage?}",
             example: ["prompt": "Say hi", "wait": true]
