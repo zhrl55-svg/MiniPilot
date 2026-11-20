@@ -216,3 +216,6 @@ tools/hub/hubroot/ego_q_*.mjs
 
 # ego 常驻服务的运行时 pid 文件
 tools/hub/hubroot/ego_srv.pid
+
+# 设备告警镜像：内容来自手机会话（问题单摘要），只留本地
+minis-inbox/alerts.jsonl

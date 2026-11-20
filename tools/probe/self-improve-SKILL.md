@@ -89,9 +89,52 @@ minis-sessions-cli messages --id <session_id> --tools -q
 列出写出的问题单路径 + 每条一行摘要 + 按危害排序的前 3 条。
 指出根因属于哪一类（行为规则 / 工具描述 / 阈值 / 技能 / 护栏），但不要改。
 
+### 6. 攒够了就上报 Claude（只报，不修）
+
+你**不能**修改规则、技能、源码，也**不能**自己触发编译或安装。
+这些动作按约定一律由 Claude（PC 侧）执行。你能做的是在问题攒够时
+**通知 Claude**，并把证据的位置指给它。
+
+告警出口（设备本地的全局目录，PC 侧会主动来取；**不要写 PC 挂载**，
+那是 PC→手机的单向快照，你写的文件回不到 PC）：
+
+```
+/var/minis/shared/self-improve/alerts.jsonl
+```
+
+步骤：
+
+1. 统计当前未上报的问题单：`ls /var/minis/shared/self-improve/*.json` 里，
+   id 大于去重标记里记录的 id 的数量（标记文件：
+   `/var/minis/shared/self-improve/.last_alert_id`，不存在就是 0）。
+2. 满足任一条件才算「攒够」：
+   - 未上报数量 ≥ 10；或
+   - 任意一张 severity=blocker；或
+   - 同一个 surface+tool 组合累计 ≥ 3 张未上报。
+3. 不满足就什么都不做（不要每天重复发同样的告警）。
+4. 满足时用 shell 追加一行 JSON 到 `alerts.jsonl`（UTF-8，一行一个 JSON 对象，
+   只追加不修改历史行）：
+
+```json
+{"id":"a-20261120-001","ts":"<ISO8601>","from":"minis","severity":"warn",
+ "summary":"self-improve: N 张未处理问题单待归并/A/B/修复",
+ "evidence":"/var/minis/shared/self-improve/（列出本批 id 与各自的 symptom 一行摘要）",
+ "ask":"请 Claude 拉取问题单，按根因归并；规则类走 A/B 闸门，源码类由 Claude 修改、编译、装机。不要让我自己改。"}
+```
+
+   `id` 用 `a-<date>-<seq>`，同一天多次上报序号递增；不要把问题单正文整篇
+   塞进消息，只给路径 + 每行摘要。
+5. 追加成功后把本批最大的问题单 id 写进 `.last_alert_id`（用 file_write 或
+   shell `printf ... > 文件`），下次只统计它之后的。
+6. 在汇总回答里加一句：「已向 Claude 上报 N 张问题单（告警 id=…）」。
+   上报失败（挂载不可写/路径不存在）就如实写「上报失败：原因」，不要重试
+   超过 1 次，更不要改挂载或跳过这一步悄悄结束。
+
 ## 边界
 
 - 不读密钥、环境变量值、API key、OAuth token
-- 不改产品任何文件；只写 self-improve 目录
+- 不改产品任何文件；写文件只允许 `/var/minis/shared/self-improve/`
+  这一个目录（问题单、去重标记、alerts.jsonl 都在这里）。**绝不**写
+  rules.md、skill、源码、设置、PC 挂载或其他仓库文件。
 - 不把 debug 探针会话当真实用户问题
 - 不确定时标 info，不要把猜测写成 blocker
