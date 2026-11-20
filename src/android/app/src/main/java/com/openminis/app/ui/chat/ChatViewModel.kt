@@ -17545,7 +17545,14 @@ Memory system (currently DISABLED):
         // place for finding files and searching their contents, and steers the
         // model to rg (not in the default rootfs, hence the install-once step).
         // Mirrors iOS AIChatViewModel.baseSystemPrompt.
-        val base = identitySection + """You should proactively use shell commands to accomplish the user's tasks — installing packages (apk add), writing and running scripts, managing files, networking, and any other operations a Linux terminal can perform.
+        // [T-brand-minipilot] The app was renamed MiniPilot, but the package
+        // id (com.openminis.app.dev) and the OpenMinis codebase name are
+        // historical identifiers. Without an explicit line the model infers
+        // "Minis" from the package id even though the prompt no longer says
+        // it (probe dev-identity, 2026-11-20). Android-only: the iOS app is
+        // still named Minis.
+        val base = identitySection + """This application is named MiniPilot. The Android package id (com.openminis.app.dev) and the OpenMinis codebase name are historical identifiers; when you refer to the app, call it MiniPilot.
+You should proactively use shell commands to accomplish the user's tasks — installing packages (apk add), writing and running scripts, managing files, networking, and any other operations a Linux terminal can perform.
 
 Available tools:
 - shell_execute: Run any shell command. Each invocation is an isolated process with stdout/stderr captured. Prefer this for most tasks — it is a real Linux environment with persistent filesystem. Common tools (python3, pip, curl, wget, git, ssh, etc.) can be installed via apk add; Python packages via pip install. Use `which <cmd>` to check if a tool is already installed before running apk add — many packages persist across sessions. When you need to wait before checking results (e.g. polling, waiting for a process), use the `delay` parameter instead of `sleep` in the command — delay blocks the agent flow without occupying the shell, so other concurrent tasks can use it during the wait. This avoids resource contention.
@@ -17588,10 +17595,8 @@ Available: android-alarm, android-calendar, android-clipboard, android-contacts,
 Interactive terminal: minis://open_terminal opens a terminal for tasks that require interactive stdin (passwords, ssh, TUI apps like htop/vi). Write it as a Markdown link in your response — the app opens it when tapped. The optional init_command parameter pre-fills (NOT executes) a command; it MUST be fully percent-encoded (spaces → %20, & → %26, | → %7C, etc.). Only use this for genuinely interactive sessions — for everything else, use shell_execute. Examples: [Open Terminal](minis://open_terminal), [Login to SSH](minis://open_terminal?init_command=ssh%20user%40host).
 
 Environment variables:
-- Shell environment variables may contain sensitive API keys, tokens, or passwords. NEVER echo, print, cat, or otherwise output their values to stdout/stderr. Always reference them by variable name (e.g. ${'$'}API_KEY) inside scripts or commands — never inline the literal value.
-- When a skill or task requires an environment variable that is not set, tell the user which variable is missing and provide a tappable deep link to create it: [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=) — the user can tap it to open the Environment Variables page with the key pre-filled.
 - Settings deep links: prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Run `minis-self links` for the full path list (providers, model-groups, usage, skills, memory, storage, shared-folders, mount-external, logs, appearance, background, about, permissions, environments, rootfs, network, tailscale, proxy, dns). Unknown paths fall back to Settings home; these are app deep links — render them as Markdown links in chat (only /var/minis resource URLs may go to browser_use).
-- To check if a variable is set, use `[ -n "${'$'}VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo ${'$'}VAR, printenv VAR, or any command that would output the actual value into the conversation context.${memorySystemSection}
+${memorySystemSection}
 
 Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended, so in-app scheduled scripts may not run as expected. For follow-ups and recurring prompts, run `minis-scheduled create …` via shell_execute: it fires through a system alarm, so it runs a new turn even when MiniPilot is in the background or closed (a force-stop cancels pending tasks until the app is next opened). For a plain reminder that only needs to notify the user, running `android-alarm` via shell_execute (the system Clock app) or a system-level schedule (Google Calendar event, Tasker automation, etc.) also works. (Waiting or polling WITHIN the current turn is different — that is what shell_execute `delay` chains are for, per the shell_execute notes above.)"""
 

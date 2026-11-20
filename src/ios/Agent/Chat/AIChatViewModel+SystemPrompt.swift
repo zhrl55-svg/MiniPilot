@@ -206,19 +206,12 @@ extension AIChatViewModel {
             + "Examples: [Open Terminal](minis://open_terminal), [Login to SSH](minis://open_terminal?init_command=ssh%20user%40host).\n\n"
             + "minis-config: read or change Minis settings programmatically. Run `minis-config --help` to see subcommands and `minis-config topic-help <topic>` for details on a specific area. For array-valued fields (e.g. `models`, `groups`, `envvars`, `defaults.agentLoopEntries`) the `get` subcommand accepts `--filter <keywords>` (whitespace-AND, case-insensitive substring match against each element's JSON) and `--page <N> --page-size <N>` (default 20, max 100) — use these instead of dumping the full list when you only need a subset, and check the response's `pagination` / `agent_hint` fields for the next-page command. Every write triggers a confirmation sheet in-app and is logged to a revertable audit (1000-entry rolling log). After a successful change the response includes a `user_message` field — relay it (or paraphrase) so the user knows how to review or revert via Logs → Config Changes. If the call returns `permission_denied`, the user has disabled minis-config in Settings → Permissions; relay that message and don't retry. You CAN add a provider (`add providers` with providerType + label, optional customBaseURL/appendV1Suffix/imageEndpointMode) and write its API key — set `providers.<id>.apiKey` (or include `apiKey` in the add payload) with either a literal key or a `$$ENV_VAR` reference resolved from the user's environment variables. Secrets are write-only: `get` never echoes an API key, and reading `providers.<id>.apiKey` / `.oauthToken` still returns permission_denied. Do not try to read API keys/OAuth tokens, or to set OAuth tokens (minted by the in-app login), permission levels, or environment-variable values — those stay locked.\n\n"
             + "Environment variables:\n"
-            + "- Shell environment variables may contain sensitive API keys, tokens, or passwords. "
-            + "NEVER echo, print, cat, or otherwise output their values to stdout/stderr. "
-            + "Always reference them by variable name (e.g. $API_KEY) inside scripts or commands — never inline the literal value.\n"
-            + "- When a skill or task requires an environment variable that is not set, "
-            + "tell the user which variable is missing and provide a tappable deep link to create it: "
-            + "[Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=&create_note=Used%20by%20XYZ) — "
-            + "the user can tap it to open the Environment Variables page with the key and optional note pre-filled. "
-            + "create_note is optional; fill it with a brief description of what the variable is used for (e.g. 'API key for OpenAI', 'Used by XYZ skill'); URL-encode it.\n"
+            // [T-harness-rules-file] The secrets / missing-var / check-if-set
+            // bullets moved to the runtime rules file. This settings-deep-link
+            // bullet stays compiled: its path list is iOS-specific.
             + "- Settings deep links: when you tell the user \"go to Settings → X\" or want to point them at a specific setting, prefer a Markdown link `[Label](minis://settings/<path>)` over plain prose. Available paths: providers (list), providers/<instanceId> (one provider), model-groups (incl. Agent Loop), model-groups/<groupId>, usage (token usage), tools (CyberAgent tools: browser + agents switch), skills, memory, storage, shared-folders (Shared Folders: /var/minis/{shared,skills,memory}), mount-external (Mount External Folders), logs, appearance, background, about, permissions, environments[?create_key=K&create_value=V[&create_note=N]], rootfs (also reachable as mirrors). Unknown paths fall back to Settings home, but prefer the exact path so users land where they want. These settings/action links are app deep links — render them as Markdown links in chat"
             + (Self.toolEnabled(.browser) ? " (same action-vs-resource rule as the minis:// section above: only /var/minis resource URLs may go to browser_use)" : "")
-            + ".\n"
-            + "- To check if a variable is set, use `[ -n \"$VAR\" ] && echo 'set' || echo 'not set'`. "
-            + "NEVER use echo $VAR, printenv VAR, or any command that would output the actual value into the conversation context.\n\n"
+            + ".\n\n"
             + "Memory system:\n"
             + "- memory_write writes to today's daily log (YYYY-MM-DD.md) — use it for session notes, key facts, project context, things learned, and action items.\n"
             + "- GLOBAL.md (/var/minis/memory/GLOBAL.md) stores persistent preferences, settings, and general-purpose conventions. To read it, use file_read (NOT memory_get). To update it, use file_read first then file_edit. If GLOBAL.md does not exist yet, use file_write to create it directly.\n"
@@ -357,5 +350,10 @@ enum HarnessRules {
     Do NOT use the [text](url) link form for audio/video when you want them to play inline — that only produces a tappable link.
     For non-media files, use Markdown links: [filename](minis://workspace/filename).
     Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](minis://...) link.
+
+    Environment variables:
+    - Shell environment variables may contain sensitive API keys, tokens, or passwords. NEVER echo, print, cat, or otherwise output their values to stdout/stderr. Always reference them by variable name (e.g. $API_KEY) inside scripts or commands — never inline the literal value.
+    - When a skill or task requires an environment variable that is not set, tell the user which variable is missing and provide a tappable deep link to create it: [Set ENV_NAME](minis://settings/environments?create_key=ENV_NAME&create_value=&create_note=Used%20by%20XYZ) — the user can tap it to open the Environment Variables page with the key and optional note pre-filled. create_note is optional; fill it with a brief description of what the variable is used for (e.g. 'API key for OpenAI', 'Used by XYZ skill'); URL-encode it.
+    - To check if a variable is set, use `[ -n "$VAR" ] && echo 'set' || echo 'not set'`. NEVER use echo $VAR, printenv VAR, or any command that would output the actual value into the conversation context.
     """
 }

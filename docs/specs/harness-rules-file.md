@@ -51,6 +51,7 @@ untouched.
 | Tone and style | ✅ migrated 2026-11-20 | text was byte-identical on both platforms |
 | Shared directory list | ✅ migrated 2026-11-20 | unified after a code check: iOS's "GLOBAL.md read-only" line contradicted its own Memory section (which teaches file_edit updates on explicit request), so both platforms now say writable-on-request; the mounts line names both entry points |
 | minis:// URL rules | ✅ common part migrated 2026-11-20 | scheme map / percent-encoding / minis_url / inline media / tappable previews now shared. Two fragments stay compiled: Android's browser-gated `minisUrlNote` (switch-dependent) and iOS's `?auto_play=true` bullet (Android has no such handler — grep confirmed) |
+| Environment variables | ✅ common part migrated 2026-11-20 | secrets / missing-var deep link (with `create_note`) / check-if-set now shared. Each platform's settings-deep-link bullet stays compiled (Android: `minis-self links`; iOS: inline path list) |
 
 ## Audit result for the remaining groups
 
@@ -60,7 +61,6 @@ without first deciding which version is correct:
 | group | blocker |
 |---|---|
 | File creation guidelines | heredoc contradiction resolved by experiment (quoted heredocs byte-faithful, unquoted expand normally; `sh`/ash lacks brace expansion) and Android's stale bullet was fixed. Still compiled because platform-only bullets remain (ICMP/Java/rg vs matplotlib) |
-| Environment variables | Android points at `minis-self links`; iOS lists paths inline |
 | Self-reference (`minis-self`) | Android-only command set |
 | Scheduled tasks | genuinely platform-specific (alarm vs best-effort/Shortcuts) |
 | Tool bullets / schemas / switches | must match the compiled schema; guardrails — never self-editable |
