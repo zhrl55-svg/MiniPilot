@@ -49,6 +49,7 @@ untouched.
 |---|---|---|
 | Execution discipline | ✅ migrated 2026-11-20 | platform-neutral wording; scheduling mechanics stay in each platform's "Scheduled tasks" section |
 | Tone and style | ✅ migrated 2026-11-20 | text was byte-identical on both platforms |
+| Shared directory list | ✅ migrated 2026-11-20 | unified after a code check: iOS's "GLOBAL.md read-only" line contradicted its own Memory section (which teaches file_edit updates on explicit request), so both platforms now say writable-on-request; the mounts line names both entry points |
 
 ## Audit result for the remaining groups
 
@@ -57,7 +58,6 @@ without first deciding which version is correct:
 
 | group | blocker |
 |---|---|
-| Shared directory list | GLOBAL.md line differs: Android "writable, you may update it", iOS "read-only, user-maintained"; mounts line names different entry points |
 | minis:// URL rules | iOS has auto-play + tappable-preview bullets; Android has an inline media-type list and a browser-gated note |
 | File creation guidelines | **contradictory**: Android says heredocs "may mis-parse … avoid whenever possible"; iOS says heredocs "work reliably". Also Android-only ICMP/Java/rg bullets |
 | Environment variables | Android points at `minis-self links`; iOS lists paths inline |
