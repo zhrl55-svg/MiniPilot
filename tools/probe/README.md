@@ -182,6 +182,25 @@ iOS 的 App 本身仍叫 **Minis**（`PRODUCT_NAME=$(TARGET_NAME)`、Share 扩�
 
 Windows 上没有 Xcode，iOS 侧只做了源码级实现与人工核对，未编译验证。
 
+### 真任务语料 device_real_tasks.jsonl（2026-11-20）
+
+信箱任务需要 PC 仓库+审批，历史会话已被用户清空，所以真机语料改为**直接派真任务**：
+10 条可在手机上真实执行的工程任务（shell/文件/计算/错误处理），写入一律落在
+`/var/minis/workspace/probe/`，全部 `device_safe=true`：
+
+- 文件+计算：建 CSV、求和求均值（rt-001）、随机温度统计（rt-002）
+- 脚本：词频 top3（rt-003）、故意缺依赖的失败诊断（rt-010）
+- 文件：两文件 diff（rt-005）、目录巡检（rt-006）、读不存在的文件（rt-007）
+- 设备只读：电量与存储（rt-004）、列出定时任务（rt-008）
+- 多步一致性：写→算→读回（rt-009）
+
+这批任务的轨迹里有真实 `shell_execute` / `file_write` / `file_read` 调用，
+可直接当 Harness² 的行为基线；后续候选规则用 `--system-overlay` 或
+`--tasks device_real_tasks.jsonl` + `compare_runs.py` 做 A/B。
+
+历史收割脚本 `harvest_tasks.py` 保留：会话重新积累后可以再跑
+（输出 `real_tasks.jsonl` 已 gitignore，含个人会话内容，永不提交）。
+
 ### 跨平台 endpoint
 
 `run_device.py --endpoint host:port` 跳过 adb forward，直连任何可达的

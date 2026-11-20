@@ -1,2 +1,4 @@
 runs/
 __pycache__/
+# Harvested from the owner's real chat sessions: local-only, never committed.
+real_tasks.jsonl

@@ -116,12 +116,28 @@ class Device:
         return result.get("messages") or []
 
 
+def _parse_input(raw):
+    """tool input arrives as a JSON string on Android and as an object on iOS."""
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return {"_raw": raw[:500]}
+    return {}
+
+
 def normalize(messages: list[dict]) -> list[dict]:
-    """Turn a debug transcript into the same tool-call shape run.py emits."""
+    """Turn a debug transcript into the same tool-call shape run.py emits.
+
+    Android serializes a turn as `parts` entries `{type: "toolUse", value:
+    {toolUseId, name, input}}`; iOS and the published API use a `toolCalls`
+    array on assistant messages. Read both so one normalizer serves both
+    platforms.
+    """
     calls: list[dict] = []
     for msg in messages:
-        if msg.get("role") != "assistant":
-            continue
         for tc in msg.get("toolCalls") or []:
             payload = tc.get("input") or {}
             calls.append({
@@ -132,7 +148,35 @@ def normalize(messages: list[dict]) -> list[dict]:
                 "input": payload,
                 "status": tc.get("status"),
             })
+        for part in msg.get("parts") or []:
+            if not isinstance(part, dict) or part.get("type") not in ("toolUse", "tool_use"):
+                continue
+            value = part.get("value") or {}
+            payload = _parse_input(value.get("input"))
+            calls.append({
+                "tool": value.get("name"),
+                "args_hash": hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")
+                ).hexdigest()[:12],
+                "input": payload,
+                "status": None,
+            })
     return calls
+
+
+def last_answer_text(messages: list[dict]) -> str:
+    """Final assistant text, from `content` or from text parts."""
+    for msg in reversed(messages):
+        if msg.get("role") != "assistant":
+            continue
+        content = (msg.get("content") or "").strip()
+        if content:
+            return content
+        texts = [p.get("value") for p in (msg.get("parts") or [])
+                 if isinstance(p, dict) and p.get("type") == "text" and p.get("value")]
+        if texts:
+            return "\n".join(texts).strip()
+    return ""
 
 
 def build_prompt(task: dict, overlay: str) -> str:
@@ -150,6 +194,27 @@ def build_prompt(task: dict, overlay: str) -> str:
 def forward(serial: str, port: int = DEFAULT_PORT) -> None:
     subprocess.run(["adb", "-s", serial, "forward", f"tcp:{port}", f"tcp:{port}"],
                    check=True, capture_output=True)
+
+
+def emit_task(run_dir: pathlib.Path, task: dict, variant: str, messages: list[dict],
+              session_id: str, elapsed: float, timed_out: bool,
+              report: list[str]) -> int:
+    """Write the per-task artifacts and append its report section."""
+    calls = normalize(messages)
+    (run_dir / f"{task['task_id']}__{variant}.messages.json").write_text(
+        json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+    (run_dir / f"{task['task_id']}__{variant}.tools.jsonl").write_text(
+        "".join(json.dumps(c, ensure_ascii=False) + "\n" for c in calls), encoding="utf-8")
+    report.append(f"\n## {task['task_id']}  [{', '.join(task.get('tags') or []) or '-'}]  "
+                  f"sev={task.get('severity', 'info')}\n")
+    report.append(f"*{task.get('summary', '')}*\n")
+    report.append(f"- session: `{session_id}`  elapsed={elapsed}s  "
+                  f"timedOut={timed_out}  tools={len(calls)}\n")
+    report.append(f"- tool sequence: {[c['tool'] for c in calls]}\n")
+    answer = last_answer_text(messages)
+    if answer:
+        report.append(f"- answer: {answer.replace(chr(10), ' ')[:220]}\n")
+    return len(calls)
 
 
 def main() -> int:
@@ -178,6 +243,8 @@ def main() -> int:
     p.add_argument("--include-unsafe", action="store_true",
                    help="bulk-run tasks whose device_safe=false (build/install/hub); "
                         "explicit --only-task bypasses the filter anyway")
+    p.add_argument("--reprocess", action="store_true",
+                   help="re-derive tools/report from saved transcripts; no device needed")
     args = p.parse_args()
 
     tasks = load_tasks(args.tasks, skip_protocol=True)
@@ -201,6 +268,27 @@ def main() -> int:
     run_id = args.run_id or time.strftime("%Y%m%d-%H%M%S")
     run_dir = args.runs_dir / f"{run_id}-device"
     run_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.reprocess:
+        # Re-derive artifacts from saved transcripts (no device). Useful when
+        # the normalizer or the report gained new fields after a run.
+        manifest = json.loads((run_dir / "manifest.json").read_text(encoding="utf-8"))
+        variant = manifest.get("variant", args.variant)
+        by_id = {t["task_id"]: t for t in tasks}
+        report = [f"# device probe run {run_id} (reprocessed)\n",
+                  f"variant={variant}  model={manifest.get('model_entry')}  "
+                  f"thinking={manifest.get('thinking')}\n"]
+        for tid in manifest.get("task_ids") or []:
+            path = run_dir / f"{tid}__{variant}.messages.json"
+            if not path.exists():
+                report.append(f"\n## {tid}\n- ERROR: missing transcript\n")
+                continue
+            messages = json.loads(path.read_text(encoding="utf-8"))
+            task = by_id.get(tid) or {"task_id": tid, "tags": [], "severity": "info", "summary": ""}
+            emit_task(run_dir, task, variant, messages, "<reprocessed>", 0, False, report)
+        (run_dir / "report.md").write_text("\n".join(report), encoding="utf-8")
+        print(f"reprocessed -> {run_dir}/report.md", file=sys.stderr)
+        return 0
 
     if args.endpoint:
         host, _, port_s = args.endpoint.partition(":")
@@ -246,25 +334,9 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001 - report and keep going
             report.append(f"\n## {task['task_id']}\n- ERROR: {exc}\n")
             continue
-        calls = normalize(messages)
         elapsed = round(time.time() - started, 1)
-        (run_dir / f"{task['task_id']}__{args.variant}.messages.json").write_text(
-            json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
-        (run_dir / f"{task['task_id']}__{args.variant}.tools.jsonl").write_text(
-            "".join(json.dumps(c, ensure_ascii=False) + "\n" for c in calls), encoding="utf-8")
-        report.append(f"\n## {task['task_id']}  [{', '.join(task['tags']) or '-'}]  sev={task['severity']}\n")
-        report.append(f"*{task['summary']}*\n")
-        report.append(f"- session: `{session_id}`  elapsed={elapsed}s  "
-                      f"timedOut={status.get('timedOut', False)}  tools={len(calls)}\n")
-        seq = [c["tool"] for c in calls]
-        report.append(f"- tool sequence: {seq}\n")
-        # The behavior of an answer-only probe is the answer itself; keep a
-        # short excerpt in the human report so review does not mean opening
-        # the full messages JSON.
-        answers = [m.get("content", "") for m in messages if m.get("role") == "assistant"]
-        if answers:
-            excerpt = answers[-1].strip().replace("\n", " ")[:220]
-            report.append(f"- answer: {excerpt}\n")
+        emit_task(run_dir, task, args.variant, messages, session_id,
+                  elapsed, bool(status.get("timedOut")), report)
 
     (run_dir / "report.md").write_text("\n".join(report), encoding="utf-8")
     print(f"\nwrote {run_dir}/report.md", file=sys.stderr)
