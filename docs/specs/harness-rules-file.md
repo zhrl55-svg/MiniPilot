@@ -50,6 +50,7 @@ untouched.
 | Execution discipline | ✅ migrated 2026-11-20 | platform-neutral wording; scheduling mechanics stay in each platform's "Scheduled tasks" section |
 | Tone and style | ✅ migrated 2026-11-20 | text was byte-identical on both platforms |
 | Shared directory list | ✅ migrated 2026-11-20 | unified after a code check: iOS's "GLOBAL.md read-only" line contradicted its own Memory section (which teaches file_edit updates on explicit request), so both platforms now say writable-on-request; the mounts line names both entry points |
+| minis:// URL rules | ✅ common part migrated 2026-11-20 | scheme map / percent-encoding / minis_url / inline media / tappable previews now shared. Two fragments stay compiled: Android's browser-gated `minisUrlNote` (switch-dependent) and iOS's `?auto_play=true` bullet (Android has no such handler — grep confirmed) |
 
 ## Audit result for the remaining groups
 
@@ -58,8 +59,7 @@ without first deciding which version is correct:
 
 | group | blocker |
 |---|---|
-| minis:// URL rules | iOS has auto-play + tappable-preview bullets; Android has an inline media-type list and a browser-gated note |
-| File creation guidelines | heredoc contradiction **resolved by experiment 2026-11-20**: quoted heredocs are byte-faithful, unquoted heredocs expand normally; the only real gap is `sh`-run scripts using BusyBox ash (no brace expansion). Android's "heredocs may mis-parse" bullet was stale and has been fixed; the group stays compiled because it still carries platform-only bullets (ICMP/Java/rg vs matplotlib) |
+| File creation guidelines | heredoc contradiction resolved by experiment (quoted heredocs byte-faithful, unquoted expand normally; `sh`/ash lacks brace expansion) and Android's stale bullet was fixed. Still compiled because platform-only bullets remain (ICMP/Java/rg vs matplotlib) |
 | Environment variables | Android points at `minis-self links`; iOS lists paths inline |
 | Self-reference (`minis-self`) | Android-only command set |
 | Scheduled tasks | genuinely platform-specific (alarm vs best-effort/Shortcuts) |

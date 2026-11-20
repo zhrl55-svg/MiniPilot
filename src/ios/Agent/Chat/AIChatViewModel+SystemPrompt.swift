@@ -110,16 +110,10 @@ extension AIChatViewModel {
             + "The browser resolves relative paths against the minis:// base URL automatically. "
             + "Cross-directory references also work with absolute minis:// URLs (e.g. <img src=\"minis://attachments/photo.png\"> from a workspace HTML page). "
             + "Navigate to the entry HTML to preview, e.g. minis://workspace/myapp/index.html.\n"
-            + "To display a minis:// URL in chat, write it as a Markdown link or image (e.g. [name](minis://...)) — the app handles it when the user taps it.\n"
-            + "IMPORTANT: minis:// URLs MUST be percent-encoded. Non-ASCII characters (Chinese, emoji, spaces, etc.) in filenames will break Markdown rendering if not encoded. "
-            + "Use the minis_url from tool results directly — it is already encoded. "
-            + "If you construct a minis:// URL manually, percent-encode the filename (e.g. %E4%B8%AD%E6%96%87 for non-ASCII characters).\n"
-            + "When you write files to /var/minis/, the tool result includes a minis_url you can embed directly in Markdown.\n"
-            + "Supported inline types: images (.png/.jpg/.gif/.webp), audio (.mp3/.m4a/.wav), video (.mp4/.mov/.m4v).\n"
-            + "Audio auto-play: append ?auto_play=true to an audio minis:// URL to auto-play when rendered (e.g. ![audio](minis://attachments/song.mp3?auto_play=true)). Use sparingly — only when the user explicitly asks to hear audio immediately.\n"
-            + "For non-media files, use Markdown links: [filename](minis://workspace/filename).\n"
-            + "Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](minis://...) link.\n"
-            + "Use Markdown links for all minis:// files — the user can tap to preview them directly in chat.\n\n"
+            // [T-harness-rules-file] Scheme/encoding/inline-media/previews moved
+            // to the runtime rules file. The auto-play bullet stays compiled:
+            // ?auto_play=true is iOS-only (Android has no such handler).
+            + "Audio auto-play: append ?auto_play=true to an audio minis:// URL to auto-play when rendered (e.g. ![audio](minis://attachments/song.mp3?auto_play=true)). Use sparingly — only when the user explicitly asks to hear audio immediately.\n\n"
             + "File creation guidelines:\n"
             + "- Use file_write to CREATE new files. Use file_edit to MODIFY existing files. "
             + "For writing file CONTENTS, prefer file_write over echo/printf or heredocs — it is atomic and avoids all shell-quoting pitfalls. "
@@ -347,5 +341,21 @@ enum HarnessRules {
       /var/minis/memory/GLOBAL.md    — Persistent global memory (writable: the user maintains it via Settings, and you may update it only when the user explicitly asks).
       /var/minis/memory/YYYY-MM-DD.md — Daily memory log.
       /var/minis/mounts/<name>/      — User-mounted external folders (Android: Settings → Mount External Folders; iOS: Files app). Presence and names vary per user; check this directory first when the task references external/user files. Some mounts may be read-only — write tools will reject writes with a clear error.
+
+    The minis:// URL scheme:
+      minis://attachments/file.png  →  /var/minis/attachments/file.png
+      minis://workspace/data.csv    →  /var/minis/workspace/data.csv
+      minis://shared/project/f.txt  →  /var/minis/shared/project/f.txt
+
+    To display a minis:// URL in chat, write it as a Markdown link or image (e.g. [name](minis://...)) — the app handles it when the user taps it.
+    IMPORTANT: minis:// URLs MUST be percent-encoded. Non-ASCII characters (Chinese, emoji, spaces, etc.) in filenames will break Markdown rendering if not encoded. Use the minis_url from tool results directly — it is already encoded. If you construct a minis:// URL manually, percent-encode the filename (e.g. %E4%B8%AD%E6%96%87 for non-ASCII characters).
+    When you write files to /var/minis/, the tool result includes a minis_url you can embed directly in Markdown.
+    Inline media — use ![desc](minis://...) for images, audio AND video; the same syntax renders an inline image or player for each:
+      - Images: ![chart](minis://attachments/chart.png)   → inline image (.png/.jpg/.gif/.webp)
+      - Audio:  ![song](minis://attachments/song.mp3)     → inline audio player (.mp3/.m4a/.wav)
+      - Video:  ![clip](minis://attachments/clip.mp4)     → inline video player (.mp4/.mov/.m4v)
+    Do NOT use the [text](url) link form for audio/video when you want them to play inline — that only produces a tappable link.
+    For non-media files, use Markdown links: [filename](minis://workspace/filename).
+    Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](minis://...) link.
     """
 }

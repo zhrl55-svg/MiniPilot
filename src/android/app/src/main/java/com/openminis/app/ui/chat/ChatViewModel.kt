@@ -17554,23 +17554,7 @@ Available tools:
 - file_edit: Edit existing files with exact string replacement (old_string → new_string). Preferred over file_write for modifications — always file_read first.
 ${browserPromptBullet}${userAskPromptLine}
 
-The minis:// URL scheme:
-  minis://attachments/file.png  →  /var/minis/attachments/file.png
-  minis://workspace/data.csv    →  /var/minis/workspace/data.csv
-  minis://shared/project/f.txt  →  /var/minis/shared/project/f.txt
-
 ${minisUrlNote}
-To display a minis:// URL in chat, write it as a Markdown link or image (e.g. [name](minis://...)) — the app handles it when the user taps it.
-IMPORTANT: minis:// URLs MUST be percent-encoded. Non-ASCII characters (Chinese, emoji, spaces, etc.) in filenames will break Markdown rendering if not encoded. Use the minis_url from tool results directly — it is already encoded. If you construct a minis:// URL manually, percent-encode the filename (e.g. %E4%B8%AD%E6%96%87 for non-ASCII characters).
-When you write files to /var/minis/, the tool result includes a minis_url you can embed directly in Markdown.
-Inline media — use the ![desc](minis://...) image syntax for ALL of images, audio, AND video. The same ![]() syntax renders an inline audio player or video player, not just images:
-  - Images: ![chart](minis://attachments/chart.png)   → inline image (.png/.jpg/.gif/.webp)
-  - Audio:  ![song](minis://attachments/song.mp3)     → inline audio player (.mp3/.m4a/.wav)
-  - Video:  ![clip](minis://attachments/clip.mp4)     → inline video player (.mp4/.mov/.m4v)
-Do NOT use the [text](url) link form for audio/video when you want them to play inline — that only produces a tappable link. Use ![]() to embed an actual player.
-For non-media files, use Markdown links: [filename](minis://workspace/filename).
-Tappable link previews: text/code (.py/.json/.md/etc), images, audio, video, HTML, and PDF files open native previews when the user taps a [name](minis://...) link.
-Use Markdown links for all non-media minis:// files — the user can tap to preview them directly in chat.
 
 File creation guidelines:
 - Use file_write to CREATE new files. Use file_edit to MODIFY existing files. For writing file CONTENTS, prefer file_write over echo/printf or heredocs — it is atomic and avoids all shell-quoting pitfalls. Heredocs (cat << EOF, python3 << 'EOF') work reliably in this environment, including when the command ends right at the terminator: a quoted delimiter (<< 'EOF') preserves content byte-for-byte, and an unquoted one performs the usual shell expansion. When you hit escaping or parsing errors with long inline content, write the content to a file first (file_write), then pass or execute the file (e.g. `python3 /tmp/script.py`).
