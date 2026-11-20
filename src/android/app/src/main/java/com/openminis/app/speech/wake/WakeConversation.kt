@@ -5,6 +5,7 @@ import com.openminis.app.MinisApp
 import com.openminis.app.debug.HeadlessChatRunner
 import com.openminis.app.logging.AppLogger
 import com.openminis.app.service.SessionActivityTracker
+import com.openminis.app.speech.SpeechAside
 import com.openminis.app.speech.TextToSpeechManager
 import com.openminis.app.speech.VoiceOutputState
 import com.openminis.app.ui.chat.ChatViewModelStore
@@ -130,7 +131,9 @@ internal object WakeConversation {
      * playing.
      */
     suspend fun speak(tts: TextToSpeechManager, text: String): Boolean {
-        val spoken = text.take(MAX_SPEECH_CHARS)
+        // [T-speech-aside] 这条兜底路径不经过 VoiceTextSanitizer，解释性补注
+        // 要在这里自己摘掉（屏幕上的原文不变）。
+        val spoken = SpeechAside.strip(text).take(MAX_SPEECH_CHARS)
         if (spoken.isBlank()) return false
         if (!tts.awaitReady()) {
             AppLogger.info(TAG, "TTS 未就绪，跳过播报（chars=${spoken.length}）")

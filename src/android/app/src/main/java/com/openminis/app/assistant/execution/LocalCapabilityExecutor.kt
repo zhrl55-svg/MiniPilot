@@ -32,6 +32,7 @@ import com.openminis.app.scheduled.ScheduledTargetMode
 import com.openminis.app.scheduled.ScheduledTask
 import com.openminis.app.scheduled.ScheduledTaskManager
 import com.openminis.app.scheduled.ScheduledTriggerKind
+import com.openminis.app.speech.SpeechAside
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -857,17 +858,13 @@ class LocalCapabilityExecutor(private val context: Context) {
                     // 「放一首周杰伦的稻香」 resolves to 稻香, not to the
                     // phrase the user typed.
                     args.put("tool_title", "$label: ${track.title}")
-                    val head = if (trackArtist != null) {
-                        "已播放：${track.title} — $trackArtist"
-                    } else {
-                        "已播放：${track.title}"
-                    }
                     // [T-music-slot-semantics] 回显解析结果：这句话被理解成
                     // 歌名/歌手/流派/场景/榜单的哪一种，误解 1 秒内可见。
+                    // 补注由 SpeechAside 生成：屏幕上保留，播报时不念。
                     val understood = describeMusicResolution(played, artist)
                     NativeOffloadResult(
                         0,
-                        if (understood.isBlank()) head else "$head\n（理解为：$understood）",
+                        musicPlaybackText(track.title, trackArtist, understood),
                     )
                 }
             }
@@ -1159,4 +1156,22 @@ class LocalCapabilityExecutor(private val context: Context) {
             "settings" to KnownApp(intent = { Intent(Settings.ACTION_SETTINGS) }),
         )
     }
+}
+
+/**
+ * [T-music-slot-semantics] media/play 的结果文本：一句主句 + 可选的解释性补注。
+ *
+ * 主句是播报内容（「已播放：稻香 — 周杰伦」），补注只给眼睛看
+ * （[SpeechAside]）：屏幕上保留「（理解为：流派=轻音乐）」，语音播报时去掉。
+ *
+ * 独立成函数是为了能直接单测这两条契约，不用起整个执行器。
+ */
+internal fun musicPlaybackText(title: String, artist: String?, understood: String): String {
+    val head = if (artist.isNullOrBlank()) {
+        "已播放：$title"
+    } else {
+        "已播放：$title — $artist"
+    }
+    val aside = SpeechAside.wrap(understood)
+    return if (aside.isBlank()) head else "$head\n$aside"
 }

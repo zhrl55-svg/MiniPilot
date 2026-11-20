@@ -19,6 +19,11 @@ package com.openminis.app.speech
  * the project requires localized user-facing strings, and TTS output is
  * user-facing. Defaults are English so the class stays usable (and unit
  * testable) without a Context.
+ *
+ * DIVERGENCE FROM iOS (deliberate): [SpeechAside] strips explanatory asides
+ * ("（理解为：…）") here. They are written for the eye — the screen keeps them
+ * — but they are noise out loud, and the wake conversation speaks the reply
+ * verbatim.
  */
 object VoiceTextSanitizer {
 
@@ -42,7 +47,8 @@ object VoiceTextSanitizer {
      * must treat empty as "nothing to speak" rather than speaking the original.
      */
     fun sanitize(text: String, phrases: LinkPhrases = DEFAULT_PHRASES): String {
-        var s = stripMarkdown(text, phrases)
+        // [T-speech-aside] 解释性补注只给眼睛看：先摘掉，再做 Markdown 清理。
+        var s = stripMarkdown(SpeechAside.strip(text), phrases)
         // Any remaining bare URL in plain text → spoken phrase, so the reader
         // never voices a long, unstoppable URL.
         s = rewriteBareUrls(s, phrases)
