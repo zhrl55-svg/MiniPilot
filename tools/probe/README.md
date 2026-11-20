@@ -241,10 +241,21 @@ debug server（例如 iOS 设备经 SSH 隧道转发的 5321）。
 `systemPromptAppend` 同样通过真机验证：注入「第一行必须输出 [OVERLAY-OK]」后，
 回答首行确实出现 `[OVERLAY-OK]`——真系统提示词级注入、零重编译。
 
+## 自我改进 Phase 1：端侧问题单采集
+
+`self-improve-SKILL.md` 是安装在真机上的每日自我诊断 skill
+（`/var/minis/skills/self-improve/SKILL.md`）。每天 23:30 由
+`minis-scheduled` 触发，审计当天真实会话的工具轨迹，把失败信号写成
+结构化问题单到 `/var/minis/shared/self-improve/`（必须是全局 shared，
+**不能写 session 私有的 `/var/minis/workspace/`**）。
+
+设计、调度记录与首次真机验证见 `docs/specs/self-improve-loop.md`。
+
 ## 待办
 
 - 任务集人工分拣：32 条里 11 条协议噪声 + 若干「验收/报告」类，真正可做
   的工程任务约 5–7 条。建议在 tasks.jsonl 加 `kind` 字段人工标注。
 - 轨迹完整性：agent 需要能读到仓库代码才有真实行为；当前靠全局 Read 白名单
   偶然可达。可选方案：`--add-dir D:/minis-src` 只读挂载 + 写仍 deny。
-- runs/ 目录未加 .gitignore。
+- Phase 2：PC 侧消费者，把问题单变成候选规则 diff 并用 `--system-overlay`
+  做 A/B。
