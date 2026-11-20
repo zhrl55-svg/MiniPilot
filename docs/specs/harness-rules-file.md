@@ -59,7 +59,7 @@ without first deciding which version is correct:
 | group | blocker |
 |---|---|
 | minis:// URL rules | iOS has auto-play + tappable-preview bullets; Android has an inline media-type list and a browser-gated note |
-| File creation guidelines | **contradictory**: Android says heredocs "may mis-parse … avoid whenever possible"; iOS says heredocs "work reliably". Also Android-only ICMP/Java/rg bullets |
+| File creation guidelines | heredoc contradiction **resolved by experiment 2026-11-20**: quoted heredocs are byte-faithful, unquoted heredocs expand normally; the only real gap is `sh`-run scripts using BusyBox ash (no brace expansion). Android's "heredocs may mis-parse" bullet was stale and has been fixed; the group stays compiled because it still carries platform-only bullets (ICMP/Java/rg vs matplotlib) |
 | Environment variables | Android points at `minis-self links`; iOS lists paths inline |
 | Self-reference (`minis-self`) | Android-only command set |
 | Scheduled tasks | genuinely platform-specific (alarm vs best-effort/Shortcuts) |
