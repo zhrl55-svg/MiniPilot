@@ -798,6 +798,23 @@ object PRootKernel {
     private val perSessionSubdirs = SessionMounts.SESSION_SUBDIRS.toSet()
 
     /**
+     * [T-android-minis-url-traversal] minis:// URLs are percent-decoded before
+     * they reach the resolvers, so a `..` component slips past the string
+     * prefix match and `File(base, relative)` walks out of the intended
+     * directory (symlinks escape the same way). Every resolved File must stay
+     * inside its base after canonicalisation, or the resolver refuses it.
+     */
+    private fun staysInsideDir(base: File, candidate: File): Boolean {
+        val baseCanon = base.canonicalPath
+        val canon = candidate.canonicalPath
+        return canon == baseCanon || canon.startsWith(baseCanon + File.separator)
+    }
+
+    /** True when [path] contains a literal `..` path component. */
+    private fun hasParentComponent(path: String): Boolean =
+        path.split('/').any { it == ".." }
+
+    /**
      * Resolve a `/var/minis/...` Linux path directly against a specific session's
      * host directory, bypassing the global [bindMounts] map. Use this when the
      * caller knows the owning session (chat link resolver, file preview, etc.) —
@@ -815,25 +832,50 @@ object PRootKernel {
         if (subdir !in perSessionSubdirs) return resolveHostPath(linuxPath)
         val sessionBase = File(context.filesDir, "minis-sessions/$sessionId/$subdir")
         val tail = if (slash < 0) "" else rest.substring(slash + 1)
-        return if (tail.isEmpty()) sessionBase else File(sessionBase, tail)
+        if (tail.isNotEmpty()) {
+            if (hasParentComponent(tail)) {
+                Log.w(TAG, "refusing '..' in session path: $linuxPath")
+                return null
+            }
+            val resolved = File(sessionBase, tail)
+            if (!staysInsideDir(sessionBase, resolved)) {
+                Log.w(TAG, "refusing path escaping session dir: $linuxPath")
+                return null
+            }
+            return resolved
+        }
+        return sessionBase
     }
 
     /**
      * Resolve a Linux path to a host filesystem File by checking bind mounts.
-     * Returns null if no matching mount is found.
+     * Returns null if no matching mount is found or the path would escape
+     * the resolved base directory (see [staysInsideDir]).
      */
     fun resolveHostPath(linuxPath: String): File? {
+        // [T-android-minis-url-traversal] A literal `..` component never comes
+        // from a legitimately built path; reject it before any File(base, …)
+        // concatenation below (mount, legacy-session and rootfs branches alike).
+        if (hasParentComponent(linuxPath)) {
+            Log.w(TAG, "refusing '..' in resolved path: $linuxPath")
+            return null
+        }
         // Check bind mounts (longest prefix match)
         val sorted = bindMounts.keys.sortedByDescending { it.length }
         for (mountPoint in sorted) {
             if (linuxPath == mountPoint || linuxPath.startsWith("$mountPoint/")) {
                 val hostBase = bindMounts[mountPoint]!!
                 val relativePath = linuxPath.removePrefix(mountPoint).removePrefix("/")
-                return if (relativePath.isEmpty()) {
+                val resolved = if (relativePath.isEmpty()) {
                     File(hostBase)
                 } else {
                     File(hostBase, relativePath)
                 }
+                if (!staysInsideDir(File(hostBase), resolved)) {
+                    Log.w(TAG, "refusing path escaping mount $mountPoint: $linuxPath")
+                    return null
+                }
+                return resolved
             }
         }
 

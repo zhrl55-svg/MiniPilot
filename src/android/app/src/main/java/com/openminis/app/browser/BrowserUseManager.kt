@@ -27,6 +27,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * Manages a single Android WebView for browser automation.
@@ -128,7 +130,7 @@ class BrowserUseManager(
                 useWideViewPort = true
                 builtInZoomControls = false
                 setSupportMultipleWindows(true)
-                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                mixedContentMode = WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE
                 val ua = customUA ?: profile.userAgentString
                 if (ua != null) userAgentString = ua
             }
@@ -207,27 +209,41 @@ class BrowserUseManager(
      */
     var onBlobDownloadData: ((data: ByteArray, filename: String, mimeType: String?) -> Unit)? = null
 
-    /** Deferred for awaiting navigation completion. */
-    private var navigationDeferred: CompletableDeferred<Unit>? = null
+    /**
+     * Deferreds for awaiting navigation completion, keyed by a per-waiter id.
+     * The old single-field navigationDeferred let a second concurrent waiter
+     * overwrite the first one's deferred, which then never completed (or got
+     * completed with the other navigation's result). onPageFinished /
+     * onReceivedError complete every entry — they are broadcast events, not
+     * tied to one navigation.
+     */
+    private val pendingNavigations = ConcurrentHashMap<Long, CompletableDeferred<Unit>>()
+    private val navigationSeq = AtomicLong()
 
     /** Screenshots directory. */
     private val screenshotsDir: File by lazy {
         File(webView.context.cacheDir, "browser_screenshots").also { it.mkdirs() }
     }
 
-    /** Deferred used by executeJS to receive results from async scripts via JS bridge. */
-    private var asyncJsDeferred: CompletableDeferred<String>? = null
+    /**
+     * JS bridge results pending for async scripts, keyed by a per-call id the
+     * wrapped script echoes back through `__minis__.resolve/reject`. The old
+     * single-field asyncJsDeferred let two overlapping evaluate calls complete
+     * each other's deferred (results crossed) or strand one forever.
+     */
+    private val pendingJsCalls = ConcurrentHashMap<Long, CompletableDeferred<String>>()
+    private val jsCallSeq = AtomicLong()
 
     /** JavaScript interface for async script result callbacks. */
     private val jsBridge = object {
         @JavascriptInterface
-        fun resolve(result: String) {
-            asyncJsDeferred?.complete(result)
+        fun resolve(callId: Long, result: String) {
+            pendingJsCalls.remove(callId)?.complete(result)
         }
 
         @JavascriptInterface
-        fun reject(error: String) {
-            asyncJsDeferred?.complete("{\"error\":${JSONObject.quote(error)}}")
+        fun reject(callId: Long, error: String) {
+            pendingJsCalls.remove(callId)?.complete("{\"error\":${JSONObject.quote(error)}}")
         }
 
         /**
@@ -485,8 +501,7 @@ class BrowserUseManager(
                 _pageTitle.value = view.title ?: ""
                 _canGoBack.value = view.canGoBack()
                 _canGoForward.value = view.canGoForward()
-                navigationDeferred?.complete(Unit)
-                navigationDeferred = null
+                completePendingNavigations()
                 // Record in browser history
                 val histUrl = url ?: ""
                 val histTitle = view.title ?: ""
@@ -513,8 +528,7 @@ class BrowserUseManager(
                 if (request.isForMainFrame) {
                     _isLoading.value = false
                     Log.e(TAG, "Navigation error: ${error.description}")
-                    navigationDeferred?.complete(Unit)
-                    navigationDeferred = null
+                    completePendingNavigations()
                 }
             }
 
@@ -829,14 +843,22 @@ class BrowserUseManager(
 
     // -- Navigate --
 
+    /** Complete every outstanding navigation waiter (page finished / error). */
+    private fun completePendingNavigations() {
+        for (id in pendingNavigations.keys.toList()) {
+            pendingNavigations.remove(id)?.complete(Unit)
+        }
+    }
+
     private suspend fun navigate(urlString: String?): BrowserActionResult {
         if (urlString.isNullOrEmpty()) return BrowserActionResult.error("Missing 'url' parameter")
 
         var normalized = urlString
         if (!normalized.contains("://")) normalized = "https://$normalized"
 
+        val navId = navigationSeq.incrementAndGet()
         val deferred = CompletableDeferred<Unit>()
-        navigationDeferred = deferred
+        pendingNavigations[navId] = deferred
         _isLoading.value = true
 
         withContext(Dispatchers.Main) {
@@ -852,11 +874,10 @@ class BrowserUseManager(
         // Wait with timeout
         val handler = Handler(Looper.getMainLooper())
         val timeoutRunnable = Runnable {
-            if (navigationDeferred === deferred) {
+            if (pendingNavigations.remove(navId) === deferred) {
                 Log.w(TAG, "Navigation timed out for $normalized")
                 _isLoading.value = false
                 deferred.complete(Unit)
-                navigationDeferred = null
             }
         }
         handler.postDelayed(timeoutRunnable, NAVIGATION_TIMEOUT_MS)
@@ -865,6 +886,7 @@ class BrowserUseManager(
             deferred.await()
         } finally {
             handler.removeCallbacks(timeoutRunnable)
+            pendingNavigations.remove(navId)
         }
 
         _currentURL.value = _currentURL.value.ifEmpty { normalized }
@@ -1256,60 +1278,62 @@ class BrowserUseManager(
         // Android WebView doesn't resolve Promises from evaluateJavascript,
         // so we use a JS bridge callback (__minis__.resolve / __minis__.reject).
         return try {
+            val callId = jsCallSeq.incrementAndGet()
             val deferred = CompletableDeferred<String>()
-            asyncJsDeferred = deferred
-            val wrapped = """
-                (async function(){
-                    try {
-                        var __r__ = (async function(){ $script })();
-                        var __v__ = await __r__;
-                        if (__v__ === undefined || __v__ === null) {
-                            __minis__.resolve(String(__v__));
-                        } else if (typeof __v__ === 'object') {
-                            __minis__.resolve(JSON.stringify(__v__));
-                        } else {
-                            __minis__.resolve(String(__v__));
+            pendingJsCalls[callId] = deferred
+            try {
+                val wrapped = """
+                    (async function(){
+                        try {
+                            var __r__ = (async function(){ $script })();
+                            var __v__ = await __r__;
+                            if (__v__ === undefined || __v__ === null) {
+                                __minis__.resolve($callId, String(__v__));
+                            } else if (typeof __v__ === 'object') {
+                                __minis__.resolve($callId, JSON.stringify(__v__));
+                            } else {
+                                __minis__.resolve($callId, String(__v__));
+                            }
+                        } catch(e) {
+                            __minis__.reject($callId, ${BrowserUseJS.SCRIPT_THREW_JS});
                         }
-                    } catch(e) {
-                        __minis__.reject(${BrowserUseJS.SCRIPT_THREW_JS});
+                    })();
+                """.trimIndent()
+                withContext(Dispatchers.Main) {
+                    // [T-android-js-error-detail] The wrapper evaluates to a
+                    // Promise (the callback gets "{}"). A null means it never
+                    // ran: the user script does not parse, the bridge will never
+                    // be called, and the caller used to wait out the full 30s.
+                    webView.evaluateJavascript(wrapped) { value ->
+                        if (BrowserJSResult.decode(value) == null) deferred.complete(EXECUTE_JS_DID_NOT_PARSE)
                     }
-                })();
-            """.trimIndent()
-            withContext(Dispatchers.Main) {
-                // [T-android-js-error-detail] The wrapper evaluates to a
-                // Promise (the callback gets "{}"). A null means it never
-                // ran: the user script does not parse, the bridge will never
-                // be called, and the caller used to wait out the full 30s.
-                webView.evaluateJavascript(wrapped) { value ->
-                    if (BrowserJSResult.decode(value) == null) deferred.complete(EXECUTE_JS_DID_NOT_PARSE)
                 }
-            }
-            val raw = withTimeoutOrNull(30_000L) { deferred.await() }
-                ?: run {
-                    asyncJsDeferred = null
+                val raw = withTimeoutOrNull(30_000L) { deferred.await() }
+                if (raw == null) {
                     return BrowserActionResult.error("JavaScript execution timed out (30s)")
                 }
-            asyncJsDeferred = null
-            if (raw == EXECUTE_JS_DID_NOT_PARSE) {
-                val detail = try {
-                    evaluateJavascriptValue(BrowserUseJS.syntaxCheck(script))
-                } catch (_: Exception) {
-                    null
+                if (raw == EXECUTE_JS_DID_NOT_PARSE) {
+                    val detail = try {
+                        evaluateJavascriptValue(BrowserUseJS.syntaxCheck(script))
+                    } catch (_: Exception) {
+                        null
+                    }
+                    return BrowserActionResult.error(BrowserJSResult.syntaxErrorMessage(detail))
                 }
-                return BrowserActionResult.error(BrowserJSResult.syntaxErrorMessage(detail))
-            }
-            val json = try { JSONObject(raw) } catch (_: Exception) { null }
-            if (json != null) {
-                if (json.has("error")) {
-                    BrowserActionResult.error(json.getString("error"))
+                val json = try { JSONObject(raw) } catch (_: Exception) { null }
+                if (json != null) {
+                    if (json.has("error")) {
+                        BrowserActionResult.error(json.getString("error"))
+                    } else {
+                        BrowserActionResult(text = formatJSONResult(json))
+                    }
                 } else {
-                    BrowserActionResult(text = formatJSONResult(json))
+                    BrowserActionResult(text = raw)
                 }
-            } else {
-                BrowserActionResult(text = raw)
+            } finally {
+                pendingJsCalls.remove(callId)
             }
         } catch (e: Exception) {
-            asyncJsDeferred = null
             BrowserActionResult.error("JavaScript error: ${e.message}")
         }
     }
@@ -1395,30 +1419,33 @@ class BrowserUseManager(
      * pattern used by [executeJS].
      */
     private suspend fun awaitPromiseJs(js: String): String? {
+        val callId = jsCallSeq.incrementAndGet()
         val deferred = CompletableDeferred<String>()
-        asyncJsDeferred = deferred
-        val wrapped = """
-            (async function(){
-                try {
-                    var __v__ = await ($js);
-                    if (__v__ === undefined || __v__ === null) {
-                        __minis__.resolve('null');
-                    } else if (typeof __v__ === 'object') {
-                        __minis__.resolve(JSON.stringify(__v__));
-                    } else {
-                        __minis__.resolve(String(__v__));
+        pendingJsCalls[callId] = deferred
+        try {
+            val wrapped = """
+                (async function(){
+                    try {
+                        var __v__ = await ($js);
+                        if (__v__ === undefined || __v__ === null) {
+                            __minis__.resolve($callId, 'null');
+                        } else if (typeof __v__ === 'object') {
+                            __minis__.resolve($callId, JSON.stringify(__v__));
+                        } else {
+                            __minis__.resolve($callId, String(__v__));
+                        }
+                    } catch(e) {
+                        __minis__.reject($callId, e && e.message ? e.message : String(e));
                     }
-                } catch(e) {
-                    __minis__.reject(e && e.message ? e.message : String(e));
-                }
-            })();
-        """.trimIndent()
-        withContext(Dispatchers.Main) {
-            webView.evaluateJavascript(wrapped, null)
+                })();
+            """.trimIndent()
+            withContext(Dispatchers.Main) {
+                webView.evaluateJavascript(wrapped, null)
+            }
+            return withTimeoutOrNull(60_000L) { deferred.await() }
+        } finally {
+            pendingJsCalls.remove(callId)
         }
-        val raw = withTimeoutOrNull(60_000L) { deferred.await() }
-        asyncJsDeferred = null
-        return raw
     }
 
     // -- Set User Agent --
@@ -1547,8 +1574,9 @@ class BrowserUseManager(
      * viewport-change callers still get a deterministic page refresh.
      */
     suspend fun reloadAndWait() {
+        val navId = navigationSeq.incrementAndGet()
         val deferred = CompletableDeferred<Unit>()
-        navigationDeferred = deferred
+        pendingNavigations[navId] = deferred
         _isLoading.value = true
         val url = _currentURL.value
         if (url.isEmpty() || url == "about:blank") {
@@ -1565,14 +1593,18 @@ class BrowserUseManager(
         }
         val handler = Handler(Looper.getMainLooper())
         val timeoutRunnable = Runnable {
-            if (navigationDeferred === deferred) {
+            if (pendingNavigations.remove(navId) === deferred) {
                 _isLoading.value = false
                 deferred.complete(Unit)
-                navigationDeferred = null
             }
         }
         handler.postDelayed(timeoutRunnable, NAVIGATION_TIMEOUT_MS)
-        try { deferred.await() } finally { handler.removeCallbacks(timeoutRunnable) }
+        try {
+            deferred.await()
+        } finally {
+            handler.removeCallbacks(timeoutRunnable)
+            pendingNavigations.remove(navId)
+        }
         _isLoading.value = false
     }
 
@@ -1587,20 +1619,25 @@ class BrowserUseManager(
      * `document.body` populated. Must be called on the main thread.
      */
     suspend fun loadBlankPage() {
+        val navId = navigationSeq.incrementAndGet()
         val deferred = CompletableDeferred<Unit>()
-        navigationDeferred = deferred
+        pendingNavigations[navId] = deferred
         _isLoading.value = true
         webView.loadDataWithBaseURL(null, BLANK_PAGE_HTML, "text/html", "utf-8", null)
         val handler = Handler(Looper.getMainLooper())
         val timeoutRunnable = Runnable {
-            if (navigationDeferred === deferred) {
+            if (pendingNavigations.remove(navId) === deferred) {
                 _isLoading.value = false
                 deferred.complete(Unit)
-                navigationDeferred = null
             }
         }
         handler.postDelayed(timeoutRunnable, NAVIGATION_TIMEOUT_MS)
-        try { deferred.await() } finally { handler.removeCallbacks(timeoutRunnable) }
+        try {
+            deferred.await()
+        } finally {
+            handler.removeCallbacks(timeoutRunnable)
+            pendingNavigations.remove(navId)
+        }
         _isLoading.value = false
     }
 

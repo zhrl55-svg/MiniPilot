@@ -132,6 +132,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.withFrameNanos
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.ui.draw.drawWithCache
@@ -753,7 +754,14 @@ fun SessionListScreen(
     var editSession by remember { mutableStateOf<ChatSessionEntity?>(null) }
     var showBrowserSheet by remember { mutableStateOf(false) }
     var showBrowserSettings by remember { mutableStateOf(false) }
-    val browserTabPool = remember { com.openminis.app.browser.BrowserTabPool(context) }
+    // Application context, not the Activity: the pool and every WebView it
+    // builds must never pin this screen. DisposableEffect releases the
+    // WebViews when the screen leaves composition — nothing else calls
+    // destroy() on them.
+    val browserTabPool = remember { com.openminis.app.browser.BrowserTabPool(context.applicationContext) }
+    DisposableEffect(Unit) {
+        onDispose { browserTabPool.destroyAllTabs() }
+    }
 
     // [T-android-session-grouping] Groups are pulled out FIRST; only the
     // leftovers go through date bucketing. Assembly order below is

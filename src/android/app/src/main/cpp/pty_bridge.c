@@ -183,6 +183,10 @@ Java_com_openminis_app_sandbox_PtyBridge_readBytes(
     JNIEnv *env, jclass clazz, jint fd, jbyteArray buf, jint off, jint len)
 {
     if (fd < 0 || len <= 0) return -EINVAL;
+    // Bounds-check off/len against the real array before any pointer
+    // arithmetic (len >= 1 here, so bufLen - len cannot underflow).
+    jsize bufLen = (*env)->GetArrayLength(env, buf);
+    if (off < 0 || off > bufLen - len) return -EINVAL;
     jbyte *data = (*env)->GetByteArrayElements(env, buf, NULL);
     if (!data) return -ENOMEM;
     ssize_t n = read(fd, data + off, (size_t) len);
@@ -197,6 +201,10 @@ Java_com_openminis_app_sandbox_PtyBridge_writeBytes(
     JNIEnv *env, jclass clazz, jint fd, jbyteArray buf, jint off, jint len)
 {
     if (fd < 0 || len <= 0) return -EINVAL;
+    // Bounds-check off/len against the real array before any pointer
+    // arithmetic (len >= 1 here, so bufLen - len cannot underflow).
+    jsize bufLen = (*env)->GetArrayLength(env, buf);
+    if (off < 0 || off > bufLen - len) return -EINVAL;
     jbyte *data = (*env)->GetByteArrayElements(env, buf, NULL);
     if (!data) return -ENOMEM;
     ssize_t written = 0;

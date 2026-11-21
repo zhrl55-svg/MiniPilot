@@ -51,6 +51,15 @@ object EncryptedPrefsFactory {
     private const val TAG = "EncryptedPrefsFactory"
     internal const val FALLBACK_SUFFIX = "_plain_fallback"
 
+    /**
+     * [T-android-keystore-plaintext-marker] Set to true in a plain-text
+     * fallback store for as long as that store is the live one, so the
+     * degradation is visible on disk (diagnostics / support triage), not
+     * only in a log line that rotates away. Cleared when the entries move
+     * back into the encrypted store (see [moveEntries]).
+     */
+    const val PLAINTEXT_FALLBACK_MARKER = "plaintext_fallback_active"
+
     private val lock = Any()
     private val cache = HashMap<String, SharedPreferences>()
 
@@ -101,20 +110,36 @@ object EncryptedPrefsFactory {
 
         attempt("rebuild", Log.ERROR)?.let { return ready(it) }
 
-        ops.log(Log.WARN, "falling back to plain SharedPreferences for $fileName - credentials lost")
-        return ops.plainFallback(fileName)
+        // [T-android-keystore-plaintext-marker] The fallback store is plain
+        // text: say so loudly, and leave a durable marker in the store itself.
+        ops.log(Log.ERROR, "falling back to plain SharedPreferences for $fileName - credentials lost; secrets will be stored UNENCRYPTED in $fileName$FALLBACK_SUFFIX")
+        val plain = ops.plainFallback(fileName)
+        runCatching { plain.edit().putBoolean(PLAINTEXT_FALLBACK_MARKER, true).commit() }
+            .onFailure { ops.log(Log.WARN, "writing plaintext fallback marker for $fileName failed: ${it.message}") }
+        return plain
     }
 
     /**
      * Copy every entry of [plain] into [into], then clear [plain]. Returns how
      * many entries moved. Clears only after the copy is committed, so a failed
      * write keeps the values where they were.
+     *
+     * The plaintext fallback marker ([PLAINTEXT_FALLBACK_MARKER]) never moves:
+     * it only describes the fallback store itself, and is dropped together
+     * with the clear below (or with the whole file by [adoptFallback]'s
+     * delete-once-empty).
      */
     internal fun moveEntries(plain: SharedPreferences, into: SharedPreferences): Int {
         val all = plain.all
-        if (all.isEmpty()) return 0
+        val movable = all.filterKeys { it != PLAINTEXT_FALLBACK_MARKER }
+        if (movable.isEmpty()) {
+            // Nothing but the marker (or nothing at all): clear it so a
+            // marker-only fallback file doesn't linger on disk forever.
+            if (all.isNotEmpty()) plain.edit().clear().commit()
+            return 0
+        }
         val ed = into.edit()
-        for ((k, v) in all) {
+        for ((k, v) in movable) {
             @Suppress("UNCHECKED_CAST")
             when (v) {
                 is String -> ed.putString(k, v)
@@ -127,7 +152,7 @@ object EncryptedPrefsFactory {
         }
         if (!ed.commit()) return 0
         plain.edit().clear().commit()
-        return all.size
+        return movable.size
     }
 
     private class AndroidOps(private val context: Context) : Ops {

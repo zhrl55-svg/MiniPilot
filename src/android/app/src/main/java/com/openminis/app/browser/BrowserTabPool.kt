@@ -552,24 +552,27 @@ class BrowserTabPool(private val context: Context) : BrowserTabPoolRegistry.Regi
                     com.openminis.app.network.NetworkScope.BROWSER.tag, url,
                     headers = headers, connectTimeoutMs = 15_000, readTimeoutMs = 30_000,
                 )
-                val total = if (contentLength > 0) contentLength else conn.contentLength
-                conn.body().use { input ->
-                    dest.outputStream().use { out ->
-                        val buf = ByteArray(64 * 1024)
-                        var copied = 0L
-                        while (true) {
-                            // Makes cancelDownload() actually stop mid-stream
-                            // instead of copying to completion.
-                            ensureActive()
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            out.write(buf, 0, n)
-                            copied += n
-                            updateDownloadProgress(id, dest.name, copied, total)
+                // use{} = finally: a body()/outputStream() failure must still
+                // close the connection instead of leaking it.
+                conn.use {
+                    val total = if (contentLength > 0) contentLength else conn.contentLength
+                    conn.body().use { input ->
+                        dest.outputStream().use { out ->
+                            val buf = ByteArray(64 * 1024)
+                            var copied = 0L
+                            while (true) {
+                                // Makes cancelDownload() actually stop mid-stream
+                                // instead of copying to completion.
+                                ensureActive()
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                out.write(buf, 0, n)
+                                copied += n
+                                updateDownloadProgress(id, dest.name, copied, total)
+                            }
                         }
                     }
                 }
-                conn.close()
                 finishDownload(id, dest)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // User cancel is not a failure notice-worthy event: delete the
@@ -1366,7 +1369,10 @@ class BrowserTabPool(private val context: Context) : BrowserTabPoolRegistry.Regi
 
     private fun handleNewWindow(resultMsg: Message) {
         val currentTabs = _tabs.value.toMutableList()
-        if (currentTabs.size >= MAX_TABS) {
+        // Same ceiling createTab uses: the cap grows per active agent, so a
+        // hardcoded MAX_TABS here would reject window.open in agent mode
+        // before the quota was exhausted.
+        if (currentTabs.size >= effectiveMaxTabs()) {
             Log.w(TAG, "window.open rejected: max tabs reached")
             return
         }

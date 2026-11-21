@@ -1170,7 +1170,19 @@ class OpenAIProvider private constructor(
         // chunk, and finishes — bypassing the chat/tool SSE state machine below.
         if (isCodexImageModel) {
             try {
-                handleCodexImageStream(reader) { chunk -> trySend(chunk) }
+                handleCodexImageStream(reader) { chunk ->
+                    // Keep trySend semantics (never block the stream), but a
+                    // dropped chunk must not vanish silently — the image the
+                    // user sees would be truncated with no trace anywhere.
+                    trySend(chunk).also { result ->
+                        if (result.isFailure) {
+                            com.openminis.app.logging.AppLogger.warning(
+                                "OpenAIProvider",
+                                "codex image chunk dropped by channel: ${result.exceptionOrNull()?.message ?: "unknown"}"
+                            )
+                        }
+                    }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
