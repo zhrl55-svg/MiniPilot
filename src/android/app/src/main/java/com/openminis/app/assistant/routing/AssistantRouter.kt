@@ -118,20 +118,23 @@ class AssistantRouter(
         //
         // 带自由文本槽的能力不适用长度/占比判断：槽值就是用户内容
         // （「找笔记 Project Alpha」里关键词只占一小段，但这是在搜索）。
-        val hasExtractedSlot = action.requiredSlots.any {
-            extraction.args.optString(it).isNotBlank()
-        }
-        if (readOnly && !hasExtractedSlot && best.matchedPatterns.isEmpty()) {
+        //
+        // [T-fastpath-topic-guard] 检索类能力例外：`news_search` /
+        // `stock_quote` / `web_search` 的 query 由 SlotExtractor 把整句原样
+        // 回填，那不是「抽到了槽位」，不能拿它豁免保护 —— 否则长句里提到
+        // 「新闻 / 网页搜索」就会直接播报/检索。
+        val hasExtractedSlot = capability.id !in QUERY_ECHO_CAPABILITIES &&
+            action.requiredSlots.any {
+                extraction.args.optString(it).isNotBlank()
+            }
+        if (readOnly && !hasExtractedSlot) {
             val normalized = AssistantRouteMatcher.normalizeText(userText)
-            val coverage = best.longestKeywordLength.toFloat() /
-                normalized.length.coerceAtLeast(1)
-            val topicMention = normalized.length > TOPIC_MENTION_MIN_LENGTH &&
-                coverage < TOPIC_MENTION_MIN_COVERAGE
-            val discussingStatusCapability =
-                capability.id in STATUS_CAPABILITIES &&
-                    normalized.length > TOPIC_DISCUSSION_MIN_LENGTH &&
+            val discussingReadOnlyTopic =
+                normalized.length > TOPIC_DISCUSSION_MIN_LENGTH &&
                     DISCUSSION_CUES.any { normalized.contains(it) }
-            if (topicMention || discussingStatusCapability) {
+            if (userText.contains('\n') || discussingReadOnlyTopic ||
+                !looksLikeReadOnlyCommand(normalized, best, capability.id)
+            ) {
                 return RouteDecision.Cloud("topic-mention", ranked = ranked)
             }
         }
@@ -215,26 +218,125 @@ class AssistantRouter(
                 head.startsWith("[END ", ignoreCase = true)
         }
 
-        /** 超过这个长度还只命中一个短关键词，就当成「提到」而非「命令」。 */
-        const val TOPIC_MENTION_MIN_LENGTH = 14
-
         /** [T-media-route-long-text] 媒体路由的最大指令长度，超出走云端。 */
         const val MEDIA_COMMAND_MAX_LENGTH = 20
 
-        /** 关键词至少要占句子的这个比例，纯关键词匹配才可信。 */
-        const val TOPIC_MENTION_MIN_COVERAGE = 0.30f
-
         /**
-         * 状态/控制类能力没有自由文本槽：句子里出现「接口 / 方案 / 规则」
-         * 这类讨论词汇时，用户是在聊这个能力，不是在调用它。
+         * [T-fastpath-topic-guard] 这些只读能力的 query 是 SlotExtractor
+         * 把整句原样回填的（见 SlotExtractor.extract），不是真实抽取的槽位。
+         * 不能拿它豁免「话题提及保护」。
          */
-        val STATUS_CAPABILITIES = setOf("weather", "device", "media", "calendar", "flashlight", "volume")
+        val QUERY_ECHO_CAPABILITIES = setOf("news_search", "stock_quote", "web_search")
+
+        /** 以检索/播报动词开头的句子，这些能力可以按指令处理。 */
+        val RETRIEVAL_CAPABILITIES = QUERY_ECHO_CAPABILITIES + setOf("weather")
+
+        /** 只读指令的短句上限：超过这个长度就要看命中位置。 */
+        const val READ_ONLY_COMMAND_MAX_LENGTH = 18
+
+        /** 带明确检索动词的指令可以稍长（「帮我搜一下 Kotlin 协程教程」）。 */
+        const val READ_ONLY_COMMAND_MAX_LENGTH_WITH_VERB = 24
+
+        /** 命中区段距句首超过这个字数，就是在长文中部提了一句。 */
+        const val READ_ONLY_SPAN_HEAD_MAX = 8
+
+        /** 中文命中之后还剩这么多字，就认为指令已经说完了。 */
+        const val READ_ONLY_TAIL_MAX = 4
+
+        /** 英文按空格分词，尾部允许多一个词（「battery level」）。 */
+        const val READ_ONLY_TAIL_MAX_ASCII = 10
+
+        /** 命中之后紧跟疑问/请求时，尾部可以长一点。 */
+        const val READ_ONLY_TAIL_QUESTION_MAX = 10
+
+        /** 只看命中之后的这一小段里有没有疑问/请求词。 */
+        const val READ_ONLY_TAIL_QUESTION_HEAD = 4
+
+        /** 命中区段至少覆盖句子的这个比例，才算「整句都在请求」。 */
+        const val READ_ONLY_MIN_COVERAGE = 0.6f
 
         const val TOPIC_DISCUSSION_MIN_LENGTH = 8
 
+        /** 「帮我看看新闻」这类请求前缀，判动词前先剥掉。 */
+        val REQUEST_PREFIXES = listOf("麻烦你", "麻烦", "帮我", "给我", "帮忙", "请你", "请")
+
+        /** 只读检索类能力的明确执行动词。 */
+        val RETRIEVAL_VERBS = listOf(
+            "搜一下", "搜下", "搜搜", "搜索", "查一下", "查查", "查找",
+            "播报", "播一下", "来点", "告诉我", "读一下", "念一下",
+        )
+
+        /**
+         * 命中之后紧跟这些词，说明用户是在问数据（「天气怎么样」「需要
+         * 带伞吗」「深证成指涨了还是跌了」），而不是在讨论这个能力。
+         * 英文给 freebusy / weather 这类查询留几个时间词。
+         */
+        val QUESTION_TAILS = listOf(
+            "怎么样", "如何", "多少", "几度", "有哪些", "是什么", "什么",
+            "吗", "呢", "带伞", "穿什么", "要不要", "涨", "跌",
+            "tomorrow", "today", "now", "latest",
+        )
+
+        /**
+         * [T-fastpath-topic-guard] 句子里出现「接口 / 方案 / 设计 / 文案 /
+         * 排序」这类词时，用户多半在讨论这个能力，而不是要它执行。
+         * 「触发」是既有提醒路由的关键词，短句（≤8 字）不参与判断。
+         */
         val DISCUSSION_CUES = listOf(
             "讨论", "方案", "接口", "规则", "触发", "代码", "实现",
             "优化", "排查", "日志", "设计", "开发", "对接",
+            "文案", "推送", "排序", "界面", "页面", "模块", "按钮", "样式",
+            "体验", "产品", "需求", "架构", "性能", "交互", "流程", "逻辑",
+            "原理", "重构", "测试", "上线", "点击率", "功能",
         )
+
+        /**
+         * 只读能力（天气 / 新闻 / 行情 / 网页搜索 …）的一次命中是「指令」
+         * 还是「提到」。
+         *
+         * 判据只有一条主线：命中的模式/关键词必须落在句首附近，并且
+         * 句子在命中之后就该结束了 —— 后面要么没内容，要么是「怎么样 /
+         * 吗 / 需要带伞」这类疑问尾巴。长文里中部的一次命中、命中之后
+         * 大段叙述，都视为话题提及，交回云端按上下文判断。
+         */
+        fun looksLikeReadOnlyCommand(
+            text: String,
+            match: RouteMatch,
+            capability: String,
+        ): Boolean {
+            if (capability in RETRIEVAL_CAPABILITIES &&
+                text.length <= READ_ONLY_COMMAND_MAX_LENGTH_WITH_VERB
+            ) {
+                val head = stripRequestPrefix(text)
+                if (RETRIEVAL_VERBS.any { head.startsWith(it) }) return true
+            }
+            if (match.matchedRanges.isEmpty()) return false
+            val asciiHeavy = text.count { it.code < 128 } * 2 >= text.length
+            val tailMax = if (asciiHeavy) READ_ONLY_TAIL_MAX_ASCII else READ_ONLY_TAIL_MAX
+            return match.matchedRanges.any { range ->
+                if (range.first > READ_ONLY_SPAN_HEAD_MAX) return@any false
+                if (range.last >= text.lastIndex) return@any true
+                val tail = text.substring(range.last + 1)
+                val covered = range.last - range.first + 1
+                if (text.length <= READ_ONLY_COMMAND_MAX_LENGTH && tail.length <= tailMax) {
+                    return@any true
+                }
+                if (covered.toFloat() / text.length.coerceAtLeast(1) >= READ_ONLY_MIN_COVERAGE) {
+                    return@any true
+                }
+                if (tail.length <= READ_ONLY_TAIL_QUESTION_MAX) {
+                    val head = tail.take(READ_ONLY_TAIL_QUESTION_HEAD)
+                    if (QUESTION_TAILS.any { head.contains(it) }) return@any true
+                }
+                false
+            }
+        }
+
+        fun stripRequestPrefix(text: String): String {
+            for (prefix in REQUEST_PREFIXES) {
+                if (text.startsWith(prefix)) return text.removePrefix(prefix).trimStart()
+            }
+            return text
+        }
     }
 }

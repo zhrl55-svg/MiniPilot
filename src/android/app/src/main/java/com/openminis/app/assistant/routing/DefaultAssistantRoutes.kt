@@ -1,13 +1,37 @@
 package com.openminis.app.assistant.routing
 
 object DefaultAssistantRoutes {
-    const val SEED_VERSION = 14
+    const val SEED_VERSION = 15
 
     private val RETIRED_AT_V3 = setOf("life.media")
 
     /** [F-004] The contacts pattern that matched `hub_call` as a phone call. */
     private val RETIRED_CONTACT_PATTERNS = setOf(
         """(?:打电话给|拨打|call)\s*[\p{L}0-9_·]{1,30}""",
+    )
+
+    /**
+     * [T-fastpath-topic-guard] v15 之前的内置模式：只命中关键词、不看句子
+     * 上下文，长对话里出现「今天天气不错」「帮我看看这段新闻文案」
+     * 「我昨天用网页搜索查了资料」都会直接走端侧。迁移时替换掉它们，
+     * 用户自建的 pattern 不动。
+     */
+    private val V15_REPLACED_PATTERNS: Map<String, Set<String>> = mapOf(
+        "life.weather" to setOf(
+            """(?:今天|明天|后天|现在|这几天|周末).{0,6}(?:天气|下雨|温度|气温)""",
+        ),
+        "info.news" to setOf(
+            """(?:看看|看一下|查一下|搜一下|来点|说说|讲讲|播报).{0,6}(?:新闻|资讯|热点|头条)""",
+        ),
+        "info.stock" to setOf(
+            """(?:上证|深证|创业板|沪深|沪指|大盘|A股|a股|股市|股票|股价).{0,8}(?:指数|行情|多少点|多少|涨|跌|怎么样|如何)""",
+            """(?:今天|现在|目前).{0,6}(?:大盘|股市|A股).{0,8}(?:怎么样|如何|多少)""",
+        ),
+        "info.websearch" to setOf(
+            """(?:帮我|给我|请|麻烦)?\s*(?:上网|在网上|网上|网页)\s*(?:搜|搜索|查)(?:索|一下)?\s*.{1,40}""",
+            """(?:搜|搜索)\s*(?:网页|网页结果|网上)""",
+            """(?:查|找)\s*(?:资料|教程|官网|文档|攻略)""",
+        ),
     )
 
     /**
@@ -138,7 +162,10 @@ object DefaultAssistantRoutes {
             ),
             patterns = listOf(
                 """(?:今天|最近|现在|刚刚|这几天).{0,6}(?:有什么|有啥|发生|出).{0,4}(?:新闻|资讯|热点|头条)""",
-                """(?:看看|看一下|查一下|搜一下|来点|说说|讲讲|播报).{0,6}(?:新闻|资讯|热点|头条)""",
+                // [T-fastpath-topic-guard] 「看看 / 说说」只有在句末落点是
+                // 新闻/资讯时才是指令：允许请求前缀，但目标词之后不能再有
+                // 「文案怎么写 / 推送的产品设计」这类叙述。
+                """^(?:帮我|给我|请|麻烦|帮忙|能不能|可以)?\s*(?:看看|看一下|查一下|搜一下|来点|说说|讲讲|播报).{0,6}(?:新闻|资讯|热点|头条)\s*$""",
                 """(?:新闻|资讯|热点|头条).{0,6}(?:是什么|有哪些|怎么样)""",
                 """\b(?:latest|today'?s|breaking)\s+news\b""",
                 """\bnews\b.{0,12}\b(?:today|latest|headlines)\b""",
@@ -157,8 +184,8 @@ object DefaultAssistantRoutes {
                 "股市", "股价", "股票", "行情", "涨了", "跌了", "涨停", "跌停",
             ),
             patterns = listOf(
-                """(?:上证|深证|创业板|沪深|沪指|大盘|A股|a股|股市|股票|股价).{0,8}(?:指数|行情|多少点|多少|涨|跌|怎么样|如何)""",
-                """(?:今天|现在|目前).{0,6}(?:大盘|股市|A股).{0,8}(?:怎么样|如何|多少)""",
+                """^(?:帮我|给我|请|麻烦|今天|现在|目前)?\s*(?:上证|深证|创业板|沪深|沪指|大盘|A股|a股|股市|股票|股价).{0,8}(?:指数|行情|多少点|多少|涨|跌|怎么样|如何)""",
+                """^(?:帮我|给我|请|麻烦)?\s*(?:今天|现在|目前).{0,6}(?:大盘|股市|A股).{0,8}(?:怎么样|如何|多少)""",
                 """\b(?:stock|index|market)\b.{0,20}\b(?:today|now|how|quote)\b""",
             ),
             exclude = listOf(
@@ -218,9 +245,11 @@ object DefaultAssistantRoutes {
                 "帮我搜一下", "查资料",
             ),
             patterns = listOf(
-                """(?:帮我|给我|请|麻烦)?\s*(?:上网|在网上|网上|网页)\s*(?:搜|搜索|查)(?:索|一下)?\s*.{1,40}""",
-                """(?:搜|搜索)\s*(?:网页|网页结果|网上)""",
-                """(?:查|找)\s*(?:资料|教程|官网|文档|攻略)""",
+                // [T-fastpath-topic-guard] 指令从句首开始、目标在句子里：
+                // 长文里中部出现的「网页搜索」是话题提及。
+                """^(?:帮我|给我|请|麻烦)?\s*(?:上网|在网上|网上|网页)\s*(?:搜|搜索|查)(?:索|一下)?\s*.{1,40}$""",
+                """^(?:帮我|给我|请|麻烦)?\s*(?:搜|搜索)\s*(?:网页|网页结果|网上)\s*.{0,40}$""",
+                """^(?:帮我|给我|请|麻烦)?\s*(?:查|找)\s*(?:资料|教程|官网|文档|攻略)\s*.{0,40}$""",
             ),
             // Route validation caps exclude terms at 20. The dropped shell /
             // file tokens cannot reach this route anyway: its patterns require
@@ -393,9 +422,12 @@ object DefaultAssistantRoutes {
             // 只出现「天气」两个字不等于是问天气。真正的问句/指令会命中
             // 下面这些模式；单纯提到天气的长句子由 AssistantRouter 的
             // 话题提及保护挡回云端（例如「可以直接对接高德地图的天气接口」）。
+            //
+            // [T-fastpath-topic-guard] 时间词模式必须带疑问/请求尾巴：
+            // 「今天天气不错，我们下午去公园走走吧」是在聊天气，不是在问。
             patterns = listOf(
-                """(?:今天|明天|后天|现在|这几天|周末).{0,6}(?:天气|下雨|温度|气温)""",
-                """(?:天气|下雨|温度|气温).{0,8}(?:怎么样|如何|多少度|多少|带伞|穿什么)""",
+                """^(?:帮我|给我|请|麻烦|能不能|可以)?\s*(?:今天|明天|后天|现在|这几天|周末).{0,6}(?:天气|下雨|气温|温度).{0,8}(?:怎么样|如何|多少|几度|吗|呢|需要|带伞|穿什么|要不要|有哪些)""",
+                """(?:天气|下雨|温度|气温).{0,8}(?:怎么样|如何|多少度|多少|几度|带伞|穿什么)""",
                 """\b(?:what'?s|whats|how'?s|hows)\b.{0,16}\bweather\b""",
                 """\bweather\b.{0,16}\b(?:today|tomorrow|now|this week)\b""",
             ),
@@ -655,6 +687,26 @@ object DefaultAssistantRoutes {
                         route.copy(
                             patterns = (route.patterns - RETIRED_CONTACT_PATTERNS) + contacts.patterns,
                             exclude = (route.exclude + contacts.exclude).distinct(),
+                        )
+                    }
+                }
+            }
+        }
+        if (fromVersion < 15) {
+            // [T-fastpath-topic-guard] v15 收紧只读检索/状态类路由的模式：
+            // 句首锚定 + 句尾落点，把「今天天气不错」「帮我看看这段新闻
+            // 文案」「我昨天用网页搜索查了资料」还给云端。旧内置模式被
+            // 替换（合并会让它们继续误命中），用户自建的模式保留。
+            for ((id, retired) in V15_REPLACED_PATTERNS) {
+                val builtin = all.firstOrNull { it.id == id } ?: continue
+                routes = routes.map { route ->
+                    if (route.id != id) {
+                        route
+                    } else {
+                        route.copy(
+                            patterns = ((route.patterns - retired) + builtin.patterns)
+                                .distinct()
+                                .take(AssistantRouteStore.MAX_PATTERNS),
                         )
                     }
                 }
