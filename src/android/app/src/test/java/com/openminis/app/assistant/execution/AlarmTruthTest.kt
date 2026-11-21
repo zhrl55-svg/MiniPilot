@@ -50,15 +50,31 @@ class AlarmTruthTest {
     }
 
     /**
-     * 回读可用但目标小时上没有任何闹钟 —— 闹钟确实没建（如用户在系统
-     * 时钟里点了取消）。这必须报失败，不能报成功。
+     * 回读可用但目标小时上没有任何**新增**的闹钟 —— 闹钟还没生效。
+     *
+     * 厂商时钟此刻正开着界面等用户点勾，所以这是「还没生效」而不是
+     * 「建失败」：说成失败会让用户以为闹钟没设上。
      */
     @Test
-    fun `a confirmed absence is a failure`() {
+    fun `a confirmed absence on an oem clock needs user confirmation`() {
         val verdict = AlarmTruth.judge(
             dispatched = true,
             readBack = readBack(supported = true, count = 0),
             oemLabel = "HUAWEI",
+        )
+        assertEquals(AlarmTruth.Outcome.NEEDS_USER_CONFIRMATION, verdict.outcome)
+        assertFalse(verdict.succeeded)
+    }
+
+    /**
+     * AOSP / Pixel 认 EXTRA_SKIP_UI：派发即插入，回读不到新增就是真没建。
+     */
+    @Test
+    fun `a confirmed absence on an aosp clock is a failure`() {
+        val verdict = AlarmTruth.judge(
+            dispatched = true,
+            readBack = readBack(supported = true, count = 0),
+            oemLabel = "Google",
         )
         assertEquals(AlarmTruth.Outcome.FAILED, verdict.outcome)
         assertFalse(verdict.succeeded)
@@ -77,6 +93,17 @@ class AlarmTruthTest {
             dispatched = true,
             readBack = readBack(supported = true, count = 1, baseline = 1),
             oemLabel = "HUAWEI",
+        )
+        assertEquals(AlarmTruth.Outcome.NEEDS_USER_CONFIRMATION, verdict.outcome)
+        assertFalse(verdict.succeeded)
+    }
+
+    @Test
+    fun `a pre-existing alarm at the same hour is a failure on an aosp clock`() {
+        val verdict = AlarmTruth.judge(
+            dispatched = true,
+            readBack = readBack(supported = true, count = 1, baseline = 1),
+            oemLabel = "Google",
         )
         assertEquals(AlarmTruth.Outcome.FAILED, verdict.outcome)
         assertFalse(verdict.succeeded)

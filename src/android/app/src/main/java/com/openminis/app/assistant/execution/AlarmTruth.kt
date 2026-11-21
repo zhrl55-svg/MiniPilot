@@ -126,15 +126,24 @@ object AlarmTruth {
         if (readBack.readBackSupported) {
             // 只认**新增**的闹钟：用户早先就设过一个同小时的闹钟时，
             // 「目标小时上有闹钟」并不能证明这次派发成功了。
-            return if (readBack.newAlarms > 0) {
-                Verdict(
+            if (readBack.newAlarms > 0) {
+                return Verdict(
                     Outcome.CREATED,
                     "闹钟已创建。",
                 )
-            } else {
+            }
+            // 没有新增。厂商时钟要用户在自己的界面里点一下勾才成立 —— 此刻
+            // 那个界面正开着等他确认，所以这是「还没生效」，不是「建失败」。
+            // AOSP/Pixel 认 EXTRA_SKIP_UI：派发即插入，没有新增就是真没建。
+            return if (oemHonorsSkipUi(oemLabel)) {
                 Verdict(
                     Outcome.FAILED,
                     "系统时钟没有接受这个闹钟，没有创建成功。",
+                )
+            } else {
+                Verdict(
+                    Outcome.NEEDS_USER_CONFIRMATION,
+                    "已经打开系统时钟并填好闹钟，但需要你在系统时钟里点确认才会生效。",
                 )
             }
         }
