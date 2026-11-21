@@ -33,7 +33,19 @@ object LocalResultFormatter {
     ): String {
         val body = output.trim()
         if (body.isEmpty()) return ""
-        if (!success) return truncate(body)
+        if (!success) {
+            // [T-alarm-truthful-result] 「需要用户在系统时钟里确认」是一句
+            // 人话，不是一段 JSON。只对这一种情况提取 message —— 其它失败
+            // 仍然保留原始错误码（`permission_denied` 之类对用户有用）。
+            val structured = parseStructured(body)
+            if (structured is JSONObject &&
+                structured.optString("error") == "needs_user_confirmation"
+            ) {
+                val message = structured.optString("message").trim()
+                if (message.isNotBlank()) return truncate(message)
+            }
+            return truncate(body)
+        }
         val structured = parseStructured(body)
         return when {
             structured is JSONObject && capability == "weather" -> weather(structured)

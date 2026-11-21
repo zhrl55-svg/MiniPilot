@@ -81,18 +81,22 @@ class WakeWordService : Service() {
         private const val WAKE_REJECT_COOLDOWN_MS = 700L
 
         /** Segments kept while the previous one is being transcribed. */
-        private const val MAX_PENDING_UTTERANCES = 2
+        private const val MAX_PENDING_UTTERANCES = 4
 
         /**
          * [T-voice-request-silence] Quiet time that ends a spoken request.
          *
-         * 1.2 s, not the VAD's 600 ms default: people pause inside long
-         * sentences, and cutting on the first short gap sent only the first
-         * half of a request to the model. This is now the ONLY rule that
-         * ends a request — the conversation deadline above is a silence
-         * window and is renewed while the user keeps talking.
+         * 1.0 s: the user asked for exactly this ("说话人静音超过1秒就开始
+         * 识别并回复"), and it is also the value that makes the request feel
+         * answered instead of hanging. It used to be 1.2 s, which was long
+         * enough that the sentence sat in the buffer for another fifth of a
+         * second after the user had clearly stopped talking.
+         *
+         * This is now the ONLY rule that ends a request — the conversation
+         * deadline above is a silence window and is renewed while the user
+         * keeps talking.
          */
-        private const val REQUEST_SILENCE_MS = 1_200
+        private const val REQUEST_SILENCE_MS = 1_000
 
         /** Safety valve only: a request that never pauses is cut here. */
         private const val REQUEST_MAX_SEGMENT_MS = 60_000
@@ -1222,7 +1226,14 @@ class WakeWordService : Service() {
         // assistant's own "我在", and the queued one is the actual request.
         if (utteranceBusy) {
             if (pendingUtterances.size >= MAX_PENDING_UTTERANCES) {
-                pendingUtterances.removeFirst()
+                // [T-voice-wake-queue-log] The queue used to drop the oldest
+                // segment silently, so a lost sentence left no trace at all
+                // and the transcript simply skipped a request. Say it out
+                // loud — a dropped utterance is a bug the user has to see.
+                val dropped = pendingUtterances.removeFirst()
+                val droppedMs = dropped.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+                AppLogger.info(TAG, "语音队列已满，丢弃最早一句 ${droppedMs}ms")
+                VoiceWakeState.trace(this, "语音队列已满，丢弃最早一句 ${droppedMs}ms")
             }
             pendingUtterances.addLast(pcm)
             AppLogger.info(TAG, "上一句还在处理，先排队（${pendingUtterances.size}）")
@@ -1251,7 +1262,18 @@ class WakeWordService : Service() {
     }
 
     private suspend fun handleUtterance(pcm: ShortArray) {
-        if (conversationState != ConversationState.LISTENING || destroying) return
+        if (conversationState != ConversationState.LISTENING || destroying) {
+            // [T-voice-wake-queue-log] The audio was captured but the state
+            // moved on before it could be transcribed (the window closed, or
+            // the assistant started replying). This used to return silently,
+            // so the transcript simply skipped a request with no trace of it
+            // anywhere — the device log showed a captured segment with no
+            // matching recognition line at all.
+            val ms = pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+            AppLogger.info(TAG, "收到片段但当前不处于聆听状态，丢弃 ${ms}ms")
+            VoiceWakeState.trace(this, "收到片段但状态已变，丢弃 ${ms}ms")
+            return
+        }
         val now = SystemClock.elapsedRealtime()
         // The segment was cut while the assistant was still saying "我在" —
         // the audio carries the assistant's own voice.

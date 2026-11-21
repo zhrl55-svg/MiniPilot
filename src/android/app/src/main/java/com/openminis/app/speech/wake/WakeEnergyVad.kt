@@ -17,6 +17,30 @@ import kotlin.math.sqrt
     triggers transcription;
  *  - session-level sleep is a different thing and lives in
     [WakeWordService].
+ *
+ * ## [T-voice-wake-noise-floor-adapt] Why there are two floors
+ *
+ * The old code tracked ONE noise floor and only updated it while nobody was
+ * talking. That froze the floor at the moment the user started speaking,
+ * and the symptom was a hard deadlock: with a background above that frozen
+ * threshold every frame counted as "voiced", the silence counter never
+ * advanced, and the sentence was only ever cut by the 60 s safety valve.
+ * The device log showed exactly that - floor frozen at 128 (threshold 332)
+ * while the microphone sat between 464 and 2136 for half a minute.
+ *
+ * So the floor is now split:
+ *
+ *  - [noiseFloor] - the ambient level. Drives the **open** threshold, so it
+ *    stays conservative (it only moves while nobody is talking) and a burst
+ *    of noise cannot open a segment on its own.
+ *  - [adaptiveFloor] - the floor that adapts **while the user is talking**.
+ *    It is the quietest recent level, bounded by half the speaker's level so
+ *    that it can never climb into the speech itself. It drives the **end**
+ *    threshold, which is what decides "the speaker stopped".
+ *
+ * The end threshold is deliberately lower than the open threshold
+ * (hysteresis): once the user is talking, a momentary dip below the open
+ * threshold must not end the sentence.
  */
 class WakeEnergyVad(
     private val onSpeechStart: () -> Unit,
@@ -44,12 +68,32 @@ class WakeEnergyVad(
     private val onEvent: ((String) -> Unit)? = null,
 ) {
 
+    /** Ambient level. Drives the open threshold; only moves while idle. */
     private var noiseFloor = 120.0
+
+    /**
+     * Floor that adapts while the user is talking: the quietest recent
+     * level, never above half the speaker's own level.
+     */
+    private var adaptiveFloor = 120.0
+
+    /** EWMA of the level of the frames counted as voiced. */
+    private var speechLevel = 0.0
+
+    /** Recent frame levels, used for the quietest-recent-level estimate. */
+    private val levelWindow = ArrayDeque<Double>()
+
     private var voicedFrames = 0
     private var silentFrames = 0
     private val preRoll = ArrayDeque<ShortArray>()
     private val segment = ArrayList<Short>()
     private var inSpeech = false
+
+    /** Ambient level when the current segment opened — the noise reference. */
+    private var floorAtOpen = 120.0
+
+    /** Loudest frame of the current segment. */
+    private var segmentPeak = 0.0
 
     /** Loudest frame since the last [reset] — diagnostics only. */
     @get:Synchronized
@@ -86,9 +130,14 @@ class WakeEnergyVad(
         inSpeech = false
         segment.clear()
         preRoll.clear()
+        levelWindow.clear()
         peakRms = 0.0
         lastRmsValue = 0.0
         framesFed = 0
+        adaptiveFloor = noiseFloor
+        speechLevel = 0.0
+        floorAtOpen = noiseFloor
+        segmentPeak = 0.0
     }
 
     @Synchronized
@@ -97,6 +146,8 @@ class WakeEnergyVad(
         lastRmsValue = rms
         framesFed++
         if (rms > peakRms) peakRms = rms
+        levelWindow.addLast(rms)
+        while (levelWindow.size > WINDOW_FRAMES) levelWindow.removeFirst()
 
         // While nobody is talking the noise floor tracks slowly: it rises
         // slowly and falls fast, so a single cough cannot drag it away.
@@ -124,6 +175,12 @@ class WakeEnergyVad(
                     // syllable is not clipped.
                     preRoll.forEach { segment.addAll(it.toList()) }
                     preRoll.clear()
+                    floorAtOpen = noiseFloor
+                    segmentPeak = rms
+                    speechLevel = rms
+                    // Start from the ambient level: the quietest recent
+                    // frame is still the pre-roll noise at this point.
+                    adaptiveFloor = noiseFloor
                     onEvent?.invoke(
                         "VAD 开口 rms=${"%.0f".format(rms)} 阈值=${"%.0f".format(threshold)} " +
                             "底噪=${"%.0f".format(noiseFloor)}",
@@ -137,33 +194,78 @@ class WakeEnergyVad(
         }
 
         segment.addAll(frame.take(len))
+        if (rms > segmentPeak) segmentPeak = rms
 
-        if (rms > threshold) {
+        // [T-voice-wake-noise-floor-adapt] The floor adapts while the user
+        // is talking: it follows the quietest recent level, but never climbs
+        // past half the speaker's own level — otherwise a long sentence
+        // would raise the floor into the speech and cut itself in half.
+        val floorTarget = minOf(
+            levelWindow.min(),
+            if (speechLevel > 0.0) speechLevel * 0.5 else Double.MAX_VALUE,
+        )
+        adaptiveFloor = if (floorTarget > adaptiveFloor) {
+            adaptiveFloor + (floorTarget - adaptiveFloor) * 0.05
+        } else {
+            adaptiveFloor + (floorTarget - adaptiveFloor) * 0.20
+        }
+
+        // Hysteresis: the end threshold is lower than the open threshold, so
+        // a dip below it inside a sentence does not end the sentence.
+        val endThreshold = maxOf(adaptiveFloor * 1.3, MIN_RMS)
+
+        if (rms > endThreshold) {
             silentFrames = 0
+            speechLevel = if (speechLevel <= 0.0) {
+                rms
+            } else {
+                speechLevel * 0.95 + rms * 0.05
+            }
         } else {
             silentFrames++
         }
 
         val silentMs = silentFrames * WakeAudioCapture.FRAME_MS
         val totalMs = segment.size * 1000 / WakeAudioCapture.SAMPLE_RATE
-        if (silentMs < minSilenceMs() && totalMs < maxSegmentMs()) return
+        val cutBySilence = silentMs >= minSilenceMs()
+        val cutByLimit = totalMs >= maxSegmentMs()
+        if (!cutBySilence && !cutByLimit) return
 
         inSpeech = false
         voicedFrames = 0
         silentFrames = 0
         val pcm = segment.toShortArray()
         segment.clear()
+        val reason = if (cutBySilence) "静音" else "上限"
 
         // Too short is noise (a door, clothes rustling) - drop it.
         val speechMs = pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE
-        if (speechMs >= MIN_SPEECH_MS) {
-            AppLogger.info(TAG, "VAD 切出一句 ${speechMs}ms")
-            onEvent?.invoke("VAD 切句 ${speechMs}ms 峰值=${"%.0f".format(peakRms)}")
-            onSegment(pcm)
-        } else {
+        if (speechMs < MIN_SPEECH_MS) {
             AppLogger.info(TAG, "VAD 丢弃过短片段 ${speechMs}ms")
             onEvent?.invoke("VAD 丢弃过短片段 ${speechMs}ms 峰值=${"%.0f".format(peakRms)}")
+        } else if (segmentPeak < maxOf(MIN_RMS * 1.5, floorAtOpen * 2.0)) {
+            // [T-voice-wake-noise-floor-adapt] The segment never rose above
+            // the background: it is noise that happened to be loud enough to
+            // open the segment, not a sentence. Sending it to the recogniser
+            // would only produce garbage.
+            AppLogger.info(TAG, "VAD 丢弃噪声片段 ${speechMs}ms 峰值=${"%.0f".format(segmentPeak)}")
+            onEvent?.invoke(
+                "VAD 丢弃噪声片段 ${speechMs}ms 峰值=${"%.0f".format(segmentPeak)} " +
+                    "底噪=${"%.0f".format(floorAtOpen)}",
+            )
+        } else {
+            AppLogger.info(TAG, "VAD 切出一句 ${speechMs}ms")
+            onEvent?.invoke(
+                "VAD 切句 ${speechMs}ms 原因=$reason 峰值=${"%.0f".format(segmentPeak)}",
+            )
+            onSegment(pcm)
         }
+
+        // The next segment starts from the ambient level again.
+        adaptiveFloor = noiseFloor
+        speechLevel = 0.0
+        segmentPeak = 0.0
+        floorAtOpen = noiseFloor
     }
 
     /**
@@ -171,7 +273,7 @@ class WakeEnergyVad(
      *
      * @return true when there was an unfinished utterance to hand over.
      *   The listening window has a hard deadline, and a user who speaks
-     *   without an 800 ms pause would otherwise have their sentence thrown
+     *   without a 800 ms pause would otherwise have their sentence thrown
      *   away with the segment — the window ends mid-utterance.
      */
     @Synchronized
@@ -202,5 +304,13 @@ class WakeEnergyVad(
         private const val MIN_SPEECH_MS = 300
         private const val MAX_SEGMENT_MS = 60_000
         private const val PRE_ROLL_FRAMES = 15 // 300ms
+
+        /**
+         * How many recent frames the "quietest recent level" looks at.
+         *
+         * 1.5 s at 20 ms per frame: long enough that the gaps between words
+         * are covered, short enough that the estimate follows the room.
+         */
+        private const val WINDOW_FRAMES = 75
     }
 }

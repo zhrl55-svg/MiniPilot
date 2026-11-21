@@ -269,6 +269,11 @@ object LocalActionSpeech {
 
     /**
      * 执行完成后的一句话播报。短、只说结果：成功报动作和目标，失败报首行错误。
+     *
+     * [T-alarm-truthful-result] needsUserConfirmation 是第三种结局：动作
+     * 已经交给系统，但要用户自己去系统时钟里点确认。说成「操作失败」是
+     * 错的（用户会以为闹钟没设上），说成「已设置」也是错的（它确实还没
+     * 生效）。所以单独一句。
      */
     fun completion(
         capability: String,
@@ -278,7 +283,15 @@ object LocalActionSpeech {
         args: JSONObject,
         success: Boolean,
         output: String,
+        needsUserConfirmation: Boolean = false,
     ): String {
+        if (needsUserConfirmation) {
+            return if (chinese) {
+                "已经填好了，需要你在系统时钟里点确认才会生效"
+            } else {
+                "Filled in — confirm it in the Clock app"
+            }
+        }
         if (!success) {
             val detail = output.lineSequence()
                 .map { it.trim() }

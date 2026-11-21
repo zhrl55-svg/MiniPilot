@@ -114,8 +114,28 @@ class AlarmOffloadHandler(private val context: Context) : NativeOffloadHandler {
             AppLogger.warning(TAG, "set: system Clock dispatch failed — $systemErr")
             return NativeOffloadResult(1, OffloadOutput.formatBody(body, args) + "\n")
         }
+        // [T-alarm-truthful-result] 派发成功不代表闹钟建成了：厂商时钟会
+        // 弹自己的设置界面要求用户点勾，用户点「取消」时闹钟根本没建。
+        // 派发之后回读系统里真实注册的闹钟，回读不到就如实报「需要你
+        // 在系统时钟里确认」，不报成功。
+        val verdict = com.openminis.app.assistant.execution.AlarmVerification
+            .verifyCreated(target.hour)
+        if (!verdict.succeeded) {
+            val needsConfirmation = verdict.outcome ==
+                com.openminis.app.assistant.execution.AlarmTruth.Outcome.NEEDS_USER_CONFIRMATION
+            val body = JSONObject()
+                .put("error", if (needsConfirmation) "needs_user_confirmation" else "alarm_not_created")
+                .put("message", verdict.message)
+                .toString()
+            AppLogger.warning(TAG, "set: ${verdict.outcome.name} — ${verdict.message}")
+            return NativeOffloadResult(
+                if (needsConfirmation) 3 else 1,
+                OffloadOutput.formatBody(body, args) + "\n",
+            )
+        }
         val data = buildSetEnvelope(label, target.hour, target.minute, mode)
             .put("system_alarm", "ok")
+            .put("verified", true)
         AppLogger.info(
             TAG,
             "set: time=${target.hour}:${target.minute} date=${target.explicitDate} " +

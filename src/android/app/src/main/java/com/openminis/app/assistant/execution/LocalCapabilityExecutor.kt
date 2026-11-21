@@ -57,6 +57,17 @@ data class LocalExecutionResult(
      * 空串表示不自动播报；不影响气泡里的完整 [answer]。
      */
     val spokenSummary: String = "",
+    /**
+     * [T-alarm-truthful-result] The action was handed to the system, but
+     * somebody else still has to confirm it — the OEM Clock app asks the
+     * user to tap the confirm button itself.
+     *
+     * This is neither success nor failure: the app did everything it could,
+     * and the alarm exists only after the user confirms it in the Clock app.
+     * The bubble and the spoken completion must say so instead of claiming
+     * success or crying failure.
+     */
+    val needsUserConfirmation: Boolean = false,
 )
 
 /**
@@ -162,6 +173,10 @@ class LocalCapabilityExecutor(private val context: Context) {
             NativeOffloadResult(1, "本地执行失败：${t.message ?: t.javaClass.simpleName}")
         }
         val success = result.exitCode == 0
+        // [T-alarm-truthful-result] exit code 3 = 「已经交出去了，但要用户
+        // 自己在系统时钟里确认」。既不是成功也不是失败，气泡和播报都要
+        // 如实这么说。
+        val needsUserConfirmation = result.exitCode == EXIT_NEEDS_USER_CONFIRMATION
         val answer = LocalResultFormatter.answer(
             capability = decision.capability,
             action = decision.action,
@@ -181,6 +196,7 @@ class LocalCapabilityExecutor(private val context: Context) {
                 answer = answer,
                 success = success,
             ),
+            needsUserConfirmation = needsUserConfirmation,
         )
     }
 
@@ -315,7 +331,13 @@ class LocalCapabilityExecutor(private val context: Context) {
                 args.optString("repeat").takeIf { it.isNotBlank() }?.let {
                     argv += listOf("--repeat", it)
                 }
-                offload("android-alarm", handler, argv)
+                val dispatched = offload("android-alarm", handler, argv)
+                // [T-alarm-truthful-result] 派发成功 ≠ 闹钟建成了。厂商时钟
+                // 会弹自己的设置界面要求用户点勾，用户点「取消」时闹钟根本
+                // 没建，而这里原来直接报了 success=true。派发之后回读系统
+                // 里真实注册的闹钟，回读不到就如实说「需要你确认」。
+                if (dispatched.exitCode != 0) return dispatched
+                return verifyAlarmWasCreated(dispatched, target)
             }
             "timer" -> {
                 val seconds = args.optLong("duration")
@@ -334,6 +356,35 @@ class LocalCapabilityExecutor(private val context: Context) {
                 listOf("android-alarm", "open"),
             )
             else -> NativeOffloadResult(2, "Unsupported alarm action: $action")
+        }
+    }
+
+    /**
+     * [T-alarm-truthful-result] 派发闹钟之后回读校验，确认它真的建了。
+     *
+     * 回读逻辑在 [AlarmVerification]：它用 `dumpsys alarm` 列出系统里真实
+     * 注册的闹钟。厂商时钟的闹钟带自己的 tag（华为是
+     * `huawei.deskclock.action.*`），所以按「目标小时上有几条待响闹钟」
+     * 判定，而不是认 tag。
+     *
+     * 回读依赖 Shizuku（拿不到 `dumpsys` 权限）。Shizuku 不在时回读不可用，
+     * 结论交给 [AlarmTruth.judge] 按厂商分支定：OEM 设备报「需要你确认」，
+     * AOSP/Pixel 报失败（那种设备上派发即插入，回读不到就是真没建）。
+     */
+    private fun verifyAlarmWasCreated(
+        dispatched: NativeOffloadResult,
+        target: com.openminis.app.sandbox.offload.AlarmTimeTarget?,
+    ): NativeOffloadResult {
+        if (target == null) return dispatched
+        val verdict = AlarmVerification.verifyCreated(target.hour)
+        return when (verdict.outcome) {
+            AlarmTruth.Outcome.CREATED -> dispatched
+            AlarmTruth.Outcome.FAILED -> NativeOffloadResult(1, verdict.message)
+            // 不是失败，但也**不是成功**：闹钟要用户在系统时钟里点一下。
+            // exit code 用 3 区分于「成功(0)」与「失败(1)」，让调用方
+            // （语音 / 云端）能如实告诉用户「还需要你确认」。
+            AlarmTruth.Outcome.NEEDS_USER_CONFIRMATION ->
+                NativeOffloadResult(EXIT_NEEDS_USER_CONFIRMATION, verdict.message)
         }
     }
 
@@ -1129,6 +1180,12 @@ class LocalCapabilityExecutor(private val context: Context) {
     companion object {
         private const val TAG = "LocalCapabilityExecutor"
         private val ISO = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss")
+
+        /**
+         * [T-alarm-truthful-result] Exit code for 「已经交出去了，但要用户
+         * 自己在系统时钟里确认」——既不是成功(0)也不是失败(1)。
+         */
+        const val EXIT_NEEDS_USER_CONFIRMATION = 3
 
         /** 设置读回校验的轮询次数与间隔（状态异步落盘，给系统一点时间）。 */
         private const val READBACK_ATTEMPTS = 6

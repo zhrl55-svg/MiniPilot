@@ -171,6 +171,9 @@ class LocalActionVoiceConfirmer(context: Context) {
         args: org.json.JSONObject,
         success: Boolean,
         output: String,
+        // [T-alarm-truthful-result] 第三种结局：交给系统了，但要用户自己
+        // 去系统时钟里点确认。
+        needsUserConfirmation: Boolean = false,
     ) {
         val chinese = LocaleWrap.wrap(appContext).resources.configuration.locales[0]
             .language.startsWith("zh")
@@ -183,6 +186,7 @@ class LocalActionVoiceConfirmer(context: Context) {
                 args = args,
                 success = success,
                 output = output,
+                needsUserConfirmation = needsUserConfirmation,
             ),
         )
     }

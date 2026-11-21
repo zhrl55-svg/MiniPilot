@@ -10,6 +10,11 @@ import org.junit.Test
  * 真机反馈「长语音只进去前半段」：旧规则 600ms 静音就切句、15s 强制切段，
  * 长听写被切成多段（每段重新过声纹，被拒的那段直接丢），唤醒对话里
  * 8s 窗口还会把没说完的句子提前送走。
+ *
+ * [T-voice-wake-noise-floor-adapt] 另一个真机反馈：「唤醒后只要声纹静音
+ * 超过1秒就开始识别并回复，不要憋到60秒」。根因是噪声底子只在没人说话
+ * 时更新，开口后被冻结在开口那一瞬间的值；背景音一旦高过这个冻结值，
+ * 静音计数就永远归零，句子只能等 60s 上限才切。
  */
 class WakeEnergyVadTest {
 
@@ -55,6 +60,83 @@ class WakeEnergyVadTest {
         repeat(3 + 1_000) { v.feed(speech, speech.size) } // 约 20s 不停顿
         assertEquals(1, segments.size)
         assertTrue(segments[0].size * 1000 / WakeAudioCapture.SAMPLE_RATE >= 19_000)
+    }
+
+    // ── [T-voice-wake-noise-floor-adapt] 1 秒静音切句 ──────────────────
+
+    @Test
+    fun `one second of silence ends the request`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        repeat(3) { v.feed(speech, speech.size) } // 开口
+        repeat(10) { v.feed(speech, speech.size) } // 200ms 语音
+        repeat(49) { v.feed(silence, silence.size) } // 980ms 静音
+        assertEquals("0.98s 的静音还没到 1s，不应断句", 0, segments.size)
+
+        repeat(2) { v.feed(silence, silence.size) } // 累计 1.02s 静音
+        assertEquals(1, segments.size)
+    }
+
+    /**
+     * 真机上的死锁：背景音一直高于「开口瞬间冻结的噪声底子」，静音计数
+     * 永远归零，句子只能等 60s 上限才切（真机日志：底噪冻在 128、阈值
+     * 332，而麦克风一直在 464~2136）。
+     *
+     * 修复后噪声底子在说话期间也能自适应抬升，1 秒静音必须能切句。
+     */
+    @Test
+    fun `background noise above the frozen floor still ends the request in one second`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        // 安静底噪下开口
+        repeat(3) { v.feed(speech, speech.size) }
+        // 背景音（rms 800）持续高于旧的冻结阈值（底噪 120 → 阈值 312）
+        val background = ShortArray(FRAME_SAMPLES) { 800 }
+        repeat(20) { v.feed(background, background.size) }
+        repeat(60) { v.feed(background, background.size) } // 再 1.2s 背景音
+        assertEquals("背景音持续时，1 秒静音后必须切句", 1, segments.size)
+    }
+
+    /**
+     * 自适应不能把噪声底子抬进用户自己的声音里 —— 否则长句会被自己切碎
+     * （真机反馈「长语音只进去前半段」的老问题）。
+     */
+    @Test
+    fun `the adaptive floor never climbs into the speech itself`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        repeat(3) { v.feed(speech, speech.size) } // 开口
+        repeat(3 + 750) { v.feed(speech, speech.size) } // 约 15s 连续说话
+        assertEquals("连续说话不应被自适应底子切碎", 0, segments.size)
+    }
+
+    /**
+     * 纯噪声（响度够高能开口，但整体没有语音的动态）不该被当成一句话送进
+     * 识别器 —— 那只会产生一段乱码。
+     */
+    @Test
+    fun `a steady noise burst is dropped instead of transcribed`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        val noise = ShortArray(FRAME_SAMPLES) { 900 }
+        repeat(3) { v.feed(noise, noise.size) } // 开口
+        repeat(100) { v.feed(noise, noise.size) } // 2s 稳定噪声
+        assertEquals("稳定噪声不应被切成句子", 0, segments.size)
+    }
+
+    /**
+     * 反过来：真实语音（峰值远高于底噪）必须照常切出来。
+     */
+    @Test
+    fun `real speech over a noisy floor is still transcribed`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        val background = ShortArray(FRAME_SAMPLES) { 800 }
+        repeat(30) { v.feed(background, background.size) } // 先让底噪升到背景水平
+        repeat(3) { v.feed(speech, speech.size) } // 开口
+        repeat(20) { v.feed(speech, speech.size) } // 400ms 语音
+        repeat(60) { v.feed(background, background.size) } // 1.2s 停顿
+        assertEquals(1, segments.size)
     }
 
     private companion object {

@@ -11538,6 +11538,9 @@ class ChatViewModel(
                 args = local.args,
                 success = execution.success,
                 output = execution.output,
+                // [T-alarm-truthful-result] 「已填好，等你在系统时钟确认」
+                // 不是失败，也不是成功 —— 播报必须说清楚。
+                needsUserConfirmation = execution.needsUserConfirmation,
             )
         }
         return true

@@ -111,6 +111,17 @@ data class LocalCapability(
     val actions: Map<String, CapabilityAction>,
     /** True when free-text slots may use the optional on-device model. */
     val needsLlm: Boolean = false,
+    /**
+     * A caveat the cloud model must know before claiming success.
+     *
+     * [T-alarm-truthful-result] `alarm/set` hands the alarm to the **system**
+     * Clock app. On OEM clocks that app shows its own screen and the alarm
+     * only exists once the user taps the confirm button there — the app
+     * cannot do it for them. The tool therefore reports
+     * `needs_user_confirmation` instead of success, and the model has to say
+     * so rather than "your alarm is set".
+     */
+    val caveat: String? = null,
 ) {
     fun action(name: String): CapabilityAction? = actions[name]
 }

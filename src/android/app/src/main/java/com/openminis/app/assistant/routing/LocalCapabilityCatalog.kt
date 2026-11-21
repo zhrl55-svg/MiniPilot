@@ -57,6 +57,10 @@ object LocalCapabilityCatalog {
             if (capability.id !in LocalCapabilityRegistry.inProcessCapabilities) continue
             val actions = capability.actions.values.joinToString(" | ") { renderAction(it) }
             appendLine("- ${capability.id} — ${capability.label}: $actions")
+            // [T-alarm-truthful-result] A caveat belongs next to the
+            // capability it qualifies, so the model reads it while deciding
+            // whether to call the tool — not in a footnote further down.
+            capability.caveat?.let { appendLine("  Note: $it") }
         }
         appendLine(
             "Slot notation: name:TYPE required, name?:TYPE optional; " +

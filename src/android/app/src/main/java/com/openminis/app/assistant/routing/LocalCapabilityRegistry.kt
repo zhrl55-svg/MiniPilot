@@ -181,6 +181,17 @@ object LocalCapabilityRegistry {
                 ),
                 "open" to action("open", true),
             ),
+            // [T-alarm-truthful-result] The alarm lives in the **system** Clock
+            // app. On OEM clocks (Huawei and friends) that app shows its own
+            // screen and the alarm only exists after the user taps the
+            // confirm button there — the app cannot click it for them. The
+            // tool reports `needs_user_confirmation` in that case, so the
+            // model must tell the user to confirm in the Clock app instead
+            // of claiming the alarm is set.
+            caveat = "Alarms are created in the system Clock app. On some OEM clocks " +
+                "the user still has to tap the confirm button there; if the tool reports " +
+                "`needs_user_confirmation`, say that the alarm must be confirmed in the " +
+                "Clock app instead of claiming it is already set.",
         ),
         LocalCapability(
             "reminder", "Reminder notification",
