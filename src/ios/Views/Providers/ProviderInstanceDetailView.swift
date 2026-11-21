@@ -455,6 +455,8 @@ struct ProviderInstanceDetailView: View {
             }
         }
         .sheet(isPresented: $showExportShare) {
+            // Export carries the API key + long-lived OAuth refresh token,
+            // base64 only — see exportInstanceJSON's security warning.
             if let json = store.exportInstanceJSON(instanceId) {
                 let label = store.instance(for: instanceId).map(\.label) ?? "provider"
                 let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(label).json")

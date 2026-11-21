@@ -297,7 +297,10 @@ struct SyncedProviderConfig: Syncable {
     /// Constant id — only one ProviderConfig per app.
     var id: String = "provider-config"
     var configJson: String
-    var secretsJsonBase64: String       // base64-wrapped secrets blob
+    // [T-sync-secret-e2e] Historical name kept for schema stability. The value
+    // is now the SyncSecretBox `enc:v1` envelope of the secrets JSON (legacy
+    // records: plaintext JSON) — the name no longer describes the encoding.
+    var secretsJsonBase64: String
     var updatedAt: Date
 
     static let syncMetadata: SyncTypeMetadata<SyncedProviderConfig> = {
@@ -375,8 +378,10 @@ struct SyncedMCPServer: Syncable {
 // — solved here at the record-shape level, not application-layer.
 //
 // Secret storage: per the agreed design (decision #2), secrets are
-// inlined on the instance record as `secretBlob` (base64-wrapped
-// ciphertext). Changes to instance metadata (label, baseURL, etc.) and
+// inlined on the instance record as `secretBlob`. On the wire this is now
+// the SyncSecretBox `enc:v1` envelope ([T-sync-secret-e2e]: transport-only
+// encryption at the CKRecord boundary; the local SQLite blob stays
+// plaintext — known debt). Changes to instance metadata (label, baseURL, etc.) and
 // secret rotation both touch the same record, but the cost of
 // re-uploading secret bytes on a label change is negligible at the
 // payload sizes involved (single-instance record is ~hundreds of
@@ -395,7 +400,7 @@ struct SyncedProviderInstanceV3: Syncable {
     var imageEndpointResolved: String?
     var isEnabled: Int                   // 0/1
     var sortOrder: Int
-    var secretBlob: String?              // base64-wrapped Keychain secret; nil = no secret yet
+    var secretBlob: String?              // enc:v1 envelope on the wire (legacy records: base64-wrapped Keychain secret); nil = no secret yet
     var secretKind: String?              // 'apiKey' | 'manual-oauth-token' | 'oauth-token' | nil
     var secretUpdatedAt: Date?
     var createdAt: Date

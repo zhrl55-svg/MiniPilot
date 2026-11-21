@@ -253,7 +253,7 @@ final class CloudSyncEngine: ObservableObject {
     /// crucial for diagnosing "iPhone full-synced but iPad never received
     /// Skill/EnvVar" reports.
     private var fullSyncUploadCounts: [String: Int]?
-    /// Periodic foreground sync timer — fires every 60s to push/pull changes.
+    /// Periodic foreground sync timer — fires every 180s to push/pull changes.
     private var foregroundSyncTimer: Timer?
     /// Pending debounced send task — cancelled and replaced on each scheduleSend call.
     private var pendingSendTask: Task<Void, Never>?
@@ -617,7 +617,7 @@ final class CloudSyncEngine: ObservableObject {
         // Start periodic dirty scanner for skills
         SyncDirtyScanner.shared.start()
 
-        // Start periodic foreground sync (every 60s)
+        // Start periodic foreground sync (every 180s)
         startForegroundSyncTimer()
 
         // Pre-compute pending changes so nextRecordZoneChangeBatch can return them synchronously
@@ -1511,16 +1511,29 @@ final class CloudSyncEngine: ObservableObject {
         case "SessionFile":
             let sessionId = record["sessionId"] as? String ?? ""
             let relativePath = record["relativePath"] as? String ?? ""
-            if let asset = record["asset"] as? CKAsset, let srcURL = asset.fileURL {
-                let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
-                let destURL = library.appendingPathComponent("MinisChat/minis/\(sessionId)/\(relativePath)")
-                let fm = FileManager.default
-                try? fm.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                // Overwrite if exists (last-write-wins)
-                if fm.fileExists(atPath: destURL.path) { try? fm.removeItem(at: destURL) }
-                try? fm.copyItem(at: srcURL, to: destURL)
-                logger.info("[iCloud] synced session file: \(sessionId)/\(relativePath)")
+            guard let asset = record["asset"] as? CKAsset, let srcURL = asset.fileURL else { return }
+            // [T-sync-path-traversal] sessionId/relativePath come straight off the
+            // remote CKRecord. A crafted ".." component or absolute path could
+            // escape MinisChat/minis and overwrite arbitrary app files. Validate
+            // both fragments and confirm the standardized destination stays
+            // inside the session directory before touching disk.
+            guard isValidSyncSessionId(sessionId) else {
+                logger.warning("[CloudSync] SessionFile: rejected unsafe sessionId '\(ICloudSharedZoneTransport.escapeForLog(sessionId))' — skipping")
+                return
             }
+            let library = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first!
+            let sessionDir = library.appendingPathComponent("MinisChat/minis").appendingPathComponent(sessionId)
+            guard isValidSyncRelativePath(relativePath, base: sessionDir) else {
+                logger.warning("[CloudSync] SessionFile: rejected unsafe relativePath '\(ICloudSharedZoneTransport.escapeForLog(relativePath))' session='\(sessionId.prefix(16))' — skipping")
+                return
+            }
+            let destURL = sessionDir.appendingPathComponent(relativePath)
+            let fm = FileManager.default
+            try? fm.createDirectory(at: destURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // Overwrite if exists (last-write-wins)
+            if fm.fileExists(atPath: destURL.path) { try? fm.removeItem(at: destURL) }
+            try? fm.copyItem(at: srcURL, to: destURL)
+            logger.info("[iCloud] synced session file: \(sessionId)/\(relativePath)")
 
         case "Skill":
             let skillId = record["skillId"] as? String ?? ""
@@ -1623,10 +1636,9 @@ final class CloudSyncEngine: ObservableObject {
                 deviceId: deviceId, envVarsJson: envVarsJson, updatedAt: updatedAt
             )
 
-            // Merge: union env vars by ID, prefer newer file for conflicts
-            await MainActor.run {
-                Self.mergeEnvVars(remoteJson: envVarsJson)
-            }
+            // Merge: union env vars by ID, remote wins for same-ID; gated on
+            // no pending local EnvVarItem upload (mergeEnvVarsIfLocalClean)
+            await Self.mergeEnvVarsIfLocalClean(remoteJson: envVarsJson)
 
         default:
             // V2 record types live in v2's shared zone and are handled by
@@ -1640,6 +1652,26 @@ final class CloudSyncEngine: ObservableObject {
             }
             logger.warning("[CloudSync] Unknown record type: \(record.recordType)")
         }
+    }
+
+    /// [T-sync-path-traversal] Guard for a remote-supplied SessionFile sessionId.
+    /// Rejects the empty string, any "/" (absolute or nested path), and the
+    /// literal ".." so the id can never climb out of MinisChat/minis.
+    private func isValidSyncSessionId(_ id: String) -> Bool {
+        guard !id.isEmpty, id != ".." else { return false }
+        return !id.contains("/")
+    }
+
+    /// [T-sync-path-traversal] Guard for a remote-supplied relativePath destined
+    /// for `base`. Rejects the empty string, absolute paths (leading "/"), and
+    /// any path component equal to ".."; then belt-and-braces confirms the
+    /// standardized destination still resolves inside `base`. Mirrors the
+    /// defensive style of ICloudSharedZoneTransport.isValidCKRecordName.
+    private func isValidSyncRelativePath(_ path: String, base: URL) -> Bool {
+        guard !path.isEmpty, !path.hasPrefix("/") else { return false }
+        if path.split(separator: "/", omittingEmptySubsequences: true).contains("..") { return false }
+        let dest = base.appendingPathComponent(path).standardizedFileURL
+        return dest.path.hasPrefix(base.standardizedFileURL.path + "/")
     }
 
     /// Process a remote deletion.
@@ -1726,7 +1758,7 @@ final class CloudSyncEngine: ObservableObject {
     private func saveState(_ stateSer: CKSyncEngine.State.Serialization) {
         self.stateSerialization = stateSer
         if let data = try? JSONEncoder().encode(stateSer) {
-            try? data.write(to: stateURL)
+            try? data.write(to: stateURL, options: .atomic)
         }
     }
 
@@ -1816,10 +1848,42 @@ final class CloudSyncEngine: ObservableObject {
 
     // MARK: - Provider Config & EnvVar Merge
 
-    // MARK: - Secret Export/Import (base64 via CloudKit)
+    // MARK: - Secret Export/Import (enc:v1 envelope via CloudKit)
+
+    /// [T-sync-secret-e2e] Outbound seal for v1/v2 secret payloads: plaintext
+    /// JSON → `enc:v1:` envelope (SyncSecretBox). Seal failure (KEK
+    /// generation/lookup failed) → log and return "[]": an empty payload parses
+    /// to an empty array inbound, which is a no-op — the field is effectively
+    /// skipped. No plaintext fallback, no crash, batch continues.
+    private static func sealSecretsJSON(_ json: String, context: String) -> String {
+        guard json != "[]" else { return json }
+        do {
+            return try SyncSecretBox.seal(Data(json.utf8))
+        } catch {
+            logger.error("[iCloud] Failed to seal \(context) secrets for upload — dropping payload (no plaintext fallback)")
+            return "[]"
+        }
+    }
+
+    /// [T-sync-secret-e2e] Inbound unwrap for v1/v2 secret payloads. New
+    /// payload (`enc:v1:...`) → AES-GCM decrypt to JSON bytes; legacy payload
+    /// (plaintext JSON) → bytes verbatim (backward compatible). Decryption
+    /// failure (damaged record, missing/mismatched peer KEK) → nil: caller
+    /// logs and skips the import. Never crashes, never aborts the batch.
+    private static func decodeSecretsPayload(_ payload: String, context: String) -> Data? {
+        guard let decoded = SyncSecretBox.unsealString(payload) else {
+            logger.warning("[iCloud] Failed to unseal inbound \(context) secrets payload — skipping import")
+            return nil
+        }
+        return Data(decoded.utf8)
+    }
 
     /// Export provider API keys as JSON:
     ///   [{"instanceId": "...", "apiKey": "<b64>", "updatedAt": <unix_ts>}]
+    ///
+    /// [T-sync-secret-e2e] The returned string is wrapped in the `enc:v1`
+    /// envelope before it leaves the device; "[]" means seal failed (logged,
+    /// nothing uploaded).
     ///
     /// `updatedAt` is the local UserDefaults-tracked time this key was last saved
     /// via `ProviderKeychainHelper.saveAPIKey`. It lets receiving devices do
@@ -1843,7 +1907,7 @@ final class CloudSyncEngine: ObservableObject {
         }
         guard let jsonData = try? JSONSerialization.data(withJSONObject: secrets),
               let jsonStr = String(data: jsonData, encoding: .utf8) else { return "[]" }
-        return jsonStr
+        return sealSecretsJSON(jsonStr, context: "provider")
     }
 
     /// Import provider API keys from JSON. Conflict resolution (per instance):
@@ -1853,7 +1917,13 @@ final class CloudSyncEngine: ObservableObject {
     ///   - Remote `updatedAt` > local `savedAt` → remote is newer, overwrite.
     ///   - Otherwise → skip (local is newer or equal).
     static func importProviderSecrets(secretsJson: String) {
-        guard let data = secretsJson.data(using: .utf8),
+        // [T-sync-secret-e2e] decodeSecretsPayload handles both the new enc:v1
+        // envelope and legacy plaintext JSON. Compatibility matrix:
+        //   new device / old record → plaintext passes through, normal.
+        //   old device / new record → JSONSerialization fails on the envelope
+        //   string → silent skip (pre-existing behavior for undecodable
+        //   payloads). One-time transition, converges once all devices update.
+        guard let data = decodeSecretsPayload(secretsJson, context: "provider"),
               let secrets = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
         for entry in secrets {
             guard let instanceId = entry["instanceId"] as? String,
@@ -1910,6 +1980,9 @@ final class CloudSyncEngine: ObservableObject {
     }
 
     /// Export env var values as base64 JSON: [{"key": "VAR_NAME", "value": "base64..."}]
+    ///
+    /// [T-sync-secret-e2e] Wrapped in the `enc:v1` envelope before leaving the
+    /// device; "[]" means seal failed (logged, nothing uploaded).
     static func exportEnvVarSecrets(envJson: String) -> String {
         guard let data = envJson.data(using: .utf8),
               let entries = try? JSONDecoder().decode([EnvVarEntry].self, from: data) else { return "[]" }
@@ -1922,12 +1995,16 @@ final class CloudSyncEngine: ObservableObject {
         }
         guard let jsonData = try? JSONSerialization.data(withJSONObject: secrets),
               let jsonStr = String(data: jsonData, encoding: .utf8) else { return "[]" }
-        return jsonStr
+        return sealSecretsJSON(jsonStr, context: "env var")
     }
 
     /// Import env var values from base64 JSON. Only writes if Keychain doesn't already have the value.
+    ///
+    /// [T-sync-secret-e2e] Payload unwrapped via decodeSecretsPayload: handles
+    /// the enc:v1 envelope and legacy plaintext; unseal failure logs and skips
+    /// the import without crashing or aborting the batch.
     static func importEnvVarSecrets(secretsJson: String) {
-        guard let data = secretsJson.data(using: .utf8),
+        guard let data = decodeSecretsPayload(secretsJson, context: "env var"),
               let secrets = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] else { return }
         for entry in secrets {
             guard let key = entry["key"],
@@ -2568,8 +2645,38 @@ final class CloudSyncEngine: ObservableObject {
         return Array(byId.values)
     }
 
+    /// [T-icloud-local-edit-clobber] Async entry point for the whole-file
+    /// env-vars merger. mergeEnvVars itself stays a synchronous @MainActor
+    /// entry point (its exact signature is pinned by standalone tests), so it
+    /// cannot await the dirty-queue query itself — the guard lives here.
+    /// While ANY local EnvVarItem row (upsert or delete) is still waiting in
+    /// the debounced upload queue, env-vars.json holds an edit the server has
+    /// not seen: the incoming whole-file remote snapshot is by definition
+    /// stale, and union-merging it would clobber the in-flight edit (or
+    /// resurrect a variable this device just deleted). Skipping is safe — the
+    /// next inbound after our upload lands merges normally. Same rule as
+    /// mergeProviderConfig's skippedLocalDirty guard above; per-item sibling
+    /// in mergeEnvVarItem. importEnvVarSecrets is unaffected either way: it
+    /// only writes values the Keychain does not have yet.
+    static func mergeEnvVarsIfLocalClean(remoteJson: String) async {
+        let dirty = await ChatStore.shared.loadDirtyRecords(v2Only: true)
+        if dirty.contains(where: { $0.recordType == "EnvVarItem" }) {
+            logger.info("[iCloud] mergeEnvVars: local has pending EnvVarItem upload — skipping whole-file merge to avoid clobbering in-flight edit")
+            return
+        }
+        await MainActor.run {
+            mergeEnvVars(remoteJson: remoteJson)
+        }
+    }
+
     /// Merge remote env vars into local by unioning by ID.
-    /// For items with the same ID, the version from the newer file wins.
+    /// For items with the same ID, the remote version wins (propagates
+    /// edits); local-only entries are kept. There is deliberately NO per-key
+    /// timestamp comparison — EnvVarEntry carries no updatedAt — so
+    /// correctness relies on callers gating through
+    /// mergeEnvVarsIfLocalClean, which skips the whole merge while a local
+    /// EnvVarItem edit is still pending upload. (The old "prefer newer file"
+    /// wording described a timestamp check that never existed.)
     @MainActor
     static func mergeEnvVars(remoteJson: String) {
         guard let remoteData = remoteJson.data(using: .utf8),

@@ -1284,10 +1284,21 @@ final class ProviderConfigStore: ObservableObject {
     }
 
     /// Export an instance as shareable JSON (includes API key if present).
+    ///
+    /// ⚠️ SECURITY: the export carries the raw API key AND the full OAuth
+    /// token blob, base64-encoded only — trivially decodable. The refresh
+    /// token inside is long-lived: anyone holding this file can act as the
+    /// account until the token is revoked server-side. Treat the exported
+    /// file like a password, not a config.
     func exportInstanceJSON(_ instanceId: String) -> String? {
         guard let instance = instance(for: instanceId) else { return nil }
         let entries = entries(for: instanceId)
         var dict: [String: Any] = [
+            // Machine-readable credential flag: lets downstream tools and
+            // auditors detect a secrets-bearing export without parsing the
+            // provider format. The credential values below are base64, not
+            // encryption.
+            "containsCredentials": true,
             "providerType": instance.providerType.rawValue,
             "label": instance.label,
             "credentialType": instance.credentialType.rawValue,

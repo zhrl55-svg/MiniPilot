@@ -599,6 +599,8 @@ enum DebugRPCProvider {
         guard let instance = store.instance(for: id) else {
             throw DebugRPCErr(-32602, "Unknown instanceId: \(id)")
         }
+        // Carries the full OAuth refresh token too (see exportInstanceJSON's
+        // security warning) — trusted local debug surface only.
         guard let raw = store.exportInstanceJSON(id) else {
             throw DebugRPCErr(-32000, "Export failed for instance \(id)")
         }

@@ -208,8 +208,14 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
     /// migration backlog. Last successful execution time, persisted so
     /// we don't re-query the same window after a quick relaunch.
     private static let recentFetchLastKey = "cloudSync.v2.recentFetchLastAt"
-    /// In-flight guard.
+    /// In-flight guard. Cleared only while recentFetchGeneration still matches
+    /// the run that set it (see fetchRecentV2) so a stale watchdog or a stale
+    /// defer can never release a newer run's flag.
     private var recentFetchInFlight: Bool = false
+    /// Monotonic token incremented each time fetchRecentV2 actually starts;
+    /// the run's defer and its watchdog both compare against the value they
+    /// captured before clearing recentFetchInFlight.
+    private var recentFetchGeneration = 0
     /// Repeating timer that re-runs fetchRecentV2 every recentFetchInterval
     /// seconds while the engine is up.
     private var recentFetchTimer: DispatchSourceTimer?
@@ -615,16 +621,26 @@ final class ICloudSharedZoneTransport: NSObject, SyncTransport {
             return
         }
         recentFetchInFlight = true
-        defer { recentFetchInFlight = false }
+        // Generation token: both the defer below and the watchdog may fire
+        // long after this invocation started. Each clears the flag only if
+        // no NEWER run has bumped the generation — otherwise a watchdog from
+        // a hung run would release the flag of the run that replaced it,
+        // letting two runs overlap again.
+        recentFetchGeneration += 1
+        let myGeneration = recentFetchGeneration
+        defer {
+            if recentFetchGeneration == myGeneration { recentFetchInFlight = false }
+        }
         // Watchdog: forcibly clear the in-flight guard after 90s in
         // case of unrecoverable hang. Doesn't cancel the in-flight
         // CK call (Swift can't kill an awaiting URLSession data task),
-        // but at least lets the next timer cycle start fresh.
+        // but at least lets the next timer cycle start fresh. Only clears
+        // while this run's generation is still current.
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 90_000_000_000)
             await MainActor.run {
                 guard let self = self else { return }
-                if self.recentFetchInFlight {
+                if self.recentFetchInFlight, self.recentFetchGeneration == myGeneration {
                     self.recentFetchInFlight = false
                     logger.warning("[iCloudTrace] fetchRecentV2 watchdog cleared in-flight after 90s")
                 }

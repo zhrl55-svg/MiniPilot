@@ -760,9 +760,7 @@ enum ChatStoreSyncHydrators {
         // mergeProviderConfig above. The previous blind file write would
         // wipe locally-added env vars whenever a stale snapshot arrived.
         if #available(iOS 17.0, *) {
-            await MainActor.run {
-                CloudSyncEngine.mergeEnvVars(remoteJson: json)
-            }
+            await CloudSyncEngine.mergeEnvVarsIfLocalClean(remoteJson: json)
             if let secretsJson = stringField(record, "envSecretsJson"), !secretsJson.isEmpty {
                 CloudSyncEngine.importEnvVarSecrets(secretsJson: secretsJson)
             }
@@ -1280,7 +1278,7 @@ enum ChatStoreSyncHydrators {
             imageEndpointResolved: row["image_endpoint_resolved"] as? String,
             isEnabled: ((row["is_enabled"] as? Bool) ?? true) ? 1 : 0,
             sortOrder: (row["sort_order"] as? Int) ?? 0,
-            secretBlob: row["secret_blob"] as? String,
+            secretBlob: sealSecretBlob(row["secret_blob"] as? String),
             secretKind: row["secret_kind"] as? String,
             secretUpdatedAt: (row["secret_updated_at"] as? Double).map { Date(timeIntervalSince1970: $0) },
             createdAt: Date(timeIntervalSince1970: (row["created_at"] as? Double) ?? 0),
@@ -1314,7 +1312,7 @@ enum ChatStoreSyncHydrators {
         let imageEndpointResolved = optionalStringField(record, "imageEndpointResolved")
         let isEnabled = (intField(record, "isEnabled") ?? 1) != 0
         let sortOrder = intField(record, "sortOrder") ?? 0
-        let secretBlob = optionalStringField(record, "secretBlob")
+        let secretBlob = unsealSecretBlob(optionalStringField(record, "secretBlob"))
         let secretKind = optionalStringField(record, "secretKind")
         let secretUpdatedAt = dateField(record, "secretUpdatedAt")?.timeIntervalSince1970
         let createdAt = (dateField(record, "createdAt") ?? Date()).timeIntervalSince1970
@@ -1352,6 +1350,48 @@ enum ChatStoreSyncHydrators {
         } else {
             logger.info("[v3] skipped ProviderInstanceV3 \(id.prefix(8)) — local row is newer (LWW)")
         }
+    }
+
+    // MARK: - V3 secretBlob transport encryption ([T-sync-secret-e2e])
+
+    /// Outbound transport encryption for the per-instance secret blob. The
+    /// local SQLite `secret_blob` column stays PLAINTEXT for now — a known,
+    /// deliberate debt: switching it to ciphertext would force every
+    /// ProviderConfigDB/ProviderConfigStore read path to unseal in lockstep,
+    /// which is out of scope here. Only the CKRecord boundary is encrypted;
+    /// inbound still writes plaintext to the DB, matching current behavior.
+    ///
+    /// Seal failure → nil (field not uploaded; the receiving side then sees
+    /// "no secret" and LWW may clear the peer's stored secret for this
+    /// instance). Accepted trade-off for a rare failure: prefer missing over
+    /// a plaintext fallback. Logged, never crashes, batch continues.
+    private static func sealSecretBlob(_ blob: String?) -> String? {
+        guard let blob, !blob.isEmpty else { return blob }
+        do {
+            return try SyncSecretBox.seal(Data(blob.utf8))
+        } catch {
+            logger.error("[v3] failed to seal secretBlob for upload — dropping field (no plaintext fallback)")
+            return nil
+        }
+    }
+
+    /// Inbound transport decryption for the secret blob. `enc:v1:` prefix →
+    /// decrypt and restore the DB plaintext string before it lands back in
+    /// SQLite; legacy record (plaintext base64-wrapped value) → verbatim,
+    /// backward compatible. Decryption failure → nil: logged, field dropped,
+    /// the rest of the instance metadata still merges. Compatibility matrix
+    /// (one-time transition, converges once all devices run this codebase):
+    ///   new device / old record → verbatim write, normal.
+    ///   old device / new record → old code stores the envelope string as-is
+    ///   → that instance's secret is unusable there until it upgrades and
+    ///   re-pulls; instance metadata unaffected.
+    private static func unsealSecretBlob(_ value: String?) -> String? {
+        guard let value, !value.isEmpty else { return value }
+        guard let decoded = SyncSecretBox.unsealString(value) else {
+            logger.warning("[v3] failed to unseal inbound secretBlob — dropping secret field")
+            return nil
+        }
+        return decoded
     }
 
     private static func deleteProviderInstanceV3(id: String) async {

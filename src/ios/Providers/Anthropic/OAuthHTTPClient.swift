@@ -1608,6 +1608,8 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
     /// entry, so response/usage updates target it and not `_entries.last`.
     private var captureToken: CapturedAPIRequest?
     #endif
+    private var isStopped = false
+    private let stateLock = NSLock()
 
     // Do NOT invalidate innerSession in deinit — same reason as OAuthURLProtocol.
 
@@ -1648,14 +1650,28 @@ private final class EagerStreamingURLProtocol: URLProtocol, URLSessionDataDelega
         // Use uploadTask to guarantee the body is sent — dataTask can lose httpBody
         let bodyData = mutable.httpBody ?? Data()
         mutable.httpBody = nil
+        // Atomically check isStopped and create the upload task under the same lock.
+        // stopLoading() can fire on another thread while startLoading() is still
+        // running, invalidating innerSession. Creating a task on an invalidated
+        // session is a fatal NSException.
+        stateLock.lock()
+        guard !isStopped else {
+            stateLock.unlock()
+            return
+        }
         let task = innerSession.uploadTask(with: mutable as URLRequest, from: bodyData)
         innerTask = task
+        stateLock.unlock()
         task.resume()
     }
 
     override func stopLoading() {
-        innerTask?.cancel()
+        stateLock.lock()
+        isStopped = true
+        let task = innerTask
         innerTask = nil
+        stateLock.unlock()
+        task?.cancel()
         innerSession.invalidateAndCancel()
     }
 
@@ -1784,6 +1800,8 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
     /// entry, so response/usage updates target it and not `_entries.last`.
     private var captureToken: CapturedAPIRequest?
     #endif
+    private var isStopped = false
+    private let stateLock = NSLock()
 
     override class func canInit(with request: URLRequest) -> Bool {
         return URLProtocol.property(forKey: "DualAuthHandled", in: request) == nil
@@ -1827,14 +1845,28 @@ private final class DualAuthURLProtocol: URLProtocol, URLSessionDataDelegate {
 
         let bodyData = mutable.httpBody ?? Data()
         mutable.httpBody = nil
+        // Atomically check isStopped and create the upload task under the same lock.
+        // stopLoading() can fire on another thread while startLoading() is still
+        // running, invalidating innerSession. Creating a task on an invalidated
+        // session is a fatal NSException.
+        stateLock.lock()
+        guard !isStopped else {
+            stateLock.unlock()
+            return
+        }
         let task = innerSession.uploadTask(with: mutable as URLRequest, from: bodyData)
         innerTask = task
+        stateLock.unlock()
         task.resume()
     }
 
     override func stopLoading() {
-        innerTask?.cancel()
+        stateLock.lock()
+        isStopped = true
+        let task = innerTask
         innerTask = nil
+        stateLock.unlock()
+        task?.cancel()
         innerSession.invalidateAndCancel()
     }
 
