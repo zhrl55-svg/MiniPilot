@@ -1,5 +1,6 @@
 package com.openminis.app.assistant.execution
 
+import android.os.SystemClock
 import com.openminis.app.offload.ShizukuManager
 
 /**
@@ -35,7 +36,9 @@ object AlarmVerification {
      * 回读系统里当前注册在 [hour] 上的闹钟条数。
      *
      * 系统时钟是异步落盘的：派发后闹钟要过一会儿才注册上，所以这里轮询
-     * 几次（与日历读回同一套节奏），期间任何一次读到就算数。
+     * 几次（与日历读回同一套节奏），期间任何一次读到就算数。回读受总
+     * 预算限制：预算耗尽时和「次数用尽」一样按回读不可用处理，不让异常
+     * 设备的慢 dumpsys 把语音轮拖住几十秒。
      */
     fun readBackAlarmsAtHour(hour: Int, baseline: Int = 0): AlarmTruth.ReadBack {
         if (!ShizukuManager.isReady()) {
@@ -46,10 +49,15 @@ object AlarmVerification {
                 baselineAlarmsAtHour = baseline,
             )
         }
-        repeat(READBACK_ATTEMPTS) { attempt ->
+        val startedAt = SystemClock.elapsedRealtime()
+        var attempt = 0
+        while (attempt < READBACK_ATTEMPTS &&
+            SystemClock.elapsedRealtime() - startedAt <=
+            READBACK_BUDGET_MS - READBACK_TIMEOUT_MS
+        ) {
             val result = ShizukuManager.runProcess(
                 arrayOf("dumpsys", "alarm"),
-                timeoutMs = 8_000L,
+                timeoutMs = READBACK_TIMEOUT_MS,
             )
             if (result.exitCode == 0) {
                 val entries = AlarmDumpParser.parse(result.stdout)
@@ -64,6 +72,7 @@ object AlarmVerification {
                 }
             }
             if (attempt < READBACK_ATTEMPTS - 1) Thread.sleep(READBACK_INTERVAL_MS)
+            attempt++
         }
         // 命令跑了但一条闹钟都读不到：要么系统里真的没有闹钟，要么这条
         // 设备上的 dumpsys 格式不认。两种情况都按「回读不可用」处理，
@@ -92,4 +101,10 @@ object AlarmVerification {
     /** 轮询次数与间隔（状态异步落盘，给系统一点时间）。 */
     private const val READBACK_ATTEMPTS = 6
     private const val READBACK_INTERVAL_MS = 400L
+
+    /** 单次 dumpsys 的超时；与总预算一起决定最多能轮询几轮。 */
+    private const val READBACK_TIMEOUT_MS = 8_000L
+
+    /** 回读总预算：最多允许阻塞语音轮这么久，超了就走回读不可用。 */
+    private const val READBACK_BUDGET_MS = 10_000L
 }

@@ -236,13 +236,44 @@ class WakeEnergyVad(
         silentFrames = 0
         val pcm = segment.toShortArray()
         segment.clear()
-        val reason = if (cutBySilence) "静音" else "上限"
+        commitSegment(pcm, if (cutBySilence) "静音" else "上限")
+    }
 
+    /**
+     * Force the current utterance out (used when the idle window closes).
+     *
+     * Flush 走与 [feed] 相同的质量判定：过短或噪声片段照丢，不因为窗口
+     * 到点就绕过检查。
+     *
+     * @return true when there was an unfinished utterance that passed the
+     *   acceptance checks and was handed over. The listening window has a
+     *   hard deadline, and a user who speaks without a 800 ms pause would
+     *   otherwise have their sentence thrown away with the segment — the
+     *   window ends mid-utterance.
+     */
+    @Synchronized
+    fun flush(): Boolean {
+        if (!inSpeech) return false
+        inSpeech = false
+        val pcm = segment.toShortArray()
+        segment.clear()
+        if (pcm.isEmpty()) return false
+        return commitSegment(pcm, "冲刷")
+    }
+
+    /**
+     * Apply the same acceptance checks as a [feed] cut before the segment
+     * reaches [onSegment], then reset the per-segment state either way.
+     *
+     * @return true when the segment was handed to the recogniser.
+     */
+    private fun commitSegment(pcm: ShortArray, reason: String): Boolean {
         // Too short is noise (a door, clothes rustling) - drop it.
         val speechMs = pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE
-        if (speechMs < MIN_SPEECH_MS) {
+        val accepted = if (speechMs < MIN_SPEECH_MS) {
             AppLogger.info(TAG, "VAD 丢弃过短片段 ${speechMs}ms")
             onEvent?.invoke("VAD 丢弃过短片段 ${speechMs}ms 峰值=${"%.0f".format(peakRms)}")
+            false
         } else if (segmentPeak < maxOf(MIN_RMS * 1.5, floorAtOpen * 2.0)) {
             // [T-voice-wake-noise-floor-adapt] The segment never rose above
             // the background: it is noise that happened to be loud enough to
@@ -253,12 +284,14 @@ class WakeEnergyVad(
                 "VAD 丢弃噪声片段 ${speechMs}ms 峰值=${"%.0f".format(segmentPeak)} " +
                     "底噪=${"%.0f".format(floorAtOpen)}",
             )
+            false
         } else {
             AppLogger.info(TAG, "VAD 切出一句 ${speechMs}ms")
             onEvent?.invoke(
                 "VAD 切句 ${speechMs}ms 原因=$reason 峰值=${"%.0f".format(segmentPeak)}",
             )
             onSegment(pcm)
+            true
         }
 
         // The next segment starts from the ambient level again.
@@ -266,25 +299,7 @@ class WakeEnergyVad(
         speechLevel = 0.0
         segmentPeak = 0.0
         floorAtOpen = noiseFloor
-    }
-
-    /**
-     * Force the current utterance out (used when the idle window closes).
-     *
-     * @return true when there was an unfinished utterance to hand over.
-     *   The listening window has a hard deadline, and a user who speaks
-     *   without a 800 ms pause would otherwise have their sentence thrown
-     *   away with the segment — the window ends mid-utterance.
-     */
-    @Synchronized
-    fun flush(): Boolean {
-        if (!inSpeech) return false
-        inSpeech = false
-        val pcm = segment.toShortArray()
-        segment.clear()
-        if (pcm.isEmpty()) return false
-        onSegment(pcm)
-        return true
+        return accepted
     }
 
     private fun rms(buf: ShortArray, len: Int): Double {

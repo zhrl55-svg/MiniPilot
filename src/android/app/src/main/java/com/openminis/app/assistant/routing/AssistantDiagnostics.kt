@@ -31,6 +31,9 @@ object AssistantDiagnostics {
     private const val FILE_NAME = "diagnostics.jsonl"
     private const val MAX_LINES = 1_000
 
+    /** args 里单个字符串槽落盘前的最大长度。 */
+    private const val MAX_ARG_SLOT_CHARS = 64
+
     fun record(
         context: Context,
         userText: String,
@@ -56,7 +59,7 @@ object AssistantDiagnostics {
                 row.put("selected", decision.route.id)
                 row.put("capability", decision.capability)
                 row.put("action", decision.action)
-                row.put("args", decision.args.toString().take(2_000))
+                row.put("args", truncateSlots(decision.args).toString().take(2_000))
                 row.put("decision", if (decision.needsConfirmation) "confirm" else "local")
                 row.put("reason", if (decision.needsConfirmation) "write-confirmation" else "matched")
             }
@@ -102,6 +105,22 @@ object AssistantDiagnostics {
             .sortedWith(compareByDescending<Map.Entry<String, Int>> { it.value }.thenBy { it.key })
             .take(limit.coerceAtLeast(1))
             .map { it.key to it.value }
+
+    /**
+     * [privacy] 槽值可能带着整篇笔记正文或联系人姓名。诊断结构保留，
+     * 但超过 [MAX_ARG_SLOT_CHARS] 的字符串槽做截断，长度后缀说明原文
+     * 有多少。用户原话不截：语音诊断需要上下文，且目录是应用私有目录。
+     */
+    private fun truncateSlots(args: JSONObject): JSONObject = JSONObject().also { out ->
+        args.keys().forEach { key ->
+            val value = args.opt(key)
+            if (value is String && value.length > MAX_ARG_SLOT_CHARS) {
+                out.put(key, "${value.take(MAX_ARG_SLOT_CHARS)}…(len=${value.length})")
+            } else {
+                out.put(key, value)
+            }
+        }
+    }
 
     private fun append(context: Context, row: JSONObject) {
         runCatching {

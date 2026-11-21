@@ -53,8 +53,12 @@ class AssistantRouteStore internal constructor(
     }
 
     fun update(id: String, transform: (AssistantRoute) -> AssistantRoute) {
-        val current = find(id) ?: throw IllegalArgumentException("Unknown route id: $id")
-        update(transform(current))
+        // find-and-update 必须在锁内一次完成：锁外读到的 current 可能
+        // 已经被并发的 update 改写，transform 会基于旧值覆盖掉新值。
+        synchronized(lock) {
+            val current = find(id) ?: throw IllegalArgumentException("Unknown route id: $id")
+            update(transform(current))
+        }
     }
 
     fun remove(id: String) {
@@ -155,7 +159,11 @@ class AssistantRouteStore internal constructor(
                 return
             }
             val valid = loaded.filter { route ->
-                runCatching { validate(route) }.isSuccess
+                runCatching { validate(route) }
+                    .onFailure { e ->
+                        AppLogger.warning(TAG, "route '${route.id}' dropped from routes.json (${e.message})")
+                    }
+                    .isSuccess
             }.take(MAX_ROUTES)
             val seedVersion = doc.optInt("defaultsVersion", 0)
             val withNewDefaults = DefaultAssistantRoutes

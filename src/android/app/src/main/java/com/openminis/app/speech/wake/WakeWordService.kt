@@ -25,6 +25,7 @@ import com.openminis.app.logging.AppLogger
 import com.openminis.app.speech.RecognitionState
 import com.openminis.app.speech.SpeechRecognitionManager
 import com.openminis.app.speech.VoiceOutputState
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -102,6 +103,14 @@ class WakeWordService : Service() {
 
         /** Safety valve only: a request that never pauses is cut here. */
         private const val REQUEST_MAX_SEGMENT_MS = 60_000
+
+        /**
+         * The offline recogniser may keep emitting partials forever and
+         * never settle; without this timeout the coroutine waiting for the
+         * final result would park for good and the retry loop would never
+         * run again.
+         */
+        private const val TRANSCRIBE_TIMEOUT_MS = 30_000L
 
         /**
          * Minimum speech before a first utterance may enrol the owner
@@ -280,7 +289,12 @@ class WakeWordService : Service() {
         }
     }
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Main.immediate +
+            CoroutineExceptionHandler { _, e ->
+                AppLogger.error(TAG, "语音唤醒协程未捕获异常：${e.message ?: e.javaClass.simpleName}")
+            },
+    )
 
     @Volatile
     private var engine: WakeWordEngine? = null
@@ -503,8 +517,15 @@ class WakeWordService : Service() {
         tts = null
         runCatching { readAloud?.shutdown() }
         readAloud = null
-        engine?.stop()
+        // engine.stop() 会 join 采集线程，主线程的 onDestroy 等不起。先把
+        // 字段清掉（后续路径不再拿到旧引擎），stop 丢给独立线程完成。
+        val engineToStop = engine
         engine = null
+        if (engineToStop != null) {
+            Thread {
+                runCatching { engineToStop.stop() }
+            }.start()
+        }
         overlay?.hide()
         overlay = null
         releaseWakeLock()
@@ -1253,6 +1274,16 @@ class WakeWordService : Service() {
                     sleepConversation()
                 }
             }
+            conversationState == ConversationState.VERIFYING && now > conversationDeadline -> {
+                // The voiceprint verdict never came back — its coroutine
+                // was lost or stuck. Fall back to standby instead of
+                // parking in VERIFYING forever with no way to wake again.
+                conversationState = ConversationState.IDLE
+                AppLogger.info(TAG, "声纹校验超时，回到待命")
+                VoiceWakeState.trace(this, "声纹校验超时，回到待命")
+                publish(VoiceWakePhase.WAITING, "等待唤醒词「${WakeWordSettings.wakeWord.value}」")
+                engine?.setDetecting(true)
+            }
         }
     }
 
@@ -1583,24 +1614,36 @@ class WakeWordService : Service() {
         val wav = WavEncoder.encode(pcm)
         var attempt = 0
         while (attempt < 3) {
-            val result = kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
-                val started = SpeechRecognitionManager.transcribeAudio(
-                    wav,
-                    { text, isFinal ->
-                        if (isFinal && cont.isActive) cont.resume(text) {}
-                    },
-                    { error, message ->
-                        AppLogger.info(TAG, "离线识别失败：${error.name} ${message ?: ""}")
-                        if (cont.isActive) cont.resume(null) {}
-                    },
-                )
-                if (!started && cont.isActive) {
-                    AppLogger.info(
-                        TAG,
-                        "离线识别未启动：识别引擎状态=${SpeechRecognitionManager.state.value}",
+            val result = withTimeoutOrNull(TRANSCRIBE_TIMEOUT_MS) {
+                kotlinx.coroutines.suspendCancellableCoroutine<String?> { cont ->
+                    val started = SpeechRecognitionManager.transcribeAudio(
+                        wav,
+                        { text, isFinal ->
+                            if (isFinal && cont.isActive) cont.resume(text) {}
+                        },
+                        { error, message ->
+                            AppLogger.info(TAG, "离线识别失败：${error.name} ${message ?: ""}")
+                            // Empty string, not null: null is reserved for
+                            // the timeout below, so a genuine failure is
+                            // never mistaken for one.
+                            if (cont.isActive) cont.resume("") {}
+                        },
                     )
-                    cont.resume(null) {}
+                    if (!started && cont.isActive) {
+                        AppLogger.info(
+                            TAG,
+                            "离线识别未启动：识别引擎状态=${SpeechRecognitionManager.state.value}",
+                        )
+                        cont.resume("") {}
+                    }
                 }
+            }
+            if (result == null) {
+                // Only partials so far and the timeout ran out: cancel the
+                // stuck recognition, then let the retry loop below decide
+                // whether to try again or give up.
+                AppLogger.info(TAG, "离线识别超时，取消识别")
+                SpeechRecognitionManager.cancelRecording()
             }
             if (!result.isNullOrBlank()) return result
             // The recogniser refuses a second transcription while the

@@ -98,7 +98,7 @@ class SlotExtractor(
             }
         }
 
-        args.optString("tool_title").takeIf { it.isNotBlank() }?.let { }
+
         if (!args.has("tool_title") || args.optString("tool_title").isBlank()) {
             val title = titleFor(route, args, text)
             args.put("tool_title", title)

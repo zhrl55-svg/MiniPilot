@@ -151,6 +151,10 @@ class LocalCapabilityExecutor(private val context: Context) {
         sessionId: String,
     ): LocalExecutionResult = withContext(Dispatchers.IO) {
         val args = decision.args
+        // media 的 play 分支要写回 tool_title；decision.args 与 UI 共享
+        // （JSONObject 非线程安全），执行中改写它有并发读风险。给该分支
+        // 一个私有副本，标题随后从副本读回。
+        var titleArgs = args
         val result = try {
             when (decision.capability) {
                 "calendar" -> calendar(decision.action, args)
@@ -163,12 +167,16 @@ class LocalCapabilityExecutor(private val context: Context) {
                 "device" -> device(decision.action, args)
                 "flashlight" -> flashlight(decision.action)
                 "volume" -> volume(decision.action, args)
-                "media" -> media(decision.action, args, decision.route.label)
+                "media" -> {
+                    titleArgs = JSONObject(args.toString())
+                    media(decision.action, titleArgs, decision.route.label)
+                }
                 "contacts" -> contacts(decision.action, args)
                 "app_launch" -> appLaunch(decision.action, args)
                 else -> NativeOffloadResult(2, "Unsupported local capability: ${decision.capability}")
             }
         } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
             AppLogger.warning(TAG, "${decision.capability}/${decision.action} failed: ${t.message}")
             NativeOffloadResult(1, "本地执行失败：${t.message ?: t.javaClass.simpleName}")
         }
@@ -187,7 +195,7 @@ class LocalCapabilityExecutor(private val context: Context) {
             output = result.output.trim(),
             success = success,
             toolName = decision.capability,
-            title = decision.args.optString("tool_title").ifBlank { decision.route.label },
+            title = titleArgs.optString("tool_title").ifBlank { decision.route.label },
             answer = answer,
             spokenSummary = LocalSpokenSummary.forCapability(
                 capability = decision.capability,
@@ -1103,7 +1111,7 @@ class LocalCapabilityExecutor(private val context: Context) {
         if (name.isBlank()) return NativeOffloadResult(2, "应用名称为空。")
         val normalized = name.lowercase().replace(Regex("""\s+"""), "")
         val known = KNOWN_APPS.entries.firstOrNull { (alias, _) ->
-            normalized == alias.lowercase() || normalized.contains(alias.lowercase())
+            normalized == alias.lowercase()
         }?.value
         val launchIntent = when {
             known != null && known.packageName != null ->

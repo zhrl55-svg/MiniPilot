@@ -313,21 +313,26 @@ class AlarmOffloadHandler(private val context: Context) : NativeOffloadHandler {
     /**
      * Mirror apple-alarm `parseDuration`: accept raw seconds or shorthand
      * 30s / 5m / 1h / 2d. Returns total seconds, or null on bad input.
+     * All arithmetic in Long so `1h`-style conversion cannot overflow;
+     * anything beyond [MAX_DURATION_SECONDS] (7 days) is invalid too.
      */
     private fun parseDuration(s: String): Int? {
         val trimmed = s.trim().lowercase()
         if (trimmed.isEmpty()) return null
-        trimmed.toIntOrNull()?.let { return it }
-        if (trimmed.length < 2) return null
-        val unit = trimmed.last()
-        val num = trimmed.dropLast(1).toIntOrNull() ?: return null
-        return when (unit) {
-            's' -> num
-            'm' -> num * 60
-            'h' -> num * 3600
-            'd' -> num * 86400
-            else -> null
+        val total: Long = trimmed.toLongOrNull() ?: run {
+            if (trimmed.length < 2) return null
+            val unit = trimmed.last()
+            val num = trimmed.dropLast(1).toLongOrNull() ?: return null
+            when (unit) {
+                's' -> num
+                'm' -> num * 60
+                'h' -> num * 3600
+                'd' -> num * 86400
+                else -> return null
+            }
         }
+        if (total > MAX_DURATION_SECONDS) return null
+        return total.toInt()
     }
 
     /**
@@ -413,6 +418,9 @@ class AlarmOffloadHandler(private val context: Context) : NativeOffloadHandler {
 
     companion object {
         private const val TAG = "AlarmOffload"
+
+        /** Hard cap on durations accepted from the model: 7 days. */
+        private const val MAX_DURATION_SECONDS = 604_800L
         private const val VIEW_URL = "minis://views/alarm"
         private const val HELP = """android-alarm — schedule alarms and timers (mirrors apple-alarm)
 
