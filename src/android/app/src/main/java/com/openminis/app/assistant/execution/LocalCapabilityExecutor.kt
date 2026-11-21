@@ -1141,12 +1141,14 @@ class LocalCapabilityExecutor(private val context: Context) {
          * `when (decision.capability)` below; [FlashlightController] was the
          * first capability to be forgotten here and surfaced as
          * "Unknown tool: flashlight" on 2026-11-15.
+         *
+         * [T-cloud-fastpath-catalog] The set itself now lives in
+         * [com.openminis.app.assistant.routing.LocalCapabilityRegistry] so the
+         * cloud prompt catalog, `local_capability` dispatch and this executor
+         * read one source; this alias keeps existing callers unchanged.
          */
-        val SUPPORTED_CAPABILITIES = setOf(
-            "calendar", "alarm", "reminder", "note", "settings",
-            "scheduled_task", "weather", "device", "flashlight", "volume",
-            "media", "contacts", "app_launch",
-        )
+        val SUPPORTED_CAPABILITIES: Set<String> =
+            com.openminis.app.assistant.routing.LocalCapabilityRegistry.inProcessCapabilities
 
         private val KNOWN_APPS: Map<String, KnownApp> = mapOf(
             "微信" to KnownApp("com.tencent.mm"),

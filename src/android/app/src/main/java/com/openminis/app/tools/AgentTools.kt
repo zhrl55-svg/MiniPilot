@@ -9,6 +9,11 @@ import com.openminis.app.data.model.SubAgentDefinition
  * Central registry of all agent tool definitions.
  * Returns provider-agnostic AgentToolDefinition list used by the agent loop.
  * Tool definitions aligned with iOS AIChatViewModel.makeAgentTools().
+ *
+ * [T-cloud-fastpath-catalog] One deliberate exception: `local_capability` is
+ * Android-only. iOS has no in-process life-capability executor — its fast path
+ * is the `apple-*` command surface — so the iOS counterpart is the prompt rule
+ * "Native command first", not a same-named tool.
  */
 object AgentTools {
 
@@ -58,6 +63,13 @@ object AgentTools {
         // not cached), so the enum can never advertise a device that went
         // offline.
         hubDeviceNames: List<String> = emptyList(),
+        // [T-cloud-fastpath-catalog] True when the on-device fast path is
+        // enabled. Adds the single `local_capability` dispatcher so the cloud
+        // can run the app's native life capabilities in-process instead of
+        // approximating them with shell commands. The catalog of valid
+        // capability/action pairs and slots travels in the system prompt
+        // (LocalCapabilityCatalog), generated from the same registry.
+        localCapabilityEnabled: Boolean = false,
     ): List<AgentToolDefinition> = buildList {
         add(shellExecuteDefinition())
         add(FileReadTool.definition())
@@ -86,11 +98,49 @@ object AgentTools {
             if (!isHelper) add(memoryWriteDefinition())
             add(memoryGetDefinition())
         }
+        if (localCapabilityEnabled) add(localCapabilityDefinition())
         if (!isHelper && delegateEnabled) {
             add(subAgentTaskDefinition(rosterNames))
         }
         if (userAskExposed && !isHelper) add(com.openminis.app.agent.userask.UserAskPromptText.definition())
     }
+
+    /**
+     * [T-cloud-fastpath-catalog] ONE dispatcher for the app's in-process life
+     * capabilities. The valid capability/action pairs and slot contracts are
+     * generated into the system prompt from
+     * [com.openminis.app.assistant.routing.LocalCapabilityCatalog]; the schema
+     * here only enumerates capability ids from the same registry, so the two
+     * cannot drift. Kept deliberately as a single tool: 13 separate tools
+     * would double the prompt/schema surface for no additional safety, since
+     * risk and confirmation are per-action metadata in the registry.
+     */
+    private fun localCapabilityDefinition(): AgentToolDefinition =
+        AgentToolDefinition(
+            name = com.openminis.app.assistant.routing.LocalCapabilityInvocation.TOOL_NAME,
+            description = "Run one of the app's native on-device capabilities (calendar, alarm, reminder, note, system settings, scheduled task, weather, device status, flashlight, volume, media player, contacts, app launch). The system prompt lists every valid capability/action pair and its slots — when a request maps to one of them, use this tool instead of reproducing it with shell commands. These run inside the app with the user's existing permissions and confirmation rules: HIGH-risk actions still show a confirmation card and may be declined, read-only actions are safe to call freely. If no listed capability fits, use the normal agent tools.",
+            parameters = mapOf(
+                "tool_title" to AgentToolParam(
+                    "string",
+                    "A concise 5-10 word summary shown to the user on the tool block (e.g. 'Set 7am alarm', 'Add dentist appointment'). Use the same language as the user.",
+                ),
+                "capability" to AgentToolParam(
+                    "string",
+                    "Which local capability to run. Actions and slots for each are in the system prompt section 'Local on-device capabilities'.",
+                    enumValues = com.openminis.app.assistant.routing.LocalCapabilityCatalog.invokableCapabilityIds,
+                ),
+                "action" to AgentToolParam(
+                    "string",
+                    "Action name for the chosen capability (e.g. calendar: list/create/update/delete/freebusy; alarm: set/timer/open). Valid actions are listed per capability in the system prompt.",
+                ),
+                "arguments" to AgentToolParam(
+                    "string",
+                    "A JSON object of slot values for this action, e.g. {\"title\":\"Dentist\",\"start\":\"2026-11-22T09:00:00\"}. Slot names and types are listed in the system prompt; TIME is ISO-8601 local, durations are integer seconds, numbers may be JSON numbers or numeric strings. Omit when the action needs no slots.",
+                ),
+            ),
+            required = listOf("tool_title", "capability", "action"),
+            propertyOrdering = listOf("tool_title", "capability", "action", "arguments"),
+        )
 
     /**
      * [T-sub-agents-v1] The one sub agent tool: delegate, and inspect or stop

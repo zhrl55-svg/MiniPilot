@@ -2566,6 +2566,10 @@ class ChatViewModel(
             // would reject.
             rosterNames = providerRepository.subAgents.map { it.name },
             userAskExposed = userAskExposedThisRun,
+            // [T-cloud-fastpath-catalog] Same switch that enables the
+            // deterministic pre-cloud fast path. When the user turns local
+            // execution off, neither the tool nor its prompt catalog appears.
+            localCapabilityEnabled = com.openminis.app.llm.mnn.AssistantFastPath.isEnabled(context),
         )
 
     /**
@@ -11539,6 +11543,114 @@ class ChatViewModel(
         return true
     }
 
+    /**
+     * [T-cloud-fastpath-catalog] Execute a cloud-issued `local_capability` call.
+     *
+     * The cloud names the capability/action explicitly, so this path skips
+     * keyword routing but reuses everything else the deterministic fast path
+     * guarantees: preflight (calendar title → id), the destructive-only
+     * confirmation card, [LocalCapabilityExecutor], and the same user-facing
+     * result formatting. Failures come back as an ordinary tool error so the
+     * model can try another tool instead of ending the turn with "cannot".
+     */
+    private suspend fun executeLocalCapabilityTool(argsJson: String): ToolExecutionResult {
+        val raw = runCatching { JSONObject(argsJson) }.getOrNull()
+            ?: return ToolExecutionResult(
+                "local_capability: arguments must be a JSON object.",
+                false,
+                toolTitle = "local_capability",
+            )
+        val toolTitle = raw.optString("tool_title").ifBlank {
+            "本地能力 " + raw.optString("capability") + "/" + raw.optString("action")
+        }
+        if (!com.openminis.app.llm.mnn.AssistantFastPath.isEnabled(context)) {
+            return ToolExecutionResult(
+                "本地直连已在设置中关闭，local_capability 不可用。请改用普通 agent 工具。",
+                false,
+                toolTitle = toolTitle,
+            )
+        }
+        val plan = com.openminis.app.assistant.routing.LocalCapabilityInvocation.plan(raw)
+        if (plan is com.openminis.app.assistant.routing.LocalCapabilityPlan.Reject) {
+            return ToolExecutionResult(plan.reason, false, toolTitle = toolTitle)
+        }
+        var local = (plan as com.openminis.app.assistant.routing.LocalCapabilityPlan.Invoke).decision
+        val sessionId = activeSessionId
+        val executor = com.openminis.app.assistant.execution.LocalCapabilityExecutor(context)
+
+        val preparation = executor.prepare(local)
+        if (preparation.error != null) {
+            return ToolExecutionResult(preparation.error, false, toolTitle = toolTitle)
+        }
+        local = preparation.decision
+
+        if (local.needsConfirmation) {
+            // Same gate as the fast path: without an interactive foreground
+            // chat there is no card to answer, so a destructive action must
+            // not run silently. The model is told and can ask the user.
+            if (!guardInteractiveThisRun) {
+                return ToolExecutionResult(
+                    "该本地操作是破坏性操作，需要用户在当前聊天里确认；" +
+                        "本次不在可交互的前台会话中，未执行。",
+                    false,
+                    toolTitle = toolTitle,
+                )
+            }
+            val choices = preparation.choices.map { event ->
+                LocalActionChoice(
+                    id = event.id.toString(),
+                    title = event.title.ifBlank { "（无标题日程）" },
+                    subtitle = listOf(
+                        event.start.replace('T', ' ').removeSuffix(":00").take(16),
+                        event.location,
+                    ).filter { it.isNotBlank() }.joinToString(" · "),
+                )
+            }
+            val confirmation = awaitLocalActionConfirmation(
+                userText = local.summary,
+                decision = local,
+                sessionId = sessionId,
+                choices = choices,
+            )
+            if (confirmation.outcome != LocalConfirmationOutcome.CONFIRMED) {
+                return ToolExecutionResult(
+                    "用户没有确认该本地操作，未执行。",
+                    false,
+                    toolTitle = toolTitle,
+                )
+            }
+            confirmation.choiceId?.let { choiceId ->
+                local = local.copy(args = JSONObject(local.args.toString()).put("id", choiceId))
+            }
+        }
+
+        val started = System.currentTimeMillis()
+        val execution = try {
+            executor.execute(local, sessionId)
+        } catch (t: Throwable) {
+            AppLogger.warning(
+                TAG,
+                "[T-cloud-fastpath] ${local.capability}/${local.action} threw: " +
+                    "${t.javaClass.simpleName}: ${t.message}",
+            )
+            return ToolExecutionResult(
+                "本地执行失败：${t.message ?: t.javaClass.simpleName}",
+                false,
+                toolTitle = toolTitle,
+            )
+        }
+        com.openminis.app.llm.mnn.AssistantFastPath.trace(
+            context,
+            "cloud-local: ${local.capability}/${local.action} success=${execution.success} " +
+                "elapsed=${System.currentTimeMillis() - started}ms",
+        )
+        return ToolExecutionResult(
+            output = execution.output,
+            success = execution.success,
+            toolTitle = execution.title.ifBlank { toolTitle },
+        )
+    }
+
     private suspend fun executeLocalCapability(
         decision: com.openminis.app.assistant.routing.RouteDecision.Local,
         sessionId: String,
@@ -15226,6 +15338,13 @@ class ChatViewModel(
                 com.openminis.app.hub.HubCallTool.execute(argsJson, fsSessionId, toolId, context)
             }
             "memory_write" -> executeMemoryWriteTool(argsJson)
+            // [T-cloud-fastpath-catalog] One dispatcher for the app's native
+            // life capabilities. Validation and the destructive-only
+            // confirmation policy live in LocalCapabilityInvocation; execution
+            // reuses LocalCapabilityExecutor, exactly like the deterministic
+            // pre-cloud fast path.
+            com.openminis.app.assistant.routing.LocalCapabilityInvocation.TOOL_NAME ->
+                executeLocalCapabilityTool(argsJson)
             // [T-sub-agents-v1] One tool, five actions. The legacy names are
             // accepted so a replayed call from a transcript written before the
             // rename still dispatches instead of hitting "Unknown tool".
@@ -17557,6 +17676,18 @@ Memory system (currently DISABLED):
         // "Minis" from the package id even though the prompt no longer says
         // it (probe dev-identity, 2026-11-20). Android-only: the iOS app is
         // still named Minis.
+        // [T-cloud-fastpath-catalog] The cloud model gets the full on-device
+        // capability catalog — generated from LocalCapabilityRegistry, never a
+        // second hand-written list — so a sentence the deterministic router
+        // could not match is still done natively instead of being answered
+        // with "cannot do that". Empty when the fast path is off: the tool is
+        // absent from the schema then, and prompt/schema must not drift.
+        val localCapabilityPromptSection =
+            if (com.openminis.app.llm.mnn.AssistantFastPath.isEnabled(context)) {
+                "\n\n" + com.openminis.app.assistant.routing.LocalCapabilityCatalog.renderPromptSection()
+            } else {
+                ""
+            }
         val base = identitySection + """This application is named MiniPilot. The Android package id (com.openminis.app.dev) and the OpenMinis codebase name are historical identifiers; when you refer to the app, call it MiniPilot.
 You should proactively use shell commands to accomplish the user's tasks — installing packages (apk add), writing and running scripts, managing files, networking, and any other operations a Linux terminal can perform.
 
@@ -17565,7 +17696,7 @@ Available tools:
 - file_read: Read file contents (faster than cat).
 - file_write: Create new files or overwrite existing files (faster than echo/tee).
 - file_edit: Edit existing files with exact string replacement (old_string → new_string). Preferred over file_write for modifications — always file_read first.
-${browserPromptBullet}${userAskPromptLine}
+${browserPromptBullet}${userAskPromptLine}${localCapabilityPromptSection}
 
 ${minisUrlNote}
 

@@ -332,6 +332,22 @@ object LocalCapabilityRegistry {
         ),
     ).associateBy { it.id }
 
+    /**
+     * [T-cloud-fastpath-catalog] The split between capabilities the in-process
+     * executor runs and capabilities that are exposed as first-class agent
+     * tools instead. Cloud dispatch (`local_capability`), the prompt catalog and
+     * [com.openminis.app.assistant.execution.LocalCapabilityExecutor] read this
+     * one set, so the three cannot drift apart.
+     *
+     * Anything added here must also get an execution branch in the executor;
+     * anything left out is expected to have a same-named agent tool.
+     */
+    val inProcessCapabilities: Set<String> = linkedSetOf(
+        "calendar", "alarm", "reminder", "note", "settings",
+        "scheduled_task", "weather", "device", "flashlight", "volume",
+        "media", "contacts", "app_launch",
+    )
+
     val all: List<LocalCapability> get() = capabilities.values.toList()
 
     fun get(id: String): LocalCapability? = capabilities[id]
