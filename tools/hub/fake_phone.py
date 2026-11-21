@@ -31,7 +31,7 @@ def call_id(prefix: str, seq: int) -> str:
 async def main() -> int:
     parser = argparse.ArgumentParser(description="fake Minis phone")
     parser.add_argument("--relay", default="ws://127.0.0.1:8787/v1/hub")
-    parser.add_argument("--key", default="nm_phone")
+    parser.add_argument("--key", default="9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0")
     parser.add_argument("--id", default="phone-fake")
     parser.add_argument("--name", default="Phone")
     parser.add_argument("--target", required=True, help="device id or name to call")

@@ -20,7 +20,7 @@ cd tools/hub
 pip install -r requirements.txt
 
 # 三个终端，或三个后台进程
-python dev_relay.py --port 8787 --key nm_dev --key nm_phone
+python dev_relay.py --port 8787 --key 3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE --key 9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0
 python executor.py --config config.dev.json
 python fake_phone.py --target pc-ausa --action info
 ```

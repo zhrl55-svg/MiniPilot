@@ -42,13 +42,13 @@ PC 侧已实测（不是设计推演）：只读 `ls -la` 免审批直通 **43ms
 | 项 | 值 |
 |---|---|
 | 中继 | `ws://127.0.0.1:8787/v1/hub`（**仅本机**，`--host` 默认 127.0.0.1） |
-| 凭据 | PC 用 `nm_dev`，手机用 `nm_phone`（一把 key 只认领一个 device id，这是 C1.3，不是 bug） |
+| 凭据 | PC 用 `3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE`，手机用 `9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0`（一把 key 只认领一个 device id，这是 C1.3，不是 bug；见 config.dev.json / fake_phone.py 默认值） |
 | PC 设备 | id `pc-ausa`，name `AUSA`，kind `computer` |
 | 手机设备 | 你自己声明，建议 id `phone-<uuid8>`、kind `phone` |
 
 ```sh
 cd tools/hub
-python dev_relay.py --port 8787 --key nm_dev --key nm_phone
+python dev_relay.py --port 8787 --key 3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE --key 9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0
 python executor.py --config config.dev.json
 # 对照组（Python 侧的正确答案）：
 python fake_phone.py --target AUSA --cmd "cat hello.txt"
@@ -56,9 +56,10 @@ python fake_phone.py --target AUSA --cmd "cat hello.txt"
 
 中继和执行器各占一个后台任务，**和你的测试放在同一个会话里**——它们活到会话结束，跨会话不会留。别指望上个会话留下的进程（实测活了 21 分钟随会话回收，日志末行是 `reconnecting in 1s`，看着像崩溃其实是回收）。
 
-**手机真机联调要改两件事**（现在的中继手机连不上）：
-1. 中继用 `--host 0.0.0.0` 重启；
-2. App 里填 PC 的局域网 IP（`192.168.2.x`，不是 `127.0.0.1`），Windows 防火墙要放行 8787。
+**手机真机联调要走 tailscale serve**（中继保持默认 `127.0.0.1`，**不要** `--host 0.0.0.0`：
+那会把无 TLS 的中继开进整个局域网；tailscale serve 代理 loopback 即可，2026-11-21 起旧指引作废）：
+1. PC 上执行 `tailscale serve --bg --https=8444 http://127.0.0.1:8787`（8443 已被 executor 占用）；
+2. App 里填 `wss://asus.saola-mintaka.ts.net:8444/v1/hub`（MagicDNS 名，不是裸 IP，不用放行防火墙）。
 
 明文流量**已经允许**（`AndroidManifest.xml:189` `usesCleartextTraffic="true"` + `@xml/network_security_config`），不要再加配置。
 

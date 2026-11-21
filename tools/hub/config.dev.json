@@ -1,6 +1,6 @@
 {
   "relay": "ws://127.0.0.1:8787/v1/hub",
-  "api_key": "nm_dev",
+  "api_key": "3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE",
 
   "device": {
     "id": "pc-ausa",

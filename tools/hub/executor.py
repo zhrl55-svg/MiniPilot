@@ -17,6 +17,7 @@ import io
 import json
 import mimetypes
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -56,8 +57,8 @@ class Journal:
         try:
             with open(self.path, "a", encoding="utf-8") as fh:
                 fh.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            pass
+        except OSError as exc:
+            print(f"journal write failed: {exc}", file=sys.stderr)
 
 
 def _decode(raw: bytes) -> str:
@@ -585,7 +586,16 @@ class Executor:
                         with_suppress()
                 except ProcessLookupError:
                     pass
-            out, err = await proc.communicate()
+            try:
+                out, err = await asyncio.wait_for(proc.communicate(), timeout=5)
+            except asyncio.TimeoutError:
+                out, err = b"", b""
+                self.log.warning("shell process survived kill; abandoning pipes")
+            if os.name == "nt":
+                try:
+                    proc.terminate()
+                except ProcessLookupError:
+                    pass
 
         stdout = _decode(out)
         stderr = _decode(err)
@@ -761,7 +771,7 @@ class Executor:
             body["receipt"] = stored
         hook = (self.cfg.shell or {}).get("notify_command")
         if hook:
-            await self._do_shell({"command": f"{hook} {json.dumps(title)} {json.dumps(text)}"})
+            await self._do_shell({"command": f"{hook} {shlex.quote(title)} {shlex.quote(text)}"})
             body["delivered"] = True
             return body
         body["delivered"] = False

@@ -24,7 +24,7 @@ import java.io.File
  *   hub.json = {
  *     "relay": ["wss://asus.saola-mintaka.ts.net:8443/v1/hub",
  *               "ws://100.95.180.77:8787/v1/hub"],
- *     "key": "nm_phone",
+ *     "key": "bx7Wv1DJa0wxqknMPMn23sms5behlYOurFqkAVgdaF0",
  *     "proxy": "127.0.0.1:7890",
  *     "enabled": true
  *   }

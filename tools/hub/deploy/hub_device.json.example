@@ -1,6 +1,6 @@
 {
   "relay": "ws://192.168.2.102:8787/v1/hub",
-  "api_key": "nm_dev",
+  "api_key": "3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE",
   "device_id": "pc-asus",
   "device_name": "ASUS-PC",
   "actions": [

@@ -10,13 +10,14 @@ ids) lives in [link.Link]; this file only decides where a call goes.
 production this is `cloud/nanomuse_cloud/hub.py` (or a hardened rewrite); the
 frame shapes are identical, so nothing on the executor side changes.
 
-    python dev_relay.py --port 8787 --key nm_dev --key nm_phone
+    python dev_relay.py --port 8787 --key 3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE --key 9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import time
 from typing import Any
 
@@ -164,11 +165,12 @@ async def main() -> int:
     parser.add_argument("--frame-limit", type=int, default=link.DEFAULT_FRAME_LIMIT)
     args = parser.parse_args()
     if not args.keys:
-        args.keys = ["nm_dev"]
+        args.keys = ["3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE"]
 
     relay = Relay(args.keys, args.frame_limit)
     async with serve(relay.handler, args.host, args.port, max_size=link.SERVER_MAX_FRAME):
-        relay.log.info("listening on ws://%s:%d/v1/hub (keys=%s)", args.host, args.port, args.keys)
+        key_fp = ",".join("sha256:" + hashlib.sha256(k.encode("utf-8")).hexdigest()[:8] for k in args.keys)
+        relay.log.info("listening on ws://%s:%d/v1/hub (keys=%s)", args.host, args.port, key_fp)
         await asyncio.Future()
 
 

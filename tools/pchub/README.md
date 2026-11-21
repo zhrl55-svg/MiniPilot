@@ -181,18 +181,18 @@ python executor.py --config config.listen.json --listen 127.0.0.1:8790
 tailscale serve --bg --https=8443 http://127.0.0.1:8790
 python fake_phone.py \
   --relay wss://asus.saola-mintaka.ts.net:8443/v1/hub \
-  --key nm_phone --target pc-ausa --action info
+  --key bx7Wv1DJa0wxqknMPMn23sms5behlYOurFqkAVgdaF0 --target pc-ausa --action info
 ```
 
 已实测：welcome `minis-pchub/0.1`、`devices=[(AUSA, pc-ausa, controllable)]`，
 loopback 直连 24 ms，经 `tailscale serve` 的 wss 同样返回；审批卡往返
 （`rm -f …` → APPROVAL → allow → 文件删除）在两种入口下都通过。
 
-> 一个 key 绑定一个 device id（C1.3）。真机连着时 `nm_phone` 已被手机占用，
-> 再跑 `fake_phone.py --key nm_phone` 会得到 `4002 bad_device`——这是契约，
+> 一个 key 绑定一个 device id（C1.3）。真机连着时手机那把 key 已被手机占用，
+> 再跑 `fake_phone.py --key <同一把>` 会得到 `4002 bad_device`——这是契约，
 > 不是故障；手工测试请换一个 key 的独立 executor 实例。
 
-router（过渡形态，保留）：`python dev_relay.py --port 8787 --key nm_dev --key nm_phone`。
+router（过渡形态，保留）：`python dev_relay.py --port 8787 --key 3rbszEjiUibMJh4g6au1ATnO85CYzg5Xk5xLEmZQaRE --key 9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0`。
 
 ### P2 已交付（手机直连 PC）
 
@@ -212,11 +212,11 @@ NetworkHttp.following(NetworkScope.MCP.tag, base)   // hub.json 里显式 proxy 
     "wss://asus.saola-mintaka.ts.net:8443/v1/hub",
     "ws://100.95.180.77:8787/v1/hub"
   ],
-  "key": "nm_phone"
+  "key": "bx7Wv1DJa0wxqknMPMn23sms5behlYOurFqkAVgdaF0"
 }
 ```
 
-PC 端 `config.listen.json` 的 `api_key` 改用手机已有的 `nm_phone`，PC 只监听
+PC 端 `config.listen.json` 的 `api_key` 改用手机 hub.json 里已有的同一把 key（见上），PC 只监听
 `127.0.0.1:8790`，由 `tailscale serve --https=8443` 对外——**tailnet 以外不可见**。
 
 实测（2026-11-17 12:45，ELS-AN00）：手机启动后 40s 内连上 PC，

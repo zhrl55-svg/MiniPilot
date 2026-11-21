@@ -34,6 +34,8 @@ empty array means the model cannot address anyone.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import json
 import time
 from collections import deque
@@ -187,8 +189,9 @@ class Link:
             header = request.headers.get("Authorization", "")
         key = header[7:].strip() if header.lower().startswith("bearer ") else ""
 
-        if key not in self.keys:
-            self.log.warning("rejecting socket: bad key %r", hubkit.brief(key, 40))
+        if not any(hmac.compare_digest(key.encode("utf-8"), expected.encode("utf-8")) for expected in self.keys):
+            digest = hashlib.sha256(key.encode("utf-8")).hexdigest()[:8]
+            self.log.warning("rejecting socket: bad key (len=%d sha256:%s)", len(key), digest)
             await ws.close(4001, "bad_key")
             return
 

@@ -6,7 +6,7 @@ network access to any hub), but any future probe task that touches the relay
 must connect here, never to ws://192.168.2.102:8787 or the tailnet address.
 
     python tools/probe/start_relay.py                # 127.0.0.1:8790, key nm_probe
-    python tools/probe/start_relay.py --keys nm_probe nm_phone
+    python tools/probe/start_relay.py --keys nm_probe 9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0
 
 It runs until Ctrl+C. See tools/hub/dev_relay.py for the underlying relay.
 """
@@ -26,7 +26,7 @@ DEFAULT_PORT = 8790
 def main() -> int:
     p = argparse.ArgumentParser(description="stub hub relay on 8790")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
-    p.add_argument("--keys", nargs="*", default=["nm_probe", "nm_phone"])
+    p.add_argument("--keys", nargs="*", default=["nm_probe", "9kL9VY4tMQee4jJnEj9snRghcO3uWb2VSTwOg5A37k0"])
     args = p.parse_args()
 
     if not DEV_RELAY.exists():
