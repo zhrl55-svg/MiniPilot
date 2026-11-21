@@ -334,10 +334,13 @@ class LocalCapabilityExecutor(private val context: Context) {
                 val dispatched = offload("android-alarm", handler, argv)
                 // [T-alarm-truthful-result] 派发成功 ≠ 闹钟建成了。厂商时钟
                 // 会弹自己的设置界面要求用户点勾，用户点「取消」时闹钟根本
-                // 没建，而这里原来直接报了 success=true。派发之后回读系统
-                // 里真实注册的闹钟，回读不到就如实说「需要你确认」。
-                if (dispatched.exitCode != 0) return dispatched
-                return verifyAlarmWasCreated(dispatched, target)
+                // 没建，而这里原来直接报了 success=true。
+                //
+                // 校验在 [AlarmOffloadHandler] 里做（回读系统里真实注册的
+                // 闹钟，只认新增的那些），这样 CLI 路径与快路径共用同一套
+                // 判定，不会两处漂移。它已经用 exit code 3 表达了「需要
+                // 用户在系统时钟里确认」。
+                dispatched
             }
             "timer" -> {
                 val seconds = args.optLong("duration")
@@ -356,35 +359,6 @@ class LocalCapabilityExecutor(private val context: Context) {
                 listOf("android-alarm", "open"),
             )
             else -> NativeOffloadResult(2, "Unsupported alarm action: $action")
-        }
-    }
-
-    /**
-     * [T-alarm-truthful-result] 派发闹钟之后回读校验，确认它真的建了。
-     *
-     * 回读逻辑在 [AlarmVerification]：它用 `dumpsys alarm` 列出系统里真实
-     * 注册的闹钟。厂商时钟的闹钟带自己的 tag（华为是
-     * `huawei.deskclock.action.*`），所以按「目标小时上有几条待响闹钟」
-     * 判定，而不是认 tag。
-     *
-     * 回读依赖 Shizuku（拿不到 `dumpsys` 权限）。Shizuku 不在时回读不可用，
-     * 结论交给 [AlarmTruth.judge] 按厂商分支定：OEM 设备报「需要你确认」，
-     * AOSP/Pixel 报失败（那种设备上派发即插入，回读不到就是真没建）。
-     */
-    private fun verifyAlarmWasCreated(
-        dispatched: NativeOffloadResult,
-        target: com.openminis.app.sandbox.offload.AlarmTimeTarget?,
-    ): NativeOffloadResult {
-        if (target == null) return dispatched
-        val verdict = AlarmVerification.verifyCreated(target.hour)
-        return when (verdict.outcome) {
-            AlarmTruth.Outcome.CREATED -> dispatched
-            AlarmTruth.Outcome.FAILED -> NativeOffloadResult(1, verdict.message)
-            // 不是失败，但也**不是成功**：闹钟要用户在系统时钟里点一下。
-            // exit code 用 3 区分于「成功(0)」与「失败(1)」，让调用方
-            // （语音 / 云端）能如实告诉用户「还需要你确认」。
-            AlarmTruth.Outcome.NEEDS_USER_CONFIRMATION ->
-                NativeOffloadResult(EXIT_NEEDS_USER_CONFIRMATION, verdict.message)
         }
     }
 

@@ -105,6 +105,15 @@ class AlarmOffloadHandler(private val context: Context) : NativeOffloadHandler {
         // and confused users who expected to manage everything in their phone
         // Clock UI. Any OEM that refuses ACTION_SET_ALARM (no Clock app, or a
         // permission-stripped fork) is now a hard error — no silent fallback.
+        // [T-alarm-truthful-result] 派发成功不代表闹钟建成了：厂商时钟会
+        // 弹自己的设置界面要求用户点勾，用户点「取消」时闹钟根本没建。
+        // 派发之后回读系统里真实注册的闹钟，回读不到就如实报「需要你
+        // 在系统时钟里确认」，不报成功。
+        //
+        // 基线必须在派发**之前**取：用户早先就设过一个同小时的闹钟时，
+        // 只看「目标小时上有没有闹钟」会把旧闹钟当成这次派发的成果。
+        val baseline = com.openminis.app.assistant.execution.AlarmVerification
+            .baselineAlarmsAtHour(target.hour)
         val systemErr = scheduleViaSystemClock(label, target.hour, target.minute, mode)
         if (systemErr != null) {
             val body = JSONObject().put("error", "system_clock_unavailable")
@@ -114,12 +123,8 @@ class AlarmOffloadHandler(private val context: Context) : NativeOffloadHandler {
             AppLogger.warning(TAG, "set: system Clock dispatch failed — $systemErr")
             return NativeOffloadResult(1, OffloadOutput.formatBody(body, args) + "\n")
         }
-        // [T-alarm-truthful-result] 派发成功不代表闹钟建成了：厂商时钟会
-        // 弹自己的设置界面要求用户点勾，用户点「取消」时闹钟根本没建。
-        // 派发之后回读系统里真实注册的闹钟，回读不到就如实报「需要你
-        // 在系统时钟里确认」，不报成功。
         val verdict = com.openminis.app.assistant.execution.AlarmVerification
-            .verifyCreated(target.hour)
+            .verifyCreated(target.hour, baseline)
         if (!verdict.succeeded) {
             val needsConfirmation = verdict.outcome ==
                 com.openminis.app.assistant.execution.AlarmTruth.Outcome.NEEDS_USER_CONFIRMATION

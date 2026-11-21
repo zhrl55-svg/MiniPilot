@@ -19,10 +19,12 @@ class AlarmTruthTest {
         supported: Boolean,
         count: Int = 0,
         hour: Int = 7,
+        baseline: Int = 0,
     ) = AlarmTruth.ReadBack(
         readBackSupported = supported,
         alarmsAtTargetHour = count,
         targetHour = hour,
+        baselineAlarmsAtHour = baseline,
     )
 
     @Test
@@ -60,6 +62,35 @@ class AlarmTruthTest {
         )
         assertEquals(AlarmTruth.Outcome.FAILED, verdict.outcome)
         assertFalse(verdict.succeeded)
+    }
+
+    /**
+     * 用户早先就设过一个同小时的闹钟时，「目标小时上有闹钟」**不能**
+     * 证明这次派发成功了 —— 只认新增的那些。
+     *
+     * 第一次真机验证就撞上了这个坑：上一轮遗留的 7 点闹钟让回读立刻判成
+     * 成功，而新的闹钟其实还要用户在系统时钟里点勾。
+     */
+    @Test
+    fun `a pre-existing alarm at the same hour does not count as created`() {
+        val verdict = AlarmTruth.judge(
+            dispatched = true,
+            readBack = readBack(supported = true, count = 1, baseline = 1),
+            oemLabel = "HUAWEI",
+        )
+        assertEquals(AlarmTruth.Outcome.FAILED, verdict.outcome)
+        assertFalse(verdict.succeeded)
+    }
+
+    @Test
+    fun `an alarm added on top of a pre-existing one counts as created`() {
+        val verdict = AlarmTruth.judge(
+            dispatched = true,
+            readBack = readBack(supported = true, count = 2, baseline = 1),
+            oemLabel = "HUAWEI",
+        )
+        assertEquals(AlarmTruth.Outcome.CREATED, verdict.outcome)
+        assertTrue(verdict.succeeded)
     }
 
     /**

@@ -71,12 +71,19 @@ object AlarmTruth {
      *   拿不到（没有 Shizuku、命令不可用、输出解析不出来）时为 false。
      * @param alarmsAtTargetHour 回读结果里，落在目标小时上的闹钟条数。
      * @param targetHour 目标小时（0..23）。
+     * @param baselineAlarmsAtHour 派发**之前**目标小时上的条数。只有**新增**
+     *   的闹钟才算这次派发的成果 —— 用户早先就设过一个同小时的闹钟时，
+     *   「目标小时上有闹钟」并不能证明刚才那次派发成功了。
      */
     data class ReadBack(
         val readBackSupported: Boolean,
         val alarmsAtTargetHour: Int,
         val targetHour: Int,
-    )
+        val baselineAlarmsAtHour: Int = 0,
+    ) {
+        /** 这次派发新增了几条闹钟。 */
+        val newAlarms: Int get() = alarmsAtTargetHour - baselineAlarmsAtHour
+    }
 
     /**
      * 这个厂商的系统时钟认不认 `EXTRA_SKIP_UI`（静默插入）。
@@ -102,7 +109,7 @@ object AlarmTruth {
      * 综合派发结果与回读结果，给出最终结局。
      *
      * @param dispatched 派发本身是否成功（`startActivity` 没抛异常）。
-     * @param readBack 回读校验的结果。
+     * @param readBack 回读校验的结果（基线也在里面）。
      * @param oemLabel 厂商标签，用于决定回读失败时的结论。
      */
     fun judge(
@@ -117,7 +124,9 @@ object AlarmTruth {
             )
         }
         if (readBack.readBackSupported) {
-            return if (readBack.alarmsAtTargetHour > 0) {
+            // 只认**新增**的闹钟：用户早先就设过一个同小时的闹钟时，
+            // 「目标小时上有闹钟」并不能证明这次派发成功了。
+            return if (readBack.newAlarms > 0) {
                 Verdict(
                     Outcome.CREATED,
                     "闹钟已创建。",

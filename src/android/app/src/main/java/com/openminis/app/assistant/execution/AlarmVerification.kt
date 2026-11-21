@@ -13,17 +13,37 @@ import com.openminis.app.offload.ShizukuManager
 object AlarmVerification {
 
     /**
+     * 派发**之前**系统里注册在 [hour] 上的闹钟条数。
+     *
+     * 这条基线是必需的：用户早先就设过一个 7 点闹钟时，「目标小时上有
+     * 闹钟」并不能证明刚才那一次派发成功了 —— 第一次真机验证就撞上了
+     * 这个坑：上一轮遗留的 7 点闹钟让回读立刻判成成功，而新的闹钟其实
+     * 还要用户在系统时钟里点勾。只看「有没有」会撒谎，看「有没有变多」
+     * 才是真的。
+     */
+    fun baselineAlarmsAtHour(hour: Int): Int {
+        if (!ShizukuManager.isReady()) return 0
+        val result = ShizukuManager.runProcess(
+            arrayOf("dumpsys", "alarm"),
+            timeoutMs = 8_000L,
+        )
+        if (result.exitCode != 0) return 0
+        return AlarmDumpParser.countAtHour(AlarmDumpParser.parse(result.stdout), hour)
+    }
+
+    /**
      * 回读系统里当前注册在 [hour] 上的闹钟条数。
      *
      * 系统时钟是异步落盘的：派发后闹钟要过一会儿才注册上，所以这里轮询
      * 几次（与日历读回同一套节奏），期间任何一次读到就算数。
      */
-    fun readBackAlarmsAtHour(hour: Int): AlarmTruth.ReadBack {
+    fun readBackAlarmsAtHour(hour: Int, baseline: Int = 0): AlarmTruth.ReadBack {
         if (!ShizukuManager.isReady()) {
             return AlarmTruth.ReadBack(
                 readBackSupported = false,
                 alarmsAtTargetHour = 0,
                 targetHour = hour,
+                baselineAlarmsAtHour = baseline,
             )
         }
         repeat(READBACK_ATTEMPTS) { attempt ->
@@ -39,6 +59,7 @@ object AlarmVerification {
                         readBackSupported = true,
                         alarmsAtTargetHour = AlarmDumpParser.countAtHour(entries, hour),
                         targetHour = hour,
+                        baselineAlarmsAtHour = baseline,
                     )
                 }
             }
@@ -51,6 +72,7 @@ object AlarmVerification {
             readBackSupported = false,
             alarmsAtTargetHour = 0,
             targetHour = hour,
+            baselineAlarmsAtHour = baseline,
         )
     }
 
@@ -58,10 +80,12 @@ object AlarmVerification {
      * 派发之后判定闹钟到底建没建。
      *
      * @param hour 目标小时。
+     * @param baseline 派发前该小时上的闹钟条数（见 [baselineAlarmsAtHour]）。
+     *   只有**新增**的闹钟才算这次派发的成果。
      */
-    fun verifyCreated(hour: Int): AlarmTruth.Verdict = AlarmTruth.judge(
+    fun verifyCreated(hour: Int, baseline: Int): AlarmTruth.Verdict = AlarmTruth.judge(
         dispatched = true,
-        readBack = readBackAlarmsAtHour(hour),
+        readBack = readBackAlarmsAtHour(hour, baseline),
         oemLabel = com.openminis.app.sandbox.offload.OsCompat.oemLabel(),
     )
 
