@@ -11396,6 +11396,8 @@ class ChatViewModel(
                 System.currentTimeMillis() - startedAt,
             )
             fastPath.trace(context, "preflight-failed: ${preparation.error}")
+            // [T-voice-single-speak] 端侧播报了失败原因，模型文本就不再念一遍。
+            com.openminis.app.speech.wake.VoiceTurnSpeech.markAnnounced()
             localActionVoice.announceCompletion(
                 capability = local.capability,
                 action = local.action,
@@ -11522,7 +11524,12 @@ class ChatViewModel(
         // 只读信息类（新闻/行情/列表）没有确认卡，但会带一个简短的 spokenSummary，
         // 让「今天有什么科技新闻」在语音场景下也能直接听到前几条标题。
         // 无需确认的普通写操作同样播一句完成提示；媒体控制/读图按三层策略保持安静。
+        //
+        // [T-voice-single-speak] 端侧 announce 播出去之前先登记：本轮语音
+        // 已经播过真实结果，WakeWordService 就不能再把模型返回的文本念一遍
+        // （那串文本是快路径写进聊天的气泡标题，念出来既没信息量又重复）。
         if (execution.spokenSummary.isNotBlank()) {
+            com.openminis.app.speech.wake.VoiceTurnSpeech.markAnnounced()
             localActionVoice.announceSummary(execution.spokenSummary)
         } else if (
             com.openminis.app.assistant.execution.LocalActionSpeech.shouldSpeakCompletion(
@@ -11531,6 +11538,7 @@ class ChatViewModel(
                 isReadOnly,
             )
         ) {
+            com.openminis.app.speech.wake.VoiceTurnSpeech.markAnnounced()
             localActionVoice.announceCompletion(
                 capability = local.capability,
                 action = local.action,

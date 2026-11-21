@@ -31,9 +31,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Background wake-word listener.
@@ -133,6 +135,22 @@ class WakeWordService : Service() {
          * utterance and the assistant would answer itself.
          */
         private const val ECHO_GUARD_MS = 1_000L
+
+        /**
+         * [T-voice-single-speak] 等端侧 announce 真正起播的最长时间。
+         *
+         * announce 走的是延迟起播（1.2 秒），从「本轮被标记为已播报」到
+         * 「扬声器真的响了」之间还有这段空窗。等不到就当它没播出来。
+         */
+        private const val ANNOUNCE_START_WAIT_MS = 3_000L
+
+        /**
+         * [T-voice-single-speak] 等端侧 announce 播完的最长时间。
+         *
+         * 一篇新闻摘要能念近一分钟，和 [LocalActionVoiceConfirmer] 里的
+         * 播报超时保持一致。
+         */
+        private const val ANNOUNCE_FINISH_WAIT_MS = 60_000L
 
         /**
          * How long the conversation survives after the window closed on an
@@ -1046,6 +1064,10 @@ class WakeWordService : Service() {
      * shorter than a normal request: the audio is dominated by the
      * assistant's own voice, and the user expects the interruption to land
      * within a second or two.
+     *
+     * A wake-word hit in this window is deliberately dropped ([onWakeHit]):
+     * that is the assistant's own voice leaking back into the microphone,
+     * not the user — only the explicit stop phrase acts.
      */
     private fun installBargeInVad(reply: String) {
         val detector = WakeEnergyVad(
@@ -1064,6 +1086,29 @@ class WakeWordService : Service() {
         if (bargeInVad != null) engine?.onFrame = null
         bargeInVad?.reset()
         bargeInVad = null
+    }
+
+    /**
+     * [T-voice-single-speak] 等端侧 announce 播完。
+     *
+     * 麦克风在这段时间里**没有关**：[installBargeInVad] 一直在跑，用户
+     * 随时可以打断。这里等的是「播报结束」这个时机，播报一停（正常播完
+     * 或被关键词打断）就立刻返回，回到普通聆听。
+     *
+     * 不用拍脑袋的固定延时 —— announce 是延迟起播（1.2 秒），一篇新闻
+     * 摘要能念近一分钟。
+     *
+     * @return true 表示播报确实起播了；false 表示压根没播起来（TTS
+     *   引擎失败，或它在我们赶到之前就已经播完了）。
+     */
+    private suspend fun awaitAnnouncePlaybackEnd(): Boolean {
+        val started = withTimeoutOrNull(ANNOUNCE_START_WAIT_MS) {
+            VoiceOutputState.isSpeaking.first { it }
+        } ?: return false
+        withTimeoutOrNull(ANNOUNCE_FINISH_WAIT_MS) {
+            VoiceOutputState.isSpeaking.first { !it }
+        }
+        return started
     }
 
     /**
@@ -1371,10 +1416,60 @@ class WakeWordService : Service() {
         }
 
         publish(VoiceWakePhase.REPLYING, "思考中")
-        val reply = WakeConversation.ask(this, sessionId, text)
+        // [T-voice-single-speak] 一轮语音只播一次。快路径命中时端侧 announce
+        // 会播真实结果，这时模型返回的文本（快路径写进聊天的气泡标题）就
+        // 不该再念一遍。标记的粒度是「这一轮 ask()」。
+        VoiceTurnSpeech.beginTurn()
+        // [T-voice-single-speak] endTurn() 会把「本轮已播报」的标记清掉，
+        // 所以让它把标记交回来 —— 事后再去读就永远是 false，抑制分支形同
+        // 虚设。
+        var announcedThisTurn = false
+        val reply = try {
+            WakeConversation.ask(this, sessionId, text)
+        } finally {
+            announcedThisTurn = VoiceTurnSpeech.endTurn()
+        }
         if (conversationState != ConversationState.REPLYING) return
+
+        // [T-voice-single-speak] 端侧已经播过真实结果 → 抑制模型文本的
+        // 朗读，只播一次。
+        //
+        // 这个判断必须在「回复为空」之前：快路径命中时 ask() 经常返回空
+        // （结果已经在端侧播了，模型没有正文可回）。先按空回复处理的话，
+        // 这里会直接 sleepConversation() 退出对话轮次，而 announce 还要
+        // 1.2 秒才起播 —— 播报期间没有 barge-in，停止词最长 60 秒失效。
+        if (announcedThisTurn) {
+            AppLogger.info(TAG, "端侧已播报结果，抑制模型文本朗读")
+            VoiceWakeState.trace(this, "voice: speak suppressed reason=announce-already-spoke")
+            replyText = reply.orEmpty()
+            // 上一轮的停止标记不能带到这一轮（否则日志会误报「被中止」）。
+            speechStopRequested = false
+            // [T-voice-single-speak] barge-in 照旧装上：播报期间麦克风一直
+            // 开着，用户随时可以说「停一下 / 别说了」把这句打断 —— 这条
+            // 保护不能因为抑制了模型朗读就丢掉。
+            installBargeInVad(replyText)
+            // 等播报**结束**再回到普通聆听：播完，或者被停止词打断，都会
+            // 立刻返回。等的不只是延迟起播（1.2 秒），新闻摘要能念近一分
+            // 钟 —— 这期间断开的是普通 VAD，不是麦克风。
+            val spoke = awaitAnnouncePlaybackEnd()
+            removeBargeInVad()
+            if (spoke) {
+                if (speechStopRequested) {
+                    AppLogger.info(TAG, "端侧播报被用户中止，直接回到聆听")
+                }
+                if (conversationState != ConversationState.REPLYING) return
+                resumeListening()
+                return
+            }
+            // announce 根本没播出来（TTS 引擎失败、被静音丢弃）：没有重复
+            // 风险，回退到下面的语音通道念正文。
+            AppLogger.info(TAG, "端侧播报未开始，回退朗读正文")
+            VoiceWakeState.trace(this, "voice: announce never started")
+            delay(ECHO_GUARD_MS)
+        }
+
         if (reply.isNullOrBlank()) {
-            AppLogger.info(TAG, "本轮没有拿到回复")
+            AppLogger.info(TAG, "本轮没有拿到可朗读的回复")
             VoiceWakeState.trace(this, "本轮没有回复")
             sleepConversation()
             return
@@ -1384,7 +1479,18 @@ class WakeWordService : Service() {
         VoiceWakeState.trace(this, "回复：${reply.take(80)}")
         replyText = reply
         speechStopRequested = false
-        installBargeInVad(reply)
+        // [T-voice-single-speak] 只念最终答案：快路径的气泡标题（「✅
+        // Weather」）是给眼睛看的，念出来既没信息量又和端侧播报重复。
+        // 剥完不剩什么就不念，保持安静。
+        val spoken = VoiceSpeechText.speakable(reply)
+        if (spoken.isBlank()) {
+            AppLogger.info(TAG, "回复只有气泡标题，没有可朗读的正文")
+            VoiceWakeState.trace(this, "voice: speak suppressed reason=title-only")
+            if (conversationState != ConversationState.REPLYING) return
+            resumeListening()
+            return
+        }
+        installBargeInVad(spoken)
         // [T-android-voice-synthesis-settings] Provider-first, system fallback,
         // blocking until the audio ends — the same routing chat read-aloud
         // uses, so the Settings choice governs wake replies too.
@@ -1392,7 +1498,7 @@ class WakeWordService : Service() {
         val spoke = if (player != null) {
             // Same 600-character trim as the old wake narration: a background
             // conversation should not monologue for minutes.
-            runCatching { player.speakBlocking(reply.take(WakeConversation.MAX_SPEECH_CHARS)) }
+            runCatching { player.speakBlocking(spoken.take(WakeConversation.MAX_SPEECH_CHARS)) }
                 .onFailure { AppLogger.info(TAG, "朗读播放失败：${it.message}") }
                 .getOrDefault(false)
         } else {
@@ -1401,7 +1507,7 @@ class WakeWordService : Service() {
                 it.init(applicationContext)
                 tts = it
             }
-            WakeConversation.speak(speaker, reply)
+            WakeConversation.speak(speaker, spoken)
         }
         removeBargeInVad()
         if (!spoke) {
