@@ -240,6 +240,27 @@ class WakeEnergyVad(
     }
 
     /**
+     * Snapshot of the tail of the segment being accumulated.
+     *
+     * The listening window uses this to run the voiceprint once, at the
+     * moment the window would otherwise expire: the energy VAD stays "in
+     * speech" on a noisy room forever, and only the owner's voice may renew
+     * the window. Returns null while no utterance is open — there is nothing
+     * to judge, and the caller must not treat "no audio" as "not the owner".
+     *
+     * Detached copy on purpose: the capture thread keeps appending to
+     * [segment] while the extractor runs on another thread.
+     */
+    @Synchronized
+    fun currentSegmentTailPcm(tailMs: Int): ShortArray? {
+        if (!inSpeech || segment.isEmpty()) return null
+        val want = (tailMs.coerceAtLeast(0).toLong() * WakeAudioCapture.SAMPLE_RATE / 1000).toInt()
+        if (want <= 0) return null
+        val from = (segment.size - want).coerceAtLeast(0)
+        return ShortArray(segment.size - from) { segment[from + it] }
+    }
+
+    /**
      * Force the current utterance out (used when the idle window closes).
      *
      * Flush 走与 [feed] 相同的质量判定：过短或噪声片段照丢，不因为窗口
