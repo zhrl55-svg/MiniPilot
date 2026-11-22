@@ -99,6 +99,27 @@ object DebugMethodRegistry {
             ),
         ),
         MethodSpec(
+            name = "debug.systemSettings.write",
+            description = "[T-android-settings-direct-write] DEBUG-only: write a system setting (global/secure/system) with readback verification. Prefers Shizuku, falls back to a direct WRITE_SECURE_SETTINGS write when Shizuku is stopped. Returns {ok, backend, namespace, key, expected, actual}; a blank/mismatched readback is reported as ok=false (never a silent success).",
+            params = listOf(
+                ParamSpec("namespace", "string", required = true, description = "global | secure | system"),
+                ParamSpec("key", "string", required = true, description = "setting key, e.g. low_power"),
+                ParamSpec("value", "string", required = true, description = "value to store"),
+            ),
+            returns = "{ok, backend, namespace, key, expected, actual, error?}",
+            example = ex("namespace" to "global", "key" to "low_power", "value" to "1"),
+        ),
+        MethodSpec(
+            name = "debug.systemSettings.get",
+            description = "[T-android-settings-direct-write] DEBUG-only: read a system setting via the same bridge (fresh shell read when Shizuku is ready, else a direct read). Returns {value, backend}.",
+            params = listOf(
+                ParamSpec("namespace", "string", required = true, description = "global | secure | system"),
+                ParamSpec("key", "string", required = true, description = "setting key, e.g. low_power"),
+            ),
+            returns = "{namespace, key, value, backend}",
+            example = ex("namespace" to "global", "key" to "low_power"),
+        ),
+        MethodSpec(
             name = "debug.modelUse.exec",
             description = "DEBUG-only: invoke ModelUseOffloadHandler directly with the given argv. Parallels debug.shizuku.exec — lets harnesses trigger `minis-model-use run/list/search` without an in-shell prompt.",
             params = listOf(

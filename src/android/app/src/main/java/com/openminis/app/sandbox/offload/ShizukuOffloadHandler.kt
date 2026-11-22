@@ -68,6 +68,19 @@ class ShizukuOffloadHandler(private val context: Context) : NativeOffloadHandler
             )
         }
 
+        // [T-android-settings-direct-write] The `settings` group can fall back to
+        // a direct WRITE_SECURE_SETTINGS write when Shizuku is stopped, so it is
+        // handled BEFORE the Shizuku-READY gate. Every other group still needs the
+        // Shizuku binder (none of them can be emulated by a permission alone).
+        if (group == "settings") {
+            return try {
+                handleSettings(rest, args)
+            } catch (t: Throwable) {
+                AppLogger.warning(TAG, "settings failed: ${t.message}")
+                errEnvelope("OPERATION_FAILED", t.message ?: "unknown", args)
+            }
+        }
+
         // Every other group needs binder + permission.
         ShizukuManager.refresh()
         when (val st = ShizukuManager.snapshot.value.state) {
@@ -86,7 +99,6 @@ class ShizukuOffloadHandler(private val context: Context) : NativeOffloadHandler
                 "permission" -> handlePermission(rest, args)
                 "activity" -> handleActivity(rest, args)
                 "display" -> handleDisplay(rest, args)
-                "settings" -> handleSettings(rest, args)
                 "user" -> handleUser(rest, args)
                 "network" -> handleNetwork(rest, args)
                 "input" -> handleInput(rest, args)
@@ -484,61 +496,56 @@ class ShizukuOffloadHandler(private val context: Context) : NativeOffloadHandler
 
     private fun settingsGet(ns: String?, key: String?, args: OffloadArgs): NativeOffloadResult {
         if (!validNs(ns) || key.isNullOrBlank()) return errEnvelope("INVALID_ARGS", "settings get <global|secure|system> <key>", args)
-        val r = ShizukuManager.runProcess(arrayOf("settings", "get", ns!!, key))
-        // T339: `settings get` returns exitCode=1 with empty stdout/stderr when the key
-        // is missing from the namespace database. Don't pass an empty message through —
-        // synthesize a useful one so callers see what went wrong.
-        if (r.exitCode == 0) return okEnvelope(JSONObject().put("key", key).put("value", r.stdout.trim()), args)
-        // T343: branch the synthesized hint by exitCode — `settings` returns 1
-        // for missing keys, 124 for our local timeout, 143 when something
-        // SIGTERM'd the child, anything else is a generic privileged-shell
-        // failure.
-        val hint = r.combined.ifBlank {
-            when (r.exitCode) {
-                1 -> "settings $ns key='$key' does not exist or is not readable (exitCode=1). " +
-                    "Try `android-shizuku-cli settings list $ns` to see available keys."
-                124 -> "settings get $ns $key timed out (exitCode=124); raise --timeout-ms or check Shizuku service health."
-                143 -> "settings get $ns $key was killed mid-flight (SIGTERM/exitCode=143); " +
-                    "the privileged process was destroyed before it could finish."
-                else -> "settings get $ns $key failed (exitCode=${r.exitCode})"
-            }
+        // [T-android-settings-direct-write] Read via the bridge: a fresh shell read
+        // when Shizuku is ready, otherwise a direct read (which needs no permission).
+        val r = SystemSettingsBridge.read(context, ns!!, key)
+        if (r.value.isNullOrEmpty() || r.value == "null") {
+            return errEnvelope(
+                "OPERATION_FAILED",
+                "settings get $ns key='$key' returned no value (backend=${r.backend.name.lowercase()}). " +
+                    "Try `android-shizuku-cli settings list $ns` to see available keys.",
+                args,
+            )
         }
-        return errEnvelope("OPERATION_FAILED", hint, args)
+        return okEnvelope(
+            JSONObject().put("key", key).put("value", r.value).put("backend", r.backend.name.lowercase()),
+            args,
+        )
     }
 
     private fun settingsSet(ns: String?, key: String?, value: String?, args: OffloadArgs): NativeOffloadResult {
         if (!validNs(ns) || key.isNullOrBlank() || value == null) {
             return errEnvelope("INVALID_ARGS", "settings set <ns> <key> <value>", args)
         }
-        val r = ShizukuManager.runProcess(arrayOf("settings", "put", ns!!, key, value))
-        return if (r.exitCode == 0) okEnvelope(JSONObject().put("key", key).put("value", value), args)
-        else errEnvelope(
-            "OPERATION_FAILED",
-            r.combined.ifBlank { "settings put $ns $key failed (exitCode=${r.exitCode})" },
+        // [T-android-settings-direct-write] Verified write: Shizuku first, then a
+        // direct WRITE_SECURE_SETTINGS write, and ALWAYS read back the stored value.
+        // A blank or mismatched readback is an error — never a silent success.
+        val res = SystemSettingsBridge.write(context, ns!!, key, value)
+        return if (res.ok) okEnvelope(
+            JSONObject()
+                .put("key", key)
+                .put("value", res.expected)
+                .put("actual", res.actual ?: JSONObject.NULL)
+                .put("backend", res.backend?.name?.lowercase() ?: "none")
+                .put("verified", true),
             args,
-        )
+        ) else errEnvelope("OPERATION_FAILED", res.error ?: "settings put $ns $key failed", args)
     }
 
     private fun settingsDelete(ns: String?, key: String?, args: OffloadArgs): NativeOffloadResult {
         if (!validNs(ns) || key.isNullOrBlank()) return errEnvelope("INVALID_ARGS", "settings delete <ns> <key>", args)
-        val r = ShizukuManager.runProcess(arrayOf("settings", "delete", ns!!, key))
-        return if (r.exitCode == 0) okEnvelope(JSONObject().put("deleted", key), args)
-        else errEnvelope("OPERATION_FAILED", failMessage(r, "settings delete $ns $key"), args)
+        val res = SystemSettingsBridge.delete(context, ns!!, key)
+        return if (res.ok) okEnvelope(JSONObject().put("deleted", key).put("backend", res.backend?.name?.lowercase() ?: "none"), args)
+        else errEnvelope("OPERATION_FAILED", res.error ?: "settings delete $ns $key failed", args)
     }
 
     private fun settingsList(ns: String?, args: OffloadArgs): NativeOffloadResult {
         if (!validNs(ns)) return errEnvelope("INVALID_ARGS", "settings list <global|secure|system>", args)
-        val r = ShizukuManager.runProcess(arrayOf("settings", "list", ns!!), timeoutMs = 8_000)
-        if (r.exitCode != 0) return errEnvelope("OPERATION_FAILED", failMessage(r, "settings list $ns"), args)
         val filter = args.get("filter")
+        val values = SystemSettingsBridge.list(context, ns!!, filter)
+            ?: return errEnvelope("OPERATION_FAILED", "settings list $ns failed (no backend readable)", args)
         val obj = JSONObject()
-        for (line in r.stdout.lineSequence()) {
-            val eq = line.indexOf('=')
-            if (eq <= 0) continue
-            val k = line.substring(0, eq); val v = line.substring(eq + 1)
-            if (filter != null && !k.contains(filter)) continue
-            obj.put(k, v)
-        }
+        for ((k, v) in values) obj.put(k, v)
         return okEnvelope(obj, args)
     }
 

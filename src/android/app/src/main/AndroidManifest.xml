@@ -108,6 +108,18 @@
          doesn't unblock the call — the permission does. -->
     <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
+    <!-- [T-android-settings-direct-write] The permission-based settings tier.
+         WRITE_SECURE_SETTINGS is `signature|privileged|development`, so it can
+         be granted to a sideloaded app with a one-time
+         `adb shell pm grant com.openminis.app.dev android.permission.WRITE_SECURE_SETTINGS`
+         — no root, no Shizuku, no accessibility service required. Declaring it
+         here is what makes `pm grant` succeed at all (without the declaration,
+         pm rejects with "has not requested permission"). SystemSettingsBridge
+         uses it to write Settings.Global/Secure directly and read the value
+         back; it only takes effect once granted, and every write is verified by
+         readback so a missing grant is reported as a failure, not a success. -->
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
     <!-- [T-android-privileged-backend] AXManager only pushes its binder to
          apps whose requestedPermissions list contains one of three sentinels
          (see AxManager BinderSender#sendBinder). Without one of these

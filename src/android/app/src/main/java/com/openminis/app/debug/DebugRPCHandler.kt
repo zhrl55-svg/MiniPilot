@@ -225,6 +225,21 @@ class DebugRPCHandler(private val context: Context) {
                 }
                 handleA11yExec(params)
             }
+            // [T-android-settings-direct-write] Verified system-settings write/read
+            // through SystemSettingsBridge (Shizuku first, direct WRITE_SECURE_SETTINGS
+            // fallback). Lets harnesses prove the fallback works with Shizuku stopped.
+            "debug.systemSettings.write" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleSystemSettingsWrite(params)
+            }
+            "debug.systemSettings.get" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleSystemSettingsGet(params)
+            }
             // [T-multi-select-share] Share Chat picker / export, served by the
             // ChatScreen showing the session (iOS parity, DEBUG only).
             "debug.chatShare.openPicker" -> {
@@ -1294,6 +1309,48 @@ class DebugRPCHandler(private val context: Context) {
             put("exitCode", result.exitCode)
             put("output", result.output)
             put("argv", JSONArray(argvTail))
+        }
+    }
+
+    /**
+     * [T-android-settings-direct-write] DEBUG-only verified system-settings write
+     * through [com.openminis.app.sandbox.offload.SystemSettingsBridge]. Proves the
+     * direct-write fallback works without Shizuku, and that a blank/mismatched
+     * readback is reported as failure. Gated in [dispatch].
+     */
+    private fun handleSystemSettingsWrite(params: JSONObject): JSONObject {
+        val ns = params.optString("namespace")
+        val key = params.optString("key")
+        val value = params.optString("value")
+        if (!com.openminis.app.sandbox.offload.SystemSettingsBridge.isValidNamespace(ns)) {
+            throw RPCException(-32602, "namespace must be global, secure or system")
+        }
+        if (key.isBlank()) throw RPCException(-32602, "key is required")
+        val res = com.openminis.app.sandbox.offload.SystemSettingsBridge.write(context, ns, key, value)
+        return JSONObject().apply {
+            put("ok", res.ok)
+            put("backend", res.backend?.name?.lowercase() ?: "none")
+            put("namespace", ns)
+            put("key", key)
+            put("expected", res.expected)
+            put("actual", res.actual ?: JSONObject.NULL)
+            res.error?.let { put("error", it) }
+        }
+    }
+
+    private fun handleSystemSettingsGet(params: JSONObject): JSONObject {
+        val ns = params.optString("namespace")
+        val key = params.optString("key")
+        if (!com.openminis.app.sandbox.offload.SystemSettingsBridge.isValidNamespace(ns)) {
+            throw RPCException(-32602, "namespace must be global, secure or system")
+        }
+        if (key.isBlank()) throw RPCException(-32602, "key is required")
+        val r = com.openminis.app.sandbox.offload.SystemSettingsBridge.read(context, ns, key)
+        return JSONObject().apply {
+            put("namespace", ns)
+            put("key", key)
+            put("value", r.value ?: JSONObject.NULL)
+            put("backend", r.backend.name.lowercase())
         }
     }
 
