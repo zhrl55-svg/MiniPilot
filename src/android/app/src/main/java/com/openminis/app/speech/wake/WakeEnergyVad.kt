@@ -120,6 +120,11 @@ class WakeEnergyVad(
     @get:Synchronized
     val isInSpeech: Boolean get() = inSpeech
 
+    /** Length of the utterance being accumulated — diagnostics only. */
+    @get:Synchronized
+    val bufferedSegmentMs: Int
+        get() = segment.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+
     private var lastRmsValue = 0.0
     private var framesFed = 0
 
