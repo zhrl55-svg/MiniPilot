@@ -73,6 +73,62 @@ class MemoryEntryParserTest {
         assertTrue(!MemoryEntryParser.isMemoryFile("notes.md"))
     }
 
+    /** [T-memory-structured-write] Summary becomes the title when no ## heading. */
+    @Test
+    fun summaryLineBecomesTheTitleWhenThereIsNoHeading() {
+        val dir = tmp.newFolder("structured")
+        File(dir, "2026-11-22.md").writeText(
+            "<!-- 2026-11-22 09:00:00 -->\n" +
+                "Summary: tailscale 直连已验证\n" +
+                "Tags: tailscale, network\n" +
+                "正文说明走 tsnet。\n",
+        )
+
+        val entry = MemoryEntryParser.parse(dir).single()
+        assertEquals("tailscale 直连已验证", entry.title)
+        assertTrue(entry.tags.containsAll(setOf("tailscale", "network")))
+    }
+
+    /** An explicit ## heading still wins over Summary. */
+    @Test
+    fun headingStillWinsOverSummary() {
+        val dir = tmp.newFolder("structured-heading")
+        File(dir, "2026-11-22.md").writeText(
+            "<!-- 2026-11-22 09:00:00 -->\n" +
+                "Summary: 一行摘要\n" +
+                "## 真正的标题\n正文\n",
+        )
+
+        assertEquals("真正的标题", MemoryEntryParser.parse(dir).single().title)
+    }
+
+    /** Unknown tags are dropped; aliases map to the canonical vocabulary. */
+    @Test
+    fun explicitTagsAreCanonicalisedAndUnknownOnesDropped() {
+        val dir = tmp.newFolder("structured-tags")
+        File(dir, "2026-11-22.md").writeText(
+            "<!-- 2026-11-22 09:00:00 -->\n" +
+                "## 标题\nTags: 玛格派, 小窗, totally-made-up-tag\n正文\n",
+        )
+
+        val tags = MemoryEntryParser.parse(dir).single().tags
+        assertTrue(tags.contains("magpie"))
+        assertTrue(tags.contains("freeform"))
+        assertTrue(!tags.contains("totally-made-up-tag"))
+    }
+
+    /** Entries written before this feature keep their old behaviour. */
+    @Test
+    fun legacyEntriesWithoutMetadataAreUnchanged() {
+        val dir = tmp.newFolder("legacy")
+        File(dir, "2026-11-22.md").writeText(
+            "<!-- 2026-11-22 09:00:00 -->\n没有元数据的一行\n",
+        )
+
+        val entry = MemoryEntryParser.parse(dir).single()
+        assertEquals("（无标题）", entry.title)
+    }
+
     private fun seed(): File {
         val dir = tmp.newFolder("memory")
 

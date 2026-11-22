@@ -57,4 +57,33 @@ object MemoryTagger {
         }
         return out
     }
+
+    /**
+     * Normalise a model-supplied `Tags:` line to the closed vocabulary above.
+     *
+     * Unknown words are dropped instead of being stored: free-form tags are
+     * just query-independent noise in BM25, and a tag that no future query can
+     * produce is worse than no tag. Alias matching is deliberately conservative
+     * (exact token, or a token that contains an alias of at least 3 chars).
+     */
+    fun canonicalize(raw: String): Set<String> {
+        val tokens = raw.lowercase()
+            .split(Regex("[,，、\\s]+"))
+            .map { it.trim('#', ':', '-') }
+            .filter { it.length >= 2 }
+        if (tokens.isEmpty()) return emptySet()
+        val out = LinkedHashSet<String>()
+        for ((canonical, aliases) in LOWERED_ALIASES) {
+            if (tokens.any { token ->
+                token == canonical || aliases.any { alias ->
+                    token == alias || (alias.length >= 3 && token.contains(alias))
+                }
+            }) out.add(canonical)
+        }
+        return out
+    }
+
+    /** Lines the structured-write format uses; hidden from body comparison. */
+    fun isMetaLine(line: String): Boolean =
+        line.startsWith("Summary:") || line.startsWith("Tags:")
 }

@@ -58,6 +58,46 @@ class MemoryIndexTest {
         assertEquals(1, index.search("freeform 小窗", MemoryScope.ALL, limit = 1).size)
     }
 
+    /**
+     * [T-memory-authority-gain] The regression this multiplier exists for: a
+     * daily note that repeats a keyword must not outrank the GLOBAL section
+     * that documents it. Before the change the additive authority term was
+     * worth ~0.003 and the daily note won on raw BM25.
+     */
+    @Test
+    fun globalSectionOutranksADailyNoteRepeatingTheSameKeyword() {
+        val dir = tmp.newFolder("authority")
+        File(dir, "GLOBAL.md").writeText("## 网络\nping 可以用，nc -z 有假阳性\n")
+        File(dir, "2026-11-22.md").writeText(
+            "<!-- 2026-11-22 09:00:00 -->\n" +
+                "## 顺手记一笔\n" +
+                "今天 ping 了一下 ping 通了 ping 没问题 ping 正常\n",
+        )
+        val ranked = MemoryIndex(MemoryEntryParser.parse(dir))
+            .search("ping 能不能用", MemoryScope.ALL)
+
+        assertTrue(ranked.isNotEmpty())
+        assertEquals(MemoryKind.GLOBAL, ranked.first().entry.kind)
+    }
+
+    /** A daily-only scope must be untouched by the authority multiplier. */
+    @Test
+    fun authorityGainDoesNotReorderDailyOnlyResults() {
+        val dir = tmp.newFolder("daily-only")
+        File(dir, "GLOBAL.md").writeText("## 网络\nping 可以用\n")
+        File(dir, "2026-11-22.md").writeText(
+            "<!-- 2026-11-22 09:00:00 -->\n## 甲\nping 通了\n\n" +
+                "<!-- 2026-11-22 10:00:00 -->\n## 乙\nping 也通了\n",
+        )
+        val entries = MemoryEntryParser.parse(dir)
+        val hits = MemoryIndex(entries).search("ping", MemoryScope.DAILY)
+
+        assertTrue(hits.isNotEmpty())
+        assertTrue(hits.all { it.entry.kind == MemoryKind.DAILY })
+        // Every daily candidate has importance 1.0 → gain factor is exactly 1.
+        assertTrue(hits.all { it.entry.importance == MemoryIndexConfig.IMPORTANCE_DAILY })
+    }
+
     private fun top(query: String): String? =
         index.search(query, MemoryScope.ALL).firstOrNull()?.entry?.title
 

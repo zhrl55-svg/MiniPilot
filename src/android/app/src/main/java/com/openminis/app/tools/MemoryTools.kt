@@ -23,11 +23,19 @@ object MemoryTools {
                 put("type", "string")
                 put("description", "The memory content to write. Use concise Markdown with a short heading (## Topic) and context about what was done/learned.")
             })
+            put("summary", JSONObject().apply {
+                put("type", "string")
+                put("description", "Optional one-line summary (<= 120 chars) used as the entry title when content has no ## heading and as an index ranking signal.")
+            })
+            put("tags", JSONObject().apply {
+                put("type", "string")
+                put("description", "Optional comma-separated tags from the existing memory vocabulary (e.g. tailscale, hub, memory, voice, build, magpie). Unknown tags are ignored. Leave empty if none fit.")
+            })
         }
 
         return JSONObject().apply {
             put("name", "memory_write")
-            put("description", "Write a memory entry to today's daily log (YYYY-MM-DD.md). Memories persist across all sessions. Each entry is prepended with a timestamp. Save: user preferences, recurring patterns, key facts, project conventions, reusable knowledge. Avoid saving passwords, API keys, tokens, or secrets unless the user explicitly confirms after being warned. Keep entries concise and general-purpose. GLOBAL.md is writable but not through this tool; update it when the user asks.")
+            put("description", "Write a memory entry to today's daily log (YYYY-MM-DD.md). Memories persist across all sessions. Each entry is prepended with a timestamp. When the entry is about a recurring topic, also supply a short 'summary' and comma-separated 'tags' from the existing vocabulary — the retrieval index uses them. Save: user preferences, recurring patterns, key facts, project conventions, reusable knowledge. Avoid saving passwords, API keys, tokens, or secrets unless the user explicitly confirms after being warned. Keep entries concise and general-purpose. GLOBAL.md is writable but not through this tool; update it when the user asks.")
             put("input_schema", JSONObject().apply {
                 put("type", "object")
                 put("properties", properties)
@@ -115,11 +123,13 @@ object MemoryTools {
             val obj = JSONObject(inputJson)
             val content = obj.optString("content", "")
             val toolTitle = obj.optString("tool_title", "memory_write")
+            val summary = obj.optString("summary", "")
+            val tags = obj.optString("tags", "")
 
             if (content.isBlank()) {
                 ToolResult("Error: Missing required 'content' parameter", false, toolTitle)
             } else {
-                val result = repository.writeMemory(content)
+                val result = repository.writeMemory(content, summary, tags)
                 val success = result.startsWith("Memory saved")
                 ToolResult(result, success, toolTitle)
             }

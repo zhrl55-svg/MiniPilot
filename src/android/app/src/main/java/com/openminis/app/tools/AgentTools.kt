@@ -270,17 +270,17 @@ object AgentTools {
     // Aligned with iOS AIChatViewModel.swift:5059-5067
     private fun memoryWriteDefinition(): AgentToolDefinition = AgentToolDefinition(
         name = "memory_write",
-        description = "Write a memory entry to today's daily log (YYYY-MM-DD.md). Memories persist across all sessions. " +
-            "Each entry is prepended with a timestamp. " +
-            "Save: user preferences, recurring patterns, key facts, project conventions, reusable knowledge. " +
-            "Avoid saving passwords, API keys, tokens, or secrets unless the user explicitly confirms after being warned. " +
-            "Keep entries concise and general-purpose. GLOBAL.md is writable but not through this tool; update it when the user asks.",
+        // Single source of truth: GlobalMemoryWritableWordingTest asserts the
+        // Anthropic and OpenAI-shaped definitions keep identical wording.
+        description = MemoryTools.memoryWriteToolDefinition().getString("description"),
         parameters = mapOf(
             "tool_title" to AgentToolParam("string", "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Save user preference for Python', 'Note today's project context'). Use the same language as the user."),
             "content" to AgentToolParam("string", "The memory content to write. Use concise Markdown with a short heading (## Topic) and context about what was done/learned."),
+            "summary" to AgentToolParam("string", "Optional one-line summary (<= 120 chars) used as the entry title when content has no ## heading and as an index ranking signal."),
+            "tags" to AgentToolParam("string", "Optional comma-separated tags from the existing memory vocabulary (e.g. tailscale, hub, memory, voice, build, magpie). Unknown tags are ignored. Leave empty if none fit."),
         ),
         required = listOf("tool_title", "content"),
-        propertyOrdering = listOf("tool_title", "content"),
+        propertyOrdering = listOf("tool_title", "content", "summary", "tags"),
     )
 
     // Aligned with iOS AIChatViewModel.swift:5069-5078

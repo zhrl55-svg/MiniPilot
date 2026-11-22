@@ -114,7 +114,9 @@ object MemoryEntryParser {
 
         val entries = ArrayList<MemoryEntry>()
         for ((_, block) in blocks) {
-            var title = "（无标题）"
+            // Empty, not the placeholder: makeEntry falls back to the
+            // structured-write Summary before finally using "（无标题）".
+            var title = ""
             val body = ArrayList<String>()
             var titleTaken = false
             for (line in block) {
@@ -147,7 +149,19 @@ object MemoryEntryParser {
         index: Int,
         date: String?,
     ): MemoryEntry {
-        val safeTitle = title.trim().ifEmpty { "（无标题）" }
+        // [T-memory-structured-write] Optional prefixes written by
+        // memory_write. They stay in the body (so the raw daily log remains
+        // self-describing) but also feed the index's title/tag signals.
+        val summary = body.lines()
+            .firstOrNull { it.startsWith("Summary:") }
+            ?.removePrefix("Summary:")
+            ?.trim()
+            .orEmpty()
+        val explicitTags = body.lines()
+            .filter { it.startsWith("Tags:") }
+            .flatMap { MemoryTagger.canonicalize(it.removePrefix("Tags:")) }
+            .toSet()
+        val safeTitle = title.trim().ifEmpty { summary.take(80) }.ifEmpty { "（无标题）" }
         val safeBody = body.trim().take(MemoryIndexConfig.MAX_ENTRY_TEXT_CHARS)
         val full = "$safeTitle\n$safeBody"
         val tokens = MemoryTokenizer.tokenize(full)
@@ -171,7 +185,7 @@ object MemoryEntryParser {
             tokens = tokens,
             tokenSet = tokens.toHashSet(),
             tf = tf,
-            tags = MemoryTagger.tagsFor(full),
+            tags = MemoryTagger.tagsFor(full) + explicitTags,
             recency = recencyFor(kind, date),
             importance = importanceFor(kind),
         )

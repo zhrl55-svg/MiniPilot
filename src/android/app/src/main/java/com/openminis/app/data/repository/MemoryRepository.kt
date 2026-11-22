@@ -7,6 +7,7 @@ import com.openminis.app.data.repository.memory.MemoryIndexStatus
 import com.openminis.app.data.repository.memory.MemoryScope
 import com.openminis.app.data.repository.memory.MemorySearchFormatter
 import com.openminis.app.data.repository.memory.MemorySearchResult
+import com.openminis.app.data.repository.memory.MemoryTagger
 import com.openminis.app.logging.AppLogger
 import java.io.File
 import java.text.SimpleDateFormat
@@ -88,7 +89,11 @@ class MemoryRepository(private val memoryDir: File) {
      * New entries are prepended (newest first).
      * Returns a success/error message string.
      */
-    fun writeMemory(content: String): String {
+    fun writeMemory(
+        content: String,
+        summary: String = "",
+        tags: String = "",
+    ): String {
         if (content.isBlank()) return "Error: Missing required 'content' parameter"
 
         val dateFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -97,7 +102,24 @@ class MemoryRepository(private val memoryDir: File) {
 
         val timeFmt = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
         val timestamp = timeFmt.format(Date())
-        val entry = "<!-- $timestamp -->\n$content\n\n"
+        // [T-memory-structured-write] Optional, single-line metadata. Kept as
+        // plain prefixed lines so the file stays human-readable and backups
+        // keep working; MemoryEntryParser turns them into explicit tags/title
+        // signals. Old entries without these lines are unchanged.
+        // Tags are normalised to the closed vocabulary at WRITE time, so the
+        // file never accumulates words no future query can produce. Unknown
+        // tags are dropped rather than stored; an all-unknown list writes no
+        // Tags line at all.
+        val canonicalTags = MemoryTagger.canonicalize(tags).sorted()
+        val meta = buildString {
+            if (summary.isNotBlank()) {
+                append("Summary: ").append(summary.replace('\n', ' ').trim().take(120)).append('\n')
+            }
+            if (canonicalTags.isNotEmpty()) {
+                append("Tags: ").append(canonicalTags.joinToString(", ")).append('\n')
+            }
+        }
+        val entry = "<!-- $timestamp -->\n$meta$content\n\n"
 
         val existing = if (file.exists()) file.readText() else ""
         val newContent = entry + existing
@@ -629,7 +651,7 @@ class MemoryRepository(private val memoryDir: File) {
                 val bodyStart = match.range.last + 1
                 val entryEnd = matches.getOrNull(i + 1)?.range?.first ?: content.length
                 val body = content.substring(bodyStart, entryEnd)
-                if (body.trim() != trimmedTarget) continue
+                if (bodyWithoutMeta(body) != trimmedTarget) continue
 
                 val newContent = content.removeRange(match.range.first, entryEnd)
                 return try {
@@ -669,11 +691,19 @@ class MemoryRepository(private val memoryDir: File) {
                 val bodyStart = match.range.last + 1
                 val entryEnd = matches.getOrNull(i + 1)?.range?.first ?: content.length
                 val body = content.substring(bodyStart, entryEnd)
-                if (body.trim() != trimmedOld) continue
+                if (bodyWithoutMeta(body) != trimmedOld) continue
 
+                // Keep the structured metadata prefix attached to the entry;
+                // the undo/edit sheet only ever sees the human-written body.
+                val metaPrefix = body.lines().takeWhile(MemoryTagger::isMetaLine)
+                    .joinToString("\n")
                 // iOS replaces with `trimmed + "\n\n"` so the on-disk
                 // separator between entries stays uniform.
-                val replacement = "$trimmedNew\n\n"
+                val replacement = if (metaPrefix.isEmpty()) {
+                    "$trimmedNew\n\n"
+                } else {
+                    "$metaPrefix\n$trimmedNew\n\n"
+                }
                 val newFileContent = content.replaceRange(bodyStart, entryEnd, replacement)
                 return try {
                     file.writeText(newFileContent)
@@ -711,6 +741,10 @@ class MemoryRepository(private val memoryDir: File) {
             ?.take(100)
             ?: ""
     }
+
+    /** Strip the optional structured-write prefix before matching a body. */
+    private fun bodyWithoutMeta(body: String): String =
+        body.lines().filterNot(MemoryTagger::isMetaLine).joinToString("\n").trim()
 
     private fun mergeRanges(ranges: List<IntRange>): List<IntRange> {
         if (ranges.isEmpty()) return emptyList()

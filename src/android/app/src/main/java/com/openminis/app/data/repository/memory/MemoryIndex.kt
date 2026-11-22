@@ -104,13 +104,21 @@ class MemoryIndex(val entries: List<MemoryEntry>) {
             // entries. Require at least one real match signal.
             if (rawBm25 <= 0.0 && jaccard <= 0.0 && entity <= 0.0) continue
 
-            val score = MemoryIndexConfig.W_BM25 * bm25 +
+            val lexical = MemoryIndexConfig.W_BM25 * bm25 +
                 MemoryIndexConfig.W_JACCARD * jaccard +
                 MemoryIndexConfig.W_ENTITY * entity +
                 MemoryIndexConfig.W_TITLE * titleOverlap +
                 MemoryIndexConfig.W_HEADING * headingOverlap +
                 MemoryIndexConfig.W_RECENCY * entry.recency +
                 MemoryIndexConfig.W_IMPORTANCE * entry.importance
+
+            // [T-memory-authority-gain] Scale the evidence by source authority
+            // instead of adding a flat bonus: GLOBAL/USER outrank a daily note
+            // at comparable lexical strength, but a weak match gains little and
+            // a zero match gains nothing (the gate above already dropped those).
+            val score = lexical * (
+                1.0 + MemoryIndexConfig.AUTHORITY_GAIN * (entry.importance - 1.0)
+                )
             ranked.add(MemoryHit(score, entry, bm25, jaccard, entity))
         }
 
