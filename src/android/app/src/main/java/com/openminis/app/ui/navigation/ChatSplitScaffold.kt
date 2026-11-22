@@ -442,31 +442,6 @@ fun ChatSplitScaffold(
             ?.takeIf { it.pane == ListDetailPaneScaffoldRole.Detail }
             ?.contentKey
 
-        // [T-wake-current-chat] Publish the chat this pane is ACTUALLY showing
-        // to the wake pipeline. The MainActivity hook only watches the NavHost
-        // route, and switching chats here never changes that route: the pane
-        // navigator owns list-vs-detail. So after the first in-pane switch the
-        // tracker still named the chat the route was created for, and a spoken
-        // command was appended to a conversation the user had already left
-        // (observed 2026-11-22: viewing 6443d25e, wake turned up in 5ae83322).
-        //
-        // currentDestination.contentKey is the single source of truth: it is
-        // what the detail pane renders, it changes on every in-pane switch,
-        // and it goes back to null via the pane navigator's own back handling
-        // (which also never reaches MainActivity). `rememberPersistedId`, not
-        // `resolvePersistedId`, because a draft that gets promoted on its
-        // first send is aliased rather than re-keyed — without subscribing to
-        // the alias generation the published id would stay `__new__…` forever.
-        val visibleSessionId = if (currentSessionId != null) {
-            com.openminis.app.ui.chat.ChatViewModelStore
-                .rememberPersistedId(currentSessionId)
-        } else {
-            null
-        }
-        LaunchedEffect(visibleSessionId) {
-            publishVisibleChatSession(visibleSessionId)
-        }
-
         // [T-android-new-chat-shortcut] Open a fresh draft in the detail pane.
         // Hoisted out of the detailPane call below so the keyboard shortcut and
         // the "New Chat" menu item cannot drift into doing different things.
@@ -915,33 +890,6 @@ fun newDraftSessionId(): String = "__new__${UUID.randomUUID()}"
  * database row yet.
  */
 fun isDraftSessionId(id: String?): Boolean = id?.startsWith("__new__") == true
-
-/**
- * [T-wake-current-chat] Publish the chat the list/detail pair is rendering to
- * [com.openminis.app.service.SessionActivityTracker], which
- * [com.openminis.app.speech.wake.WakeConversation] reads to decide where a
- * spoken command lands.
- *
- * The pane's `contentKey` is the single source of truth ("UI 显示哪个会话，量
- * 就是哪个"): it is what the detail pane draws, it changes on every in-pane
- * switch, and it becomes null when the user backs out to the list — none of
- * which the NavHost route (the MainActivity fallback) ever sees.
- *
- * A still-unpromoted draft stays `__new__…` here on purpose. It is a usable
- * target: the send that follows promotes it, and both WakeConversation and the
- * next alias-generation recomposition resolve it to the persisted id.
- *
- * @return the id actually published, for tests.
- */
-internal fun publishVisibleChatSession(
-    paneSessionId: String?,
-    resolve: (String) -> String =
-        com.openminis.app.ui.chat.ChatViewModelStore::resolvePersistedId,
-): String? {
-    val resolved = paneSessionId?.let(resolve)
-    com.openminis.app.service.SessionActivityTracker.setVisibleChatSession(resolved)
-    return resolved
-}
 
 /**
  * [T-android-tablet-split] Route-level wiring for [ChatSplitScaffold].
