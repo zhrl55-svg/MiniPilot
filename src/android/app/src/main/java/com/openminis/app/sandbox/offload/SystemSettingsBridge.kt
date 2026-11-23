@@ -14,8 +14,8 @@ import com.openminis.app.offload.ShizukuManager
  * Historically every in-app "change a system setting" path went through
  * Shizuku (`settings put ...`). When the Shizuku user service was stopped the
  * whole capability vanished, and callers that only inspected the process exit
- * code reported success while nothing had actually changed — that was the
- * 2026-11-23 power-save incident (readback empty, still reported success).
+ * code reported success while nothing had actually changed — the 2026-11-23
+ * power-save incident (readback empty, still reported success).
  *
  * This bridge adds a second tier and verifies every write:
  *
@@ -27,12 +27,17 @@ import com.openminis.app.offload.ShizukuManager
  *                        no Shizuku and no accessibility service.
  *
  * A write is only reported as [WriteResult.ok] when the stored value really
- * equals the requested value after a readback. An empty or mismatched readback
- * is an error, never a silent success.
+ * equals the requested value after a readback. The readback is retried a few
+ * times (settings propagation is asynchronous), and an empty or mismatched
+ * value after the retries is an error, never a silent success.
  */
 object SystemSettingsBridge {
 
     private const val TAG = "SystemSettingsBridge"
+
+    /** Readback polls before declaring a write failed (settings are async). */
+    private const val READBACK_ATTEMPTS = 3
+    private const val READBACK_INTERVAL_MS = 150L
 
     private val NAMESPACES = setOf("global", "secure", "system")
 
@@ -62,8 +67,7 @@ object SystemSettingsBridge {
      */
     fun read(context: Context, ns: String, key: String): ReadResult {
         if (ShizukuManager.isReady()) {
-            val r = ShizukuManager.runProcess(arrayOf("settings", "get", ns, key))
-            if (r.exitCode == 0) return ReadResult(r.stdout.trim(), Backend.SHIZUKU)
+            shellGet(ns, key)?.let { return ReadResult(it, Backend.SHIZUKU) }
         }
         return ReadResult(getDirect(context, ns, key), Backend.DIRECT)
     }
@@ -80,8 +84,7 @@ object SystemSettingsBridge {
         if (ShizukuManager.isReady()) {
             val put = ShizukuManager.runProcess(arrayOf("settings", "put", ns, key, wanted))
             if (put.exitCode == 0) {
-                val got = ShizukuManager.runProcess(arrayOf("settings", "get", ns, key))
-                val actual = if (got.exitCode == 0) got.stdout.trim() else null
+                val actual = readbackUntil(wanted) { shellGet(ns, key) }
                 if (actual == wanted) return WriteResult(true, Backend.SHIZUKU, wanted, actual)
                 AppLogger.info(TAG, "shizuku write $ns/$key readback='$actual' != '$wanted'; trying direct")
             } else {
@@ -99,7 +102,7 @@ object SystemSettingsBridge {
                     "WRITE_SECURE_SETTINGS denied for $ns/$key: ${se.message}",
                 )
             }
-            val actual = getDirect(context, ns, key)
+            val actual = readbackUntil(wanted) { getDirect(context, ns, key) }
             val ok = putOk && actual == wanted
             return WriteResult(
                 ok, Backend.DIRECT, wanted, actual,
@@ -121,8 +124,7 @@ object SystemSettingsBridge {
         if (ShizukuManager.isReady()) {
             val r = ShizukuManager.runProcess(arrayOf("settings", "delete", ns, key))
             if (r.exitCode == 0) {
-                val got = ShizukuManager.runProcess(arrayOf("settings", "get", ns, key))
-                val actual = if (got.exitCode == 0) got.stdout.trim() else null
+                val actual = readbackUntil(null) { shellGet(ns, key) }
                 if (actual.isNullOrEmpty() || actual == "null") {
                     return WriteResult(true, Backend.SHIZUKU, "", actual)
                 }
@@ -135,7 +137,7 @@ object SystemSettingsBridge {
             } catch (se: SecurityException) {
                 return WriteResult(false, Backend.DIRECT, "", null, "WRITE_SECURE_SETTINGS denied: ${se.message}")
             }
-            val actual = getDirect(context, ns, key)
+            val actual = readbackUntil(null) { getDirect(context, ns, key) }
             val cleared = actual.isNullOrEmpty() || actual == "null"
             return WriteResult(
                 ok && cleared, Backend.DIRECT, "", actual,
@@ -189,6 +191,34 @@ object SystemSettingsBridge {
         } catch (_: Throwable) {
             null
         }
+    }
+
+    private fun shellGet(ns: String, key: String): String? {
+        val g = ShizukuManager.runProcess(arrayOf("settings", "get", ns, key))
+        return if (g.exitCode == 0) g.stdout.trim() else null
+    }
+
+    /**
+     * Poll [reader] until it returns [expected] (or [READBACK_ATTEMPTS] runs
+     * out) and return the last observed value. Settings writes propagate
+     * asynchronously, so a single immediate read can be a false failure.
+     */
+    private fun readbackUntil(expected: String?, reader: () -> String?): String? {
+        var last: String? = null
+        var i = 0
+        while (i < READBACK_ATTEMPTS) {
+            last = reader()
+            if (last == expected) return last
+            if (i < READBACK_ATTEMPTS - 1) {
+                try {
+                    Thread.sleep(READBACK_INTERVAL_MS)
+                } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+            i++
+        }
+        return last
     }
 
     private fun requireValid(ns: String, key: String) {

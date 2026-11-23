@@ -499,7 +499,7 @@ class LocalCapabilityExecutor(private val context: Context) {
         // when available, otherwise the WRITE_SECURE_SETTINGS direct write). This
         // works even when Shizuku is stopped — which the old open-the-page fallback
         // did not — and a blank/mismatched readback is an error, not a success.
-        if (target in setOf("power_save", "battery_saver", "low_power", "performance")) {
+        if (target in setOf("power_save", "battery_saver", "low_power", "performance", "battery")) {
             val on = when (value.trim().lowercase()) {
                 "on", "true", "1", "enable", "enabled", "开", "开启", "打开", "省电", "省电模式", "节能" -> true
                 "off", "false", "0", "disable", "disabled", "关", "关闭", "关掉", "性能", "性能模式" -> false
