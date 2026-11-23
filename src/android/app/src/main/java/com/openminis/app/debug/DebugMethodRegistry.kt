@@ -100,7 +100,7 @@ object DebugMethodRegistry {
         ),
         MethodSpec(
             name = "debug.systemSettings.write",
-            description = "[T-android-settings-direct-write] DEBUG-only: write a system setting (global/secure/system) with readback verification. Prefers Shizuku, falls back to a direct WRITE_SECURE_SETTINGS write when Shizuku is stopped. Returns {ok, backend, namespace, key, expected, actual}; a blank/mismatched readback is reported as ok=false (never a silent success).",
+            description = "[T-android-settings-direct-write] DEBUG-only: write a system setting (global/secure/system) with readback verification. Tiers: Shizuku -> direct WRITE_SECURE_SETTINGS -> detached shell helper (for non-public Settings.System keys when Shizuku is stopped). Returns {ok, backend, namespace, key, expected, actual}; a blank/mismatched readback is reported as ok=false (never a silent success).",
             params = listOf(
                 ParamSpec("namespace", "string", required = true, description = "global | secure | system"),
                 ParamSpec("key", "string", required = true, description = "setting key, e.g. low_power"),
@@ -118,6 +118,15 @@ object DebugMethodRegistry {
             ),
             returns = "{namespace, key, value, backend}",
             example = ex("namespace" to "global", "key" to "low_power"),
+        ),
+        MethodSpec(
+            name = "debug.systemSettings.helper",
+            description = "[T-android-settings-shell-helper] DEBUG-only: manage the detached uid=shell settings helper (the tier that writes non-public Settings.System keys while the Shizuku server is stopped). action=status|seed|stop. seed requires Shizuku READY; the helper then survives Shizuku being stopped until the device reboots.",
+            params = listOf(
+                ParamSpec("action", "string", required = false, description = "status (default) | seed | stop"),
+            ),
+            returns = "{alive, pid, dir, shizuku, lastError, ok?, stopped?}",
+            example = ex("action" to "status"),
         ),
         MethodSpec(
             name = "debug.modelUse.exec",

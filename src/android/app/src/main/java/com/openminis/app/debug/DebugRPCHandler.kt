@@ -240,6 +240,15 @@ class DebugRPCHandler(private val context: Context) {
                 }
                 handleSystemSettingsGet(params)
             }
+            // [T-android-settings-shell-helper] Inspect / seed / stop the detached
+            // uid=shell settings helper that carries non-public Settings.System
+            // writes when the Shizuku server is stopped.
+            "debug.systemSettings.helper" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleSystemSettingsHelper(params)
+            }
             // [T-multi-select-share] Share Chat picker / export, served by the
             // ChatScreen showing the session (iOS parity, DEBUG only).
             "debug.chatShare.openPicker" -> {
@@ -1352,6 +1361,39 @@ class DebugRPCHandler(private val context: Context) {
             put("value", r.value ?: JSONObject.NULL)
             put("backend", r.backend.name.lowercase())
         }
+    }
+
+    /**
+     * [T-android-settings-shell-helper] status | seed | stop for the detached
+     * shell helper. `seed` needs Shizuku READY (the spawn itself must run as
+     * shell uid); `stop` works without it because the app owns the token file.
+     */
+    private fun handleSystemSettingsHelper(params: JSONObject): JSONObject {
+        val helper = com.openminis.app.sandbox.offload.ShellSettingsHelper
+        val shizuku = com.openminis.app.offload.ShizukuManager.snapshot.value.state.name
+        return when (val action = params.optString("action", "status")) {
+            "status" -> helperJson(helper.status(context), shizuku)
+            "seed" -> {
+                val ok = helper.ensureSeeded(context)
+                helperJson(helper.status(context), shizuku).put("ok", ok)
+            }
+            "stop" -> {
+                val stopped = helper.stop(context)
+                helperJson(helper.status(context), shizuku).put("stopped", stopped)
+            }
+            else -> throw RPCException(-32602, "action must be status|seed|stop (got '$action')")
+        }
+    }
+
+    private fun helperJson(
+        s: com.openminis.app.sandbox.offload.ShellSettingsHelper.Status,
+        shizuku: String,
+    ): JSONObject = JSONObject().apply {
+        put("alive", s.alive)
+        put("pid", s.pid ?: JSONObject.NULL)
+        put("dir", s.dir ?: JSONObject.NULL)
+        put("shizuku", shizuku)
+        put("lastError", s.lastError ?: JSONObject.NULL)
     }
 
     /**
