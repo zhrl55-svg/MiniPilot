@@ -106,4 +106,13 @@ news_search 把「搜索一下今天的新闻」整句作为 query，结果退�
   - 单测：ToolCallArgsTest 8、ToolLoopDetectorNonPollTest 3、ToolLoopDetectorTest 22、AnthropicProviderTest 32、OpenAIProviderTest 25、ChatCompletionsToolPairingTest 19 全绿
   - v58 已装机（10:02:08），沙箱与一次真实工具调用（shell_execute → TOOLCALL_OK）冒烟通过
 - **R3 已实现并验证**：`shell_execute` 描述写清沙箱边界（无 logcat/dumpsys/getprop/am/pm/run-as）、`minis-debug --help` + `discover` 列全方法/参数名、交互式提示会挂住；提交 `02ab2fc` 已推送并装机（10:06:05）。真机验证：模型能逐条复述新描述。
-- 待办：R4/R5 规则 A/B、R6 取证
+- **R4 规则候选：A/B 三轮均 no-diff → 不写入 rules.md。** 探针分别试了子 agent 派活、
+  强制贴出派活原文、写派活单到临时文件；baseline 与 overlay 都只给「问题/需求/目标/验收」，
+  不指定文件与改法——现有 `pc-claude-dev` 技能已经把这条行为固化，规则没有增量。
+- **R5 已修复（源码，提交 61a1ebd + 2b06ad7 + 8b7d0c4，已推送并装机）**：
+  真机复现发现根因不在模型——本地快路径 `SlotExtractor` 把整句塞进 query，
+  `normalizeQuery` 剥词后残留「的」；另外 Google News 标题后缀与 `<source>` 并存导致
+  来源/摘要各显示两次（语音读两遍）。修复：助词清理+空查询回落「最新新闻」；
+  标题后缀与来源一致时剥离；摘要重复时丢弃；标题头不再二次拼「新闻」。
+  真机复测：`搜索一下今天的新闻` → 「最新新闻，范围：最近24小时」，来源与摘要各一次。
+- 待办：R6 取证
