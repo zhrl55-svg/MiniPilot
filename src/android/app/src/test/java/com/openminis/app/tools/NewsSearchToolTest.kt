@@ -46,6 +46,22 @@ class NewsSearchToolTest {
         assertEquals("英伟达", NewsSearchTool.normalizeQuery("英伟达最新消息"))
     }
 
+    /**
+     * [T-news-query-keywords] The field failure was "搜索一下今天的新闻": after
+     * stripping the command and the topic word, a bare "的" survived and became
+     * the query, so the feed answered 「“的”的新闻」. A topic-less request must
+     * collapse to the latest-headlines default instead.
+     */
+    @Test
+    fun `query normalization never leaves a bare particle`() {
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("搜索一下今天的新闻"))
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("播报一下新闻"))
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("今天的新闻"))
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("查一下最近的消息"))
+        assertEquals("科技新闻", NewsSearchTool.normalizeQuery("搜索一下今天的科技新闻"))
+        assertEquals("财经新闻", NewsSearchTool.normalizeQuery("今天的有啥财经新闻"))
+    }
+
     @Test
     fun `rss parser extracts titles sources and plain summaries`() {
         val items = NewsSearchTool.parseRss(rssFixture)

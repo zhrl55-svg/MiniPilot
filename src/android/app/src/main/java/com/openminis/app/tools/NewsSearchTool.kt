@@ -389,6 +389,14 @@ object NewsSearchTool {
         q = q.replace(Regex("^(?:今天|今日|现在|目前|刚刚|这几天|这两天)\\s*"), "")
         q = q.trim(' ', '，', ',', '。', '.', '？', '?', '！', '!', '：', ':', '；', ';')
         q = q.removeSuffix("吧").removeSuffix("吗").removeSuffix("呢").trim()
+        // [T-news-query-keywords] Removing the topic word used to leave a bare
+        // particle behind: "搜索一下今天的新闻" -> "今天的新闻" -> "今天的 " ->
+        // "的", which then became the query "的" and the feed answered
+        // 「“的”的新闻」 (self-improve card 2026-11-22-0c91b94d-1). Drop
+        // leading/dangling particles so an empty topic falls back to the
+        // latest-headlines default instead of searching for a stop word.
+        q = q.replace(Regex("^[的了啊呀哦呢嘛着过]+"), "").trim()
+        q = q.replace(Regex("\\s[的了啊呀哦呢嘛着过]\\s"), " ").trim()
 
         if (q.isBlank()) {
             return when {
