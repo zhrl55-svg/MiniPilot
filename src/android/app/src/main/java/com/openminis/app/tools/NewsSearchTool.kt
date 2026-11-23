@@ -67,10 +67,16 @@ object NewsSearchTool {
         description = "Search recent news headlines with Google News RSS. Returns up to 5 " +
             "items with title, source, publish time and a short summary. Prefer this for " +
             "\"latest news\", tech/finance/entertainment headlines and \"what happened today\" " +
-            "questions. Use browser_use when the user needs the full article text.",
+            "questions. Use browser_use when the user needs the full article text. " +
+            // [T-news-query-keywords] Rule 2026-11-22-0c91b94d-1: the model passed
+            // the user's whole sentence as `query`, degrading the search to
+            // meaningless keywords. State the contract on the tool itself.
+            "`query` takes a topic or 2-4 keywords — never the user's sentence or an " +
+            "instruction such as \"搜索一下今天的新闻\"; for a generic \"today's news\" " +
+            "request leave `query` empty (empty means latest headlines).",
         parameters = mapOf(
             "tool_title" to AgentToolParam("string", "A concise 5-10 word summary of what this tool call does, shown to the user. Use the same language as the user."),
-            "query" to AgentToolParam("string", "News topic, e.g. \"人工智能\", \"财经\", \"英伟达\". Empty means latest headlines."),
+            "query" to AgentToolParam("string", "News topic or 2-4 keywords, e.g. \"人工智能\", \"财经\", \"英伟达\". Pass only the topic — not the user's sentence and not an instruction. Empty means latest headlines (use it for \"新闻\"/\"今天有什么新闻\")."),
             "range" to AgentToolParam(
                 "string",
                 "\"auto\" (default): last 24h, widened to 7 days when fewer than `limit` items. " +
