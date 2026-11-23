@@ -89,6 +89,7 @@ import com.openminis.app.BuildConfig
 import com.openminis.app.R
 import com.openminis.app.data.model.MiniMaxVoices
 import com.openminis.app.data.repository.ProviderRepository
+import com.openminis.app.speech.KokoroTtsEngine
 import com.openminis.app.speech.VoiceOutputState
 import com.openminis.app.ui.components.openExternalUrl
 import com.openminis.app.i18n.uppercaseForDisplay
@@ -146,6 +147,12 @@ fun SettingsScreen(
         providerRepository.resolveVoiceOutputChoice()
     }
     val cloudModelLabel = voiceSynthesisSummary(voiceChoice.entry)
+    // [T-kokoro-voice] The local tier sits between cloud and system, so the
+    // summary must name it or the row would claim "System voice" while Kokoro
+    // is what actually speaks.
+    val kokoroActive = voiceChoice.entry == null &&
+        KokoroTtsEngine.isEnabled(context) &&
+        KokoroTtsEngine.isReady(context)
     // MiniMax's voice is a separate axis from its model, so name it here too;
     // otherwise the row would say "MiniMax Speech 2.8 HD" while twenty
     // different voices could be in effect.
@@ -161,6 +168,11 @@ fun SettingsScreen(
     val voiceSubtitle = if (cloudModelLabel != null) {
         val label = listOfNotNull(cloudModelLabel, cloudVoiceLabel).joinToString(" · ")
         stringResource(R.string.settings_voice_synthesis_current, label)
+    } else if (kokoroActive) {
+        stringResource(
+            R.string.settings_voice_synthesis_current,
+            stringResource(R.string.kokoro_local_label),
+        )
     } else {
         val label = listOfNotNull(systemVoiceText, systemVoiceLabel).joinToString(" · ")
         stringResource(R.string.settings_voice_synthesis_current, label)

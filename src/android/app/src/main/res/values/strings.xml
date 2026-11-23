@@ -1438,6 +1438,26 @@
     <string name="voice_synthesis_system_footer">Uses this device’s built-in text-to-speech engine. Works offline.</string>
     <string name="voice_synthesis_system_label">System voice</string>
     <string name="voice_synthesis_auto">Automatic (match text language)</string>
+
+    <!-- [T-kokoro-voice] Optional on-device Kokoro TTS. -->
+    <string name="voice_synthesis_local_header">On-device voice (Kokoro)</string>
+    <string name="voice_synthesis_local_footer">Offline, model-backed Chinese and English voices. Requires a one-time download of about 281 MB. Falls back to the system voice while the model is missing.</string>
+    <string name="voice_synthesis_local_enable">Use Kokoro on-device voice</string>
+    <string name="voice_synthesis_local_enable_desc">Offline · model-backed · same voice on every device</string>
+    <string name="voice_synthesis_local_download">Download voice model (about 281 MB)</string>
+    <string name="voice_synthesis_local_downloading">Downloading voice model… %1$d%%</string>
+    <string name="voice_synthesis_local_ready">Voice model ready (%1$d MB)</string>
+    <string name="voice_synthesis_local_delete">Delete the downloaded voice model</string>
+    <string name="voice_synthesis_local_delete_title">Delete voice model?</string>
+    <string name="voice_synthesis_local_delete_message">The 281 MB model will be removed and read-aloud will fall back to the system voice. You can download it again later.</string>
+    <string name="voice_synthesis_local_delete_confirm">Delete</string>
+    <string name="voice_synthesis_local_delete_cancel">Cancel</string>
+    <string name="voice_synthesis_local_failed">Download failed: %1$s. Tap to retry.</string>
+    <string name="voice_synthesis_local_zh_voices">Chinese voices</string>
+    <string name="voice_synthesis_local_en_voices">English voices</string>
+    <string name="voice_synthesis_local_need_download">Download the model to choose a voice.</string>
+    <string name="kokoro_local_label">Kokoro (on-device)</string>
+
     <string name="voice_synthesis_auto_voice_note">The engine picks a voice that matches the text language.</string>
     <string name="voice_synthesis_voice_header">Voice</string>
     <string name="voice_synthesis_loading">Loading system voices…</string>

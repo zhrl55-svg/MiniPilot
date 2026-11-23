@@ -15,6 +15,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -176,7 +177,13 @@ class ReadAloudPlayer(
         VoiceOutputState.init(appContext)
         if (registerWithCapsule) VoiceOutputState.registerPlayer(this)
         worker = scope.launch {
-            for (text in queue) {
+            while (true) {
+                val first = try {
+                    queue.receive()
+                } catch (e: ClosedReceiveChannelException) {
+                    break
+                }
+                val text = drainLocalBatch(first)
                 // [T-tts-barge-in] Publish what is about to be audible so the
                 // wake service's idle barge-in can reject its own echo when
                 // matching a spoken stop command.
@@ -211,6 +218,13 @@ class ReadAloudPlayer(
         // speakViaSystem picks the value up from the next sentence.
         // [T-readaloud-volume-boost] The part above 100 % is an effect on the
         // audio session, so it follows the thumb live on both paths.
+        // [T-kokoro-voice] Warm the optional local engine off the critical
+        // path so the first reply does not pay model/GPU/G2P setup.
+        scope.launch(Dispatchers.IO) {
+            if (KokoroTtsEngine.isEnabled(appContext) && KokoroTtsEngine.isReady(appContext)) {
+                KokoroTtsEngine.warmUp(appContext)
+            }
+        }
         scope.launch {
             VoiceOutputState.volume.collect { v ->
                 val gain = ReadAloudBoost.linearGain(v)
@@ -367,6 +381,38 @@ class ReadAloudPlayer(
     @Volatile
     private var blockingStop = false
 
+    /**
+     * [T-kokoro-batch] Join the sentences that are already queued into one
+     * local-Kokoro utterance. Each MediaPipe stream carries a large fixed
+     * startup on this device, so one call for the whole queued burst removes
+     * the per-sentence silence; provider TTS keeps sentence-sized requests
+     * because it streams internally.
+     */
+    private fun drainLocalBatch(first: String): String {
+        val localKokoro = runCatching {
+            KokoroTtsEngine.isEnabled(appContext) && KokoroTtsEngine.isReady(appContext)
+        }.getOrDefault(false)
+        if (!localKokoro) return first
+        val providerEntry = runCatching {
+            (appContext as? MinisApp)?.providerRepository?.resolveVoiceOutputEntry()
+        }.getOrNull()
+        if (providerEntry != null) return first
+        val batch = StringBuilder(first)
+        var drained = 0
+        while (batch.length < LOCAL_TTS_BATCH_CHARS) {
+            val next = queue.tryReceive().getOrNull() ?: break
+            val last = batch.lastOrNull()
+            val nextFirst = next.firstOrNull()
+            val cjk = (last != null && last in '一'..'鿿') ||
+                (nextFirst != null && nextFirst in '一'..'鿿')
+            if (!cjk) batch.append(' ')
+            batch.append(next)
+            drained++
+        }
+        if (drained > 0) pending.addAndGet(-drained)
+        return batch.toString()
+    }
+
     private fun enqueue(raw: String) {
         // [T-android-tts-capsule] Temporary mute suppresses NEW utterances too
         // (not only current playback) — matching iOS, where `canPlay =
@@ -448,6 +494,7 @@ class ReadAloudPlayer(
         playbackFinisher?.invoke()
         releasePlayer()
         system.stop()
+        KokoroTtsEngine.stop()
         focus.releaseNow(this)
         pending.set(0)
         clearSpeakingState()
@@ -482,6 +529,10 @@ class ReadAloudPlayer(
         playbackFinisher?.invoke()
         releasePlayer()
         system.stop()
+        // [T-kokoro-voice] The local engine's utterance is not owned by
+        // `system` or `player`; stop it explicitly or the capsule's stop
+        // button would leave Kokoro talking.
+        KokoroTtsEngine.stop()
         // [T-readaloud-focus] Stop / mute / disable / dispose: no grace.
         focus.releaseNow(this)
         pending.set(0)
@@ -553,6 +604,31 @@ class ReadAloudPlayer(
                     false
                 }
             if (ok) return true
+        }
+        // [T-kokoro-voice] Optional on-device tier between cloud and the OEM
+        // system engine. Only when the user enabled it AND the 295 MB bundle
+        // is on disk; any failure falls through to the system engine for this
+        // sentence, exactly like a provider blip does.
+        if (KokoroTtsEngine.isEnabled(appContext) && KokoroTtsEngine.isReady(appContext)) {
+            if (ownsCapsule()) {
+                VoiceOutputState.activeModelLabel.value =
+                    appContext.getString(R.string.kokoro_local_label)
+            }
+            val local = runCatching { KokoroTtsEngine.speak(appContext, text) }
+                .getOrElse {
+                    AppLogger.error(TAG, "local Kokoro threw, falling back to system: $it")
+                    null
+                }
+            if (local?.ok == true) return true
+            // [T-kokoro-voice] The user pressed stop while Kokoro was
+            // synthesizing: silence is the requested outcome, so do NOT fall
+            // through to the system engine and start talking again.
+            if (local?.cancelled == true) return true
+            AppLogger.error(
+                TAG,
+                "local Kokoro produced no audio (${local?.error ?: "exception"}), " +
+                    "falling back to system engine",
+            )
         }
         if (ownsCapsule()) VoiceOutputState.activeModelLabel.value = null // system engine
         if (!speakViaSystem(text)) {
@@ -852,5 +928,12 @@ class ReadAloudPlayer(
     companion object {
         private const val TAG = "ReadAloud"
         private const val POLL_MS = 80L
+        /**
+         * [T-kokoro-batch] Upper bound for one local-Kokoro utterance. Opening
+         * a MediaPipe TTS stream is expensive on this device, so the sentences
+         * already queued are joined into one call; the engine then merges them
+         * into 110-char passes and streams audio while it plays.
+         */
+        private const val LOCAL_TTS_BATCH_CHARS = 300
     }
 }

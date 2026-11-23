@@ -1334,6 +1334,26 @@
     <string name="voice_synthesis_system_footer">使用手机内置的文字转语音引擎，可离线使用。</string>
     <string name="voice_synthesis_system_label">系统语音</string>
     <string name="voice_synthesis_auto">自动（跟随文本语言）</string>
+
+    <!-- [T-kokoro-voice] 可选本地 Kokoro 语音。 -->
+    <string name="voice_synthesis_local_header">本地离线音色（Kokoro）</string>
+    <string name="voice_synthesis_local_footer">离线、模型驱动的中英文音色，需一次性下载约 281 MB。模型缺失时自动回落系统语音。</string>
+    <string name="voice_synthesis_local_enable">使用 Kokoro 本地音色</string>
+    <string name="voice_synthesis_local_enable_desc">离线 · 模型驱动 · 各设备音色一致</string>
+    <string name="voice_synthesis_local_download">下载音色模型（约 281 MB）</string>
+    <string name="voice_synthesis_local_downloading">正在下载音色模型… %1$d%%</string>
+    <string name="voice_synthesis_local_ready">音色模型已就绪（%1$d MB）</string>
+    <string name="voice_synthesis_local_delete">删除已下载的音色模型</string>
+    <string name="voice_synthesis_local_delete_title">删除音色模型？</string>
+    <string name="voice_synthesis_local_delete_message">将删除 281 MB 的模型，朗读会回落到系统语音；之后可以重新下载。</string>
+    <string name="voice_synthesis_local_delete_confirm">删除</string>
+    <string name="voice_synthesis_local_delete_cancel">取消</string>
+    <string name="voice_synthesis_local_failed">下载失败：%1$s，点击重试</string>
+    <string name="voice_synthesis_local_zh_voices">中文音色</string>
+    <string name="voice_synthesis_local_en_voices">英文音色</string>
+    <string name="voice_synthesis_local_need_download">下载模型后即可选择音色。</string>
+    <string name="kokoro_local_label">Kokoro（本地）</string>
+
     <string name="voice_synthesis_auto_voice_note">跟随文本语言时，由引擎自动选择音色。</string>
     <string name="voice_synthesis_voice_header">音色</string>
     <string name="voice_synthesis_loading">正在读取系统音色…</string>

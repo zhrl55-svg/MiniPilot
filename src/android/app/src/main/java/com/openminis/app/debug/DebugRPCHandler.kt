@@ -302,6 +302,84 @@ class DebugRPCHandler(private val context: Context) {
                 handleMinisConfigExec(params)
             }
 
+            // DEV_TOOLS-only import of an adb-staged CPU bundle.
+            "debug.tts.kokoro.importModel" -> {
+                if (!BuildConfig.DEV_TOOLS) throw RPCException(-32601, "Method not found: $method")
+                val source = java.io.File(
+                    params.optString("path").takeIf { it.isNotBlank() }
+                        ?: "/data/local/tmp/kokoro/model.litertlm",
+                )
+                org.json.JSONObject().put(
+                    "ok",
+                    com.openminis.app.speech.KokoroTtsEngine.importModel(
+                        context,
+                        source,
+                        verify = !params.optBoolean("skipSha", false),
+                    ),
+                ).put("diag", com.openminis.app.speech.KokoroTtsEngine.diagnostics(context))
+            }
+            "debug.tts.kokoro.renderWav" -> {
+                if (!BuildConfig.DEV_TOOLS) throw RPCException(-32601, "Method not found: $method")
+                val text = params.optString("text")
+                if (text.isBlank()) throw RPCException(-32602, "text is required")
+                val voice = params.optString("voice").takeIf { it.isNotBlank() }
+                val dir = context.getExternalFilesDir(null) ?: context.filesDir
+                val out = java.io.File(
+                    dir,
+                    params.optString("name").takeIf { it.isNotBlank() } ?: "kokoro-last.wav",
+                )
+                com.openminis.app.speech.KokoroTtsEngine.renderWav(
+                    context,
+                    text,
+                    voice,
+                    out,
+                    useStream = params.optBoolean("stream", true),
+                )
+            }
+            // [T-kokoro-voice] Exercise the PRODUCTION engine + preferences,
+            // not the PoC. This is what ReadAloudPlayer calls.
+            "debug.tts.kokoro.engine" -> {
+                if (!BuildConfig.DEV_TOOLS) throw RPCException(-32601, "Method not found: $method")
+                if (params.has("enabled")) {
+                    com.openminis.app.speech.KokoroTtsEngine.setEnabled(
+                        context, params.optBoolean("enabled"),
+                    )
+                }
+                params.optString("zhVoice").takeIf { it.isNotBlank() }?.let {
+                    com.openminis.app.speech.KokoroTtsEngine.setZhVoice(context, it)
+                }
+                params.optString("enVoice").takeIf { it.isNotBlank() }?.let {
+                    com.openminis.app.speech.KokoroTtsEngine.setEnVoice(context, it)
+                }
+                com.openminis.app.speech.KokoroTtsEngine.refreshStatus(context)
+                val text = params.optString("text").takeIf { it.isNotBlank() }
+                if (text == null) {
+                    com.openminis.app.speech.KokoroTtsEngine.diagnostics(context)
+                } else {
+                    val voice = params.optString("voice").takeIf { it.isNotBlank() }
+                    val fresh = params.optBoolean("fresh", false)
+                    if (fresh) com.openminis.app.speech.KokoroTtsEngine.releaseEngine()
+                    val r = com.openminis.app.speech.KokoroTtsEngine.speak(
+                        context, text, voice,
+                        preferGpu = params.optBoolean("gpu", false),
+                        declick = params.optBoolean("declick", false),
+                        coalesce = params.optBoolean("coalesce", true),
+                    )
+                    if (fresh) com.openminis.app.speech.KokoroTtsEngine.releaseEngine()
+                    org.json.JSONObject()
+                        .put("ok", r.ok)
+                        .put("voice", r.voice)
+                        .put("audioDurationMs", r.audioDurationMs)
+                        .put("synthesisMs", r.synthesisMs)
+                        .put("timeToFirstAudioMs", r.timeToFirstAudioMs)
+                        .put("peak", r.peak)
+                        .put("clippedSamples", r.clippedSamples)
+                        .put("realtimeFactor", if (r.audioDurationMs > 0) r.synthesisMs / r.audioDurationMs else 0.0)
+                        .put("error", r.error)
+                        .put("diag", com.openminis.app.speech.KokoroTtsEngine.diagnostics(context))
+                }
+            }
+
             else -> throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
         }
     }

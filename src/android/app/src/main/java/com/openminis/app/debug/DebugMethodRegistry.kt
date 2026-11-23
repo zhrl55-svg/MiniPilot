@@ -40,7 +40,10 @@ object DebugMethodRegistry {
         buildList {
             addAll(BASE_METHODS)
             addAll(NetDebugMethods.specs)
-            if (BuildConfig.DEV_TOOLS) addAll(DEBUG_ONLY_METHODS)
+            if (BuildConfig.DEV_TOOLS) {
+                addAll(DEBUG_ONLY_METHODS)
+                addAll(KOKORO_METHODS)
+            }
         }
     }
 
@@ -187,6 +190,49 @@ object DebugMethodRegistry {
                 "subcommand" to "get",
                 "path" to "thinkingrules",
             ),
+        ),
+    )
+
+    /**
+     * Kokoro production-engine diagnostics, registered only in DEV_TOOLS
+     * builds.
+     */
+    private val KOKORO_METHODS: List<MethodSpec> = listOf(
+        MethodSpec(
+            name = "debug.tts.kokoro.importModel",
+            description = "Import an adb-staged CPU Kokoro bundle into the production model directory (SHA-256 verified). DEBUG only.",
+            params = listOf(
+                ParamSpec("path", "string", required = false, default = "/data/local/tmp/kokoro/model.litertlm", description = "Source file on the device."),
+            ),
+            returns = "{ok, diag}",
+            example = ex(),
+        ),
+        MethodSpec(
+            name = "debug.tts.kokoro.renderWav",
+            description = "[PoC] Render one sentence to a WAV in the app's external files dir without playing it, for audio-quality diagnostics. DEBUG only.",
+            params = listOf(
+                ParamSpec("text", "string", required = true, description = "Text to synthesize."),
+                ParamSpec("voice", "string", required = false, description = "Voice id."),
+                ParamSpec("name", "string", required = false, default = "kokoro-last.wav", description = "Output file name under the app's external files dir."),
+            ),
+            returns = "{ok, path, sampleRateHz, audioDurationMs, peak, clippedSamples}",
+            example = ex("text" to "你好，世界。", "name" to "kokoro-last.wav"),
+        ),
+        MethodSpec(
+            name = "debug.tts.kokoro.engine",
+            description = "Read or change the PRODUCTION Kokoro engine settings and optionally speak through ReadAloudPlayer's local tier (KokoroTtsEngine). DEBUG only.",
+            params = listOf(
+                ParamSpec("enabled", "bool", required = false, description = "Persist the Settings toggle."),
+                ParamSpec("zhVoice", "string", required = false, description = "Persist the Chinese voice id."),
+                ParamSpec("enVoice", "string", required = false, description = "Persist the English voice id."),
+                ParamSpec("text", "string", required = false, description = "When present, speak through KokoroTtsEngine and return timings."),
+                ParamSpec("voice", "string", required = false, description = "Explicit voice id; default picks by text language."),
+                ParamSpec("coalesce", "bool", required = false, default = true, description = "Gallery 110-char merge + join trim; A/B only."),
+                ParamSpec("gpu", "bool", required = false, default = false, description = "Use the GPU delegate (GPU bundle only)."),
+                ParamSpec("declick", "bool", required = false, default = false, description = "Interpolate adjacent-sample jump artifacts."),
+            ),
+            returns = "diagnostics, or {ok, voice, audioDurationMs, synthesisMs, realtimeFactor, error, diag}",
+            example = ex("enabled" to true, "text" to "你好，世界。"),
         ),
     )
 

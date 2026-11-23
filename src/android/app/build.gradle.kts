@@ -483,6 +483,12 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
 
+    // [T-kokoro-voice] MediaPipe TTS Task for the opt-in Kokoro-82M on-device
+    // voice (Settings › Speech synthesis). The AARs carry ~31 MB of arm64
+    // native .so, so this is a deliberate, permanent APK-size cost: the feature
+    // is shipped to every variant, not just DEV_TOOLS probes.
+    implementation("com.google.mediapipe:tasks-audio:1.2.3")
+
     // [T-music-player-top] Media3 ExoPlayer for the in-app music player.
     // 1.4.1 is the version already present in the Gradle cache; the player
     // streams the NetEase URLs the buntu proxy hands out.

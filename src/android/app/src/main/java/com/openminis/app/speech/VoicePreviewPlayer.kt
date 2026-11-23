@@ -39,6 +39,7 @@ class VoicePreviewPlayer(context: Context) {
     private var system: TextToSpeechManager? = null
     private var job: Job? = null
     private var player: MediaPlayer? = null
+    private var kokoroPreview = false
 
     /** Bumped by every stop/preview so a late synthesis cannot start audio. */
     private var generation = 0
@@ -113,6 +114,21 @@ class VoicePreviewPlayer(context: Context) {
         }
     }
 
+    /**
+     * [T-kokoro-voice] Audition a bundled Kokoro voice. Reuses the production
+     * engine (so a preview proves the same path read-aloud will take) and
+     * speaks the row's voice explicitly.
+     */
+    fun previewKokoro(voiceId: String, text: String) {
+        stopPlayback()
+        val gen = generation
+        kokoroPreview = true
+        job = scope.launch {
+            val result = KokoroTtsEngine.speak(appContext, text, voiceId)
+            if (gen == generation && !result.ok) notifyFailure()
+        }
+    }
+
     /** Stop whatever is previewing. Safe to call from any preview entry point. */
     fun stop() {
         stopPlayback()
@@ -131,6 +147,12 @@ class VoicePreviewPlayer(context: Context) {
         job = null
         releasePlayer()
         system?.stop()
+        if (kokoroPreview) {
+            kokoroPreview = false
+            // The production engine is process-wide; leaving this screen (or
+            // starting another preview) must silence the Kokoro row too.
+            KokoroTtsEngine.stop()
+        }
     }
 
     private suspend fun playBytes(data: ByteArray) {

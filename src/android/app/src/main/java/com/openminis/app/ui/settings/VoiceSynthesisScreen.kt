@@ -5,6 +5,9 @@ import android.provider.Settings
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.height
 import androidx.compose.material.icons.Icons
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -13,6 +16,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -25,11 +29,13 @@ import com.openminis.app.data.model.ProviderInstance
 import com.openminis.app.data.model.SystemVoiceIds
 import com.openminis.app.data.model.isVoiceOutputCandidate
 import com.openminis.app.data.repository.ProviderRepository
+import com.openminis.app.speech.KokoroTtsEngine
 import com.openminis.app.speech.SystemTtsVoiceCatalog
 import com.openminis.app.speech.VoiceOutputState
 import com.openminis.app.speech.VoicePreviewPlayer
 import com.openminis.app.ui.components.SectionDesign
 import com.openminis.app.ui.components.SectionFooter
+import kotlinx.coroutines.launch
 import java.util.Locale
 
 /**
@@ -223,6 +229,17 @@ fun VoiceSynthesisScreen(
         entry?.let { providerRepository.voiceOutputOverrideEntryId = it.id }
     }
 
+    // [T-kokoro-voice] Optional third tier: model-backed on-device voice.
+    // Kept in local Compose state and written straight to KokoroTtsEngine's
+    // prefs; the routing order lives in ReadAloudPlayer, not here.
+    var kokoroEnabled by remember { mutableStateOf(KokoroTtsEngine.isEnabled(context)) }
+    val kokoroStatus by KokoroTtsEngine.status.collectAsState()
+    var kokoroZhVoice by remember { mutableStateOf(KokoroTtsEngine.zhVoice(context)) }
+    var kokoroEnVoice by remember { mutableStateOf(KokoroTtsEngine.enVoice(context)) }
+    val kokoroScope = rememberCoroutineScope()
+    var showKokoroDeleteConfirm by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { KokoroTtsEngine.refreshStatus(context) }
+
     SettingsScaffold(
         title = stringResource(R.string.voice_synthesis_title),
         onBack = onBack,
@@ -249,6 +266,106 @@ fun VoiceSynthesisScreen(
         }
 
         if (isSystemMode) {
+            // ── Level 1b: optional on-device Kokoro voice ──
+            SettingsSection(
+                header = stringResource(R.string.voice_synthesis_local_header),
+                footer = stringResource(R.string.voice_synthesis_local_footer),
+            ) {
+                SettingsChoiceRow(
+                    title = stringResource(R.string.voice_synthesis_local_enable),
+                    subtitle = stringResource(R.string.voice_synthesis_local_enable_desc),
+                    selected = kokoroEnabled,
+                    onSelect = {
+                        kokoroEnabled = !kokoroEnabled
+                        KokoroTtsEngine.setEnabled(context, kokoroEnabled)
+                    },
+                    showDivider = true,
+                )
+                when (val st = kokoroStatus) {
+                    is KokoroTtsEngine.Status.Downloading -> SettingsRow(
+                        title = stringResource(
+                            R.string.voice_synthesis_local_downloading,
+                            ((st.bytes * 100) / st.total.coerceAtLeast(1L)).toInt(),
+                        ),
+                        showDivider = false,
+                    )
+                    KokoroTtsEngine.Status.Ready -> SettingsRow(
+                        title = stringResource(
+                            R.string.voice_synthesis_local_ready,
+                            (KokoroTtsEngine.MODEL_BYTES / (1024L * 1024L)).toInt(),
+                        ),
+                        showDivider = true,
+                    )
+                    is KokoroTtsEngine.Status.Failed -> SettingsRow(
+                        title = stringResource(
+                            R.string.voice_synthesis_local_failed,
+                            st.message,
+                        ),
+                        onClick = { kokoroScope.launch { KokoroTtsEngine.download(context) } },
+                        showDivider = false,
+                    )
+                    else -> SettingsRow(
+                        title = stringResource(R.string.voice_synthesis_local_download),
+                        onClick = { kokoroScope.launch { KokoroTtsEngine.download(context) } },
+                        showDivider = false,
+                    )
+                }
+                if (kokoroStatus == KokoroTtsEngine.Status.Ready) {
+                    SettingsRow(
+                        title = stringResource(R.string.voice_synthesis_local_delete),
+                        onClick = { showKokoroDeleteConfirm = true },
+                        showDivider = false,
+                    )
+                }
+            }
+
+            if (kokoroEnabled) {
+                if (kokoroStatus != KokoroTtsEngine.Status.Ready) {
+                    SettingsSection(
+                        header = stringResource(R.string.voice_synthesis_local_need_download),
+                    ) {}
+                } else {
+                    SettingsSection(
+                        header = stringResource(R.string.voice_synthesis_local_zh_voices),
+                    ) {
+                        KokoroTtsEngine.ZH_VOICES.forEachIndexed { index, voice ->
+                            SettingsChoiceRow(
+                                title = voice.label,
+                                subtitle = voice.id,
+                                selected = kokoroZhVoice == voice.id,
+                                onSelect = {
+                                    kokoroZhVoice = voice.id
+                                    KokoroTtsEngine.setZhVoice(context, voice.id)
+                                },
+                                onPreview = {
+                                    preview.previewKokoro(voice.id, previewSample)
+                                },
+                                showDivider = index < KokoroTtsEngine.ZH_VOICES.lastIndex,
+                            )
+                        }
+                    }
+                    SettingsSection(
+                        header = stringResource(R.string.voice_synthesis_local_en_voices),
+                    ) {
+                        KokoroTtsEngine.EN_VOICES.forEachIndexed { index, voice ->
+                            SettingsChoiceRow(
+                                title = voice.label,
+                                subtitle = voice.id,
+                                selected = kokoroEnVoice == voice.id,
+                                onSelect = {
+                                    kokoroEnVoice = voice.id
+                                    KokoroTtsEngine.setEnVoice(context, voice.id)
+                                },
+                                onPreview = {
+                                    preview.previewKokoro(voice.id, previewSample)
+                                },
+                                showDivider = index < KokoroTtsEngine.EN_VOICES.lastIndex,
+                            )
+                        }
+                    }
+                }
+            }
+
             // ── Level 2: language ──
             SettingsSection(
                 header = stringResource(R.string.voice_synthesis_language_header),
@@ -443,6 +560,29 @@ fun VoiceSynthesisScreen(
         }
 
         Spacer(Modifier.height(SectionDesign.SectionTopGap))
+    }
+
+    if (showKokoroDeleteConfirm) {
+        AlertDialog(
+            onDismissRequest = { showKokoroDeleteConfirm = false },
+            title = { Text(stringResource(R.string.voice_synthesis_local_delete_title)) },
+            text = { Text(stringResource(R.string.voice_synthesis_local_delete_message)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showKokoroDeleteConfirm = false
+                        KokoroTtsEngine.deleteModel(context)
+                        kokoroEnabled = false
+                        KokoroTtsEngine.setEnabled(context, false)
+                    },
+                ) { Text(stringResource(R.string.voice_synthesis_local_delete_confirm)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showKokoroDeleteConfirm = false }) {
+                    Text(stringResource(R.string.voice_synthesis_local_delete_cancel))
+                }
+            },
+        )
     }
 }
 
