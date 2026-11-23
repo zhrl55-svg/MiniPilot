@@ -193,7 +193,14 @@ object AgentTools {
         description = "Execute a command in an isolated Linux process (Alpine Linux via PRoot). " +
             "The command runs via /bin/sh -c with stdout and stderr merged. " +
             "Each invocation spawns a fresh process — there is no shared terminal session. " +
-            "Default timeout is 15 minutes.",
+            "Default timeout is 15 minutes. " +
+            // [T-sandbox-capability-discovery] The sandbox is Alpine, not Android —
+            // the agent burned several calls guessing (self-improve cards
+            // 2026-11-22-6443d25e-1 / 5ae83322-1). State the boundary up front.
+            "This is a Linux sandbox, NOT the Android shell: `logcat`, `dumpsys`, `getprop`, `am`, `pm` and `run-as` do not exist here. " +
+            "For in-app introspection use the `minis-debug` CLI: run `minis-debug --help`, and `minis-debug discover` to list every " +
+            "RPC method with its exact parameter names before calling one — do not guess method or parameter names. " +
+            "Interactive (tty) prompts hang the call: pass non-interactive flags, or pipe `yes |` into the command.",
         parameters = mapOf(
             "tool_title" to AgentToolParam("string", "A concise 5-10 word summary of what this tool call does, shown to the user (e.g. 'Install Python data analysis packages', 'List files in home directory'). Use the same language as the user."),
             "command" to AgentToolParam("string", "The shell command to execute. Supports multi-line commands directly — no special escaping needed. Keep under 1000 chars; for longer scripts, write to a file with file_write first, then run it."),
