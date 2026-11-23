@@ -75,6 +75,39 @@ class NewsSearchToolTest {
     }
 
     @Test
+    fun `parser does not repeat the source when both title suffix and source tag exist`() {
+        // Field report 2026-11-23: Google News fills <source> AND appends
+        // " - Source" to the title, so the source was rendered (and spoken)
+        // twice. The earlier split ran only when the tag was missing.
+        val xml = """
+            <rss version="2.0"><channel>
+              <item>
+                <title>拦截、下架！红果短剧最新公告 - 中国宁波网</title>
+                <source url="https://example.com">中国宁波网</source>
+                <link>https://example.com/c</link>
+                <pubDate>Fri, 13 Nov 2026 09:30:00 GMT</pubDate>
+                <description>拦截、下架！红果短剧最新公告 中国宁波网</description>
+              </item>
+              <item>
+                <title>标题和来源不一致 - 别的网站</title>
+                <source url="https://example.com">中国宁波网</source>
+                <link>https://example.com/d</link>
+                <pubDate>Fri, 13 Nov 2026 09:30:00 GMT</pubDate>
+              </item>
+            </channel></rss>
+        """.trimIndent()
+        val items = NewsSearchTool.parseRss(xml)
+
+        assertEquals(2, items.size)
+        assertEquals("拦截、下架！红果短剧最新公告", items[0].title)
+        assertEquals("中国宁波网", items[0].source)
+        // The description repeated the headline verbatim → dropped.
+        assertTrue("summary should be dropped when it repeats the title", items[0].description.isBlank())
+        // A suffix that does not match the tag is part of the title.
+        assertEquals("标题和来源不一致 - 别的网站", items[1].title)
+    }
+
+    @Test
     fun `spoken summary reads the first three headlines with their sources`() {
         val summary = NewsSearchTool.spokenSummary(NewsSearchTool.parseRss(rssFixture))
         assertTrue(summary.startsWith("找到 3 条新闻。"))
