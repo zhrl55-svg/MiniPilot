@@ -205,10 +205,11 @@ class AnthropicProvider(
         }
 
         val reader = BufferedReader(InputStreamReader(response.body!!.byteStream()))
-        // Track current tool_use block being streamed
-        var currentToolId: String? = null
-        var currentToolName: String? = null
-        val toolInputBuffer = StringBuilder()
+        // [T-toolcall-args-integrity] Per-content-block argument buffers. The
+        // old single buffer ignored the `index` on every frame, so a missing
+        // `content_block_stop` or an interleaved block wiped the arguments of
+        // the call before it (self-improve card 2026-11-22-91f2a642-1).
+        val toolBuffers = com.openminis.app.provider.ToolCallBuffers()
 
         try {
             var line: String?
@@ -248,11 +249,13 @@ class AnthropicProvider(
                     "content_block_start" -> {
                         val contentBlock = event.optJSONObject("content_block")
                         if (contentBlock?.safeOptString("type", "") == "tool_use") {
-                            currentToolId = contentBlock.safeOptString("id", "")
-                            currentToolName = contentBlock.safeOptString("name", "")
-                            toolInputBuffer.clear()
-                            android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart id=$currentToolId name=$currentToolName")
-                            send(LLMStreamChunk.ToolUseStart(currentToolId!!, currentToolName!!))
+                            val toolId = contentBlock.safeOptString("id", "")
+                            val toolName = contentBlock.safeOptString("name", "")
+                            if (toolId.isNotEmpty() && toolName.isNotEmpty()) {
+                                toolBuffers.start(event.optInt("index", -1), toolId, toolName)
+                                android.util.Log.d("ToolChain[Provider]", "→ ToolUseStart id=$toolId name=$toolName")
+                                send(LLMStreamChunk.ToolUseStart(toolId, toolName))
+                            }
                         }
                     }
                     "content_block_delta" -> {
@@ -268,29 +271,28 @@ class AnthropicProvider(
                             }
                             "input_json_delta" -> {
                                 val partial = delta.safeOptString("partial_json", "")
-                                if (partial.isNotEmpty() && currentToolId != null) {
-                                    toolInputBuffer.append(partial)
-                                    // [T-android-log-hotpath] Fires per tool-argument chunk.
-                                    if (com.openminis.app.logging.AppLogger.traceEnabled) {
-                                        android.util.Log.d("ToolChain[Provider]", "→ ToolInputDelta id=$currentToolId accumulated=${toolInputBuffer.length}chars")
+                                if (partial.isNotEmpty()) {
+                                    val entry = toolBuffers.append(event.optInt("index", -1), partial)
+                                    if (entry != null) {
+                                        // [T-android-log-hotpath] Fires per tool-argument chunk.
+                                        if (com.openminis.app.logging.AppLogger.traceEnabled) {
+                                            android.util.Log.d("ToolChain[Provider]", "→ ToolInputDelta id=${entry.id} accumulated=${entry.buffer.length}chars")
+                                        }
+                                        send(LLMStreamChunk.ToolInputDelta(entry.id, entry.buffer.toString()))
                                     }
-                                    send(LLMStreamChunk.ToolInputDelta(currentToolId!!, toolInputBuffer.toString()))
                                 }
                             }
                         }
                     }
                     "content_block_stop" -> {
-                        if (currentToolId != null && currentToolName != null) {
-                            val args = try {
-                                JSONObject(toolInputBuffer.toString())
-                            } catch (_: Exception) {
-                                JSONObject()
-                            }
-                            android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=$currentToolId name=$currentToolName args=${args.toString().take(300)}")
-                            send(LLMStreamChunk.ToolCallComplete(currentToolId!!, currentToolName!!, args))
-                            currentToolId = null
-                            currentToolName = null
-                            toolInputBuffer.clear()
+                        val entry = toolBuffers.finish(event.optInt("index", -1))
+                        if (entry != null) {
+                            // [T-toolcall-args-integrity] Never degrade to `{}`
+                            // silently: an unparseable buffer travels with a
+                            // reason so the call is refused, not executed.
+                            val parsed = com.openminis.app.provider.parseToolArgs(entry.buffer)
+                            android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=${entry.id} name=${entry.name} args=${parsed.args.toString().take(300)} invalid=${parsed.invalidReason}")
+                            send(LLMStreamChunk.ToolCallComplete(entry.id, entry.name, parsed.args, argsInvalidReason = parsed.invalidReason))
                         }
                     }
                     "message_delta" -> {
@@ -350,6 +352,28 @@ class AnthropicProvider(
             reader.close()
             response.close()
         }
+        // [T-toolcall-args-integrity] The stream ended while one or more tool
+        // blocks were still open (connection dropped / truncation). Their
+        // arguments are unfinished by definition, so emit the call with an
+        // explicit reason: the execution layer refuses it and the model gets
+        // told to re-issue, instead of the call running on `{}`.
+        // Guarded: on the error path the channel is already cancelled and a
+        // late send would throw out of the producer.
+        try {
+            for (entry in toolBuffers.drainUnfinished()) {
+                val parsed = com.openminis.app.provider.parseToolArgs(entry.buffer)
+                val reason = parsed.invalidReason
+                    ?: "工具参数在流结束前没有收完（收到 ${entry.buffer.length} 字符，可能是传输中断）"
+                com.openminis.app.logging.AppLogger.warning(
+                    "AnthropicProvider",
+                    "stream ended mid-tool-call id=${entry.id} name=${entry.name} argsLen=${entry.buffer.length} — flushing with invalid-args reason",
+                )
+                send(LLMStreamChunk.ToolCallComplete(entry.id, entry.name, parsed.args, argsInvalidReason = reason))
+            }
+        } catch (_: Exception) {
+            // Stream already cancelled — nothing to report.
+        }
+        toolBuffers.clear()
         channel.close()
         awaitClose()
     }

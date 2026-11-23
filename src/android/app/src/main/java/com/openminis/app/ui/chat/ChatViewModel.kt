@@ -12744,6 +12744,10 @@ class ChatViewModel(
             // and logged that number — field log: "dynamicMaxTokens: 8730" while
             // the request went out with 16384. Removed.
             val toolCalls = mutableListOf<Triple<String, String, JSONObject>>() // id, name, args
+            // [T-toolcall-args-integrity] toolCallId → why its argument JSON
+            // could not be parsed (truncated stream or glued parallel deltas).
+            // Such a call must be refused, not executed on `{}`.
+            val invalidToolArgs = mutableMapOf<String, String>()
             // [T-android-gemini3-thoughtsig / #179] toolCallId -> Gemini 3.x
             // thoughtSignature for this turn's calls (null for other providers).
             val toolCallSignatures = mutableMapOf<String, String>()
@@ -13281,6 +13285,10 @@ class ChatViewModel(
                         // same value (matches the rename applied at start).
                         val toolCompleteId = dedupeToolCompleteId(chunk.id)
                         android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolCallComplete id=$toolCompleteId name=${chunk.name} args=${chunk.args.toString().take(300)}")
+                        // [T-toolcall-args-integrity] Remember a provider-side
+                        // parse failure so the dispatch below refuses the call
+                        // instead of executing it with `{}`.
+                        chunk.argsInvalidReason?.let { invalidToolArgs[toolCompleteId] = it }
                         toolCalls.add(Triple(toolCompleteId, chunk.name, chunk.args))
                         // [T-android-gemini3-thoughtsig / #179] Stash the Gemini
                         // 3.x thought signature keyed by the (deduped) tool call id.
@@ -13575,6 +13583,7 @@ class ChatViewModel(
                         turnTextBlockIdx = -1
                         turnThinking.clear()
                         toolCalls.clear()
+                        invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                         toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
                         // T94 fix 2 + T256: throttle bookkeeping is per-stream
                         // attempt; reset alongside the partial-block rollback so
@@ -13666,6 +13675,7 @@ class ChatViewModel(
                             turnTextBlockIdx = -1
                             turnThinking.clear()
                             toolCalls.clear()
+                            invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                             toolCallSignatures.clear()
                             continue
                         }
@@ -13799,6 +13809,7 @@ class ChatViewModel(
                         turnTextBlockIdx = -1
                         turnThinking.clear()
                         toolCalls.clear()
+                        invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                         toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
                         // loop continues — will retry collect with currentProvider
                     } else {
@@ -13849,6 +13860,7 @@ class ChatViewModel(
                 )
                 allToolBlocks.removeAll { it.kind == "tool_use" && it.id in refusedIds }
                 toolCalls.clear()
+                invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                 withContext(Dispatchers.Main) {
                     updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
                 }
@@ -14660,6 +14672,48 @@ class ChatViewModel(
                                 content = blockedMsg,
                                 isError = true,
                             ))
+                            return@withPermit
+                        }
+
+                        // [T-toolcall-args-integrity] The provider could not
+                        // parse this call's argument JSON (truncated stream or
+                        // parallel deltas glued together) and marked it. Refuse
+                        // before execution: running `{}` loses the model's
+                        // intent silently and, in the field, produced 14
+                        // identical failing hub_call retries (self-improve
+                        // card 2026-11-22-91f2a642-1).
+                        val invalidArgsReason = invalidToolArgs[id]
+                        if (invalidArgsReason != null) {
+                            AppLogger.warning(
+                                "ToolPreflight",
+                                "REFUSED invalid-args tool=$name id=$id reason=\"$invalidArgsReason\""
+                            )
+                            val uiMessageInvalid = "Blocked invalid tool call"
+                            val modelMessageInvalid = "Error: Tool call rejected before execution. " +
+                                "$invalidArgsReason Nothing was executed. Re-issue this call with the " +
+                                "complete argument JSON; do not retry the same truncated call."
+                            val blockIdxInvalid = allToolBlocks.indexOfFirst { it.id == id }
+                            if (blockIdxInvalid >= 0) {
+                                val elapsedInvalid = System.currentTimeMillis() - allToolBlocks[blockIdxInvalid].startTimeMs
+                                allToolBlocks[blockIdxInvalid] = allToolBlocks[blockIdxInvalid].copy(
+                                    toolStatus = ToolBlockStatus.FAILED,
+                                    content = uiMessageInvalid,
+                                    durationMs = elapsedInvalid,
+                                )
+                            }
+                            toolLoopDetector.record(
+                                toolName = name, params = paramsMap,
+                                result = null, errorMessage = modelMessageInvalid, toolCallId = id
+                            )
+                            resultParts.add(AgentContentPart.ToolResult(
+                                id = id, name = name,
+                                content = modelMessageInvalid,
+                                isError = true,
+                            ))
+                            withContext(Dispatchers.Main) {
+                                updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
+                            }
+                            toolInputChunkRings.remove(id)
                             return@withPermit
                         }
 

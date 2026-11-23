@@ -37,6 +37,12 @@ sealed class LLMStreamChunk {
         // the historical functionCall or the next request 400s. Null for every
         // other provider (only Gemini populates it).
         val thoughtSignature: String? = null,
+        // [T-toolcall-args-integrity] Non-null when the argument text that
+        // arrived could not be parsed (truncated stream, glued parallel
+        // arguments). `args` is then an empty object that must NOT be
+        // executed: the execution layer refuses the call and tells the model
+        // its arguments were lost, instead of silently running `{}`.
+        val argsInvalidReason: String? = null,
     ) : LLMStreamChunk()
 
     /**

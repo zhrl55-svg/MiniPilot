@@ -1202,6 +1202,14 @@ class OpenAIProvider private constructor(
         // Chat Completions: tool calls are streamed as deltas keyed by index.
         data class ToolCallAccumulator(var id: String = "", var name: String = "", val args: StringBuilder = StringBuilder(), var started: Boolean = false)
         val toolCallAccumulators = mutableMapOf<Int, ToolCallAccumulator>()
+        // [T-toolcall-args-integrity] Some relays omit `index` on `tool_calls`
+        // deltas. Falling back to 0 made every parallel call share one
+        // accumulator: the later name overwrote the earlier one and their
+        // argument chunks were glued into invalid JSON that parsed to `{}`
+        // (self-improve card 2026-11-22-3998a307-1). Assign a synthetic index
+        // per call id (or per anonymous arrival) instead.
+        val fallbackToolIndex = mutableMapOf<String, Int>()
+        var fallbackToolIndexNext = 10_000
         // Responses API: function_call items are keyed by their item_id (fc_…). We store
         // the call_id separately because the agent loop needs the call_id to correlate
         // tool results, but the next request must echo back the item_id verbatim — so we
@@ -1441,10 +1449,12 @@ class OpenAIProvider private constructor(
                                 val itemId = item.optString("id", "")
                                 val acc = responsesToolCalls.remove(itemId) ?: continue
                                 val argsStr = item.optString("arguments", acc.args.toString())
-                                val args = try { JSONObject(argsStr) } catch (_: Exception) { JSONObject() }
+                                // [T-toolcall-args-integrity] Keep the parse
+                                // failure visible instead of running `{}`.
+                                val parsed = com.openminis.app.provider.parseToolArgs(argsStr)
                                 val combined = combineResponsesAPIIds(acc.callId, itemId)
-                                android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete (Responses) id=$combined name=${acc.name} args=${args.toString().take(300)}")
-                                send(LLMStreamChunk.ToolCallComplete(combined, acc.name, args))
+                                android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete (Responses) id=$combined name=${acc.name} args=${parsed.args.toString().take(300)} invalid=${parsed.invalidReason}")
+                                send(LLMStreamChunk.ToolCallComplete(combined, acc.name, parsed.args, argsInvalidReason = parsed.invalidReason))
                             }
                         }
                         type == "response.failed" -> {
@@ -1730,7 +1740,16 @@ class OpenAIProvider private constructor(
                         if (toolCalls != null) {
                             for (i in 0 until toolCalls.length()) {
                                 val tc = toolCalls.getJSONObject(i)
-                                val idx = tc.optInt("index", 0)
+                                // [T-toolcall-args-integrity] Resolve an index
+                                // even when the relay omits one — never fold
+                                // parallel calls into index 0.
+                                val reported = tc.optInt("index", -1)
+                                val idx = if (reported >= 0) reported else {
+                                    val key = tc.safeOptString("id", "")
+                                        .ifEmpty { tc.safeOptString("name", "") }
+                                        .ifEmpty { "anon-$fallbackToolIndexNext" }
+                                    fallbackToolIndex.getOrPut(key) { fallbackToolIndexNext++ }
+                                }
                                 val acc = toolCallAccumulators.getOrPut(idx) { ToolCallAccumulator() }
 
                                 tc.safeOptString("id", "").let { if (it.isNotEmpty()) acc.id = it }
@@ -1802,9 +1821,17 @@ class OpenAIProvider private constructor(
             // Emit ToolCallComplete for all accumulated tool calls
             for ((_, acc) in toolCallAccumulators) {
                 if (acc.id.isNotEmpty() && acc.name.isNotEmpty()) {
-                    val args = try { JSONObject(acc.args.toString()) } catch (_: Exception) { JSONObject() }
-                    android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=${acc.id} name=${acc.name} args=${args.toString().take(300)}")
-                    send(LLMStreamChunk.ToolCallComplete(acc.id, acc.name, args))
+                    // [T-toolcall-args-integrity] A truncated stream leaves
+                    // invalid JSON; carry the reason instead of shipping `{}`.
+                    val parsed = com.openminis.app.provider.parseToolArgs(acc.args)
+                    if (parsed.invalidReason != null) {
+                        com.openminis.app.logging.AppLogger.warning(
+                            "OpenAIProvider",
+                            "Chat Completions tool call id=${acc.id} name=${acc.name} has invalid args (${acc.args.length} chars) — flagging for refusal",
+                        )
+                    }
+                    android.util.Log.d("ToolChain[Provider]", "→ ToolCallComplete id=${acc.id} name=${acc.name} args=${parsed.args.toString().take(300)} invalid=${parsed.invalidReason}")
+                    send(LLMStreamChunk.ToolCallComplete(acc.id, acc.name, parsed.args, argsInvalidReason = parsed.invalidReason))
                 }
             }
             // Drain Responses-API tool accumulators that didn't get an output_item.done
@@ -1815,13 +1842,16 @@ class OpenAIProvider private constructor(
             // disappears (T247 root cause; same path hit by T237 DeepSeek truncation).
             for ((itemId, acc) in responsesToolCalls) {
                 if (acc.callId.isNotEmpty() && acc.name.isNotEmpty()) {
-                    val args = try { JSONObject(acc.args.toString()) } catch (_: Exception) { JSONObject() }
+                    val parsed = com.openminis.app.provider.parseToolArgs(acc.args)
+                    val reason = parsed.invalidReason
+                        ?: if (acc.args.isNotBlank()) null
+                        else "工具参数在流结束前没有收完（收到 0 字符，可能是传输中断）"
                     val combined = combineResponsesAPIIds(acc.callId, itemId)
                     com.openminis.app.logging.AppLogger.warning(
                         "OpenAIProvider",
                         "Stream ended mid-tool-call id=$combined name=${acc.name} argsLen=${acc.args.length} — flushing as ToolCallComplete (T248)",
                     )
-                    send(LLMStreamChunk.ToolCallComplete(combined, acc.name, args))
+                    send(LLMStreamChunk.ToolCallComplete(combined, acc.name, parsed.args, argsInvalidReason = reason))
                 }
             }
             responsesToolCalls.clear()

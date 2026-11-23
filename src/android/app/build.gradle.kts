@@ -558,3 +558,41 @@ dependencies {
     androidTestImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
     androidTestImplementation("junit:junit:4.13.2")
 }
+
+// [T-build-jnilibs-preflight] The PRoot/MNN native libraries under
+// src/main/jniLibs/arm64-v8a are deliberately NOT tracked (large binaries
+// produced outside the repo), so a fresh worktree or clone has the directory
+// but not the files. AGP happily packages an APK without them; that APK
+// installs and then EVERY sandbox shell dies with "PRoot binary not found"
+// (self-improve card 2026-11-22-91f2a642-2). Fail the build instead.
+val requiredJniLibs = listOf(
+    "libproot.so",
+    "libMNN.so",
+    "libmnnllmapp.so",
+    "libproot-loader.so",
+    "libproot-loader32.so",
+)
+val jniLibsDir = layout.projectDirectory.dir("src/main/jniLibs/arm64-v8a")
+val verifyJniLibs = tasks.register("verifyJniLibs") {
+    description = "Refuse to build when the untracked native libraries are missing."
+    // Capture plain values: a doLast that reaches back into the script object
+    // breaks configuration-cache serialization.
+    val expected = requiredJniLibs.toList()
+    val libsDir = jniLibsDir.asFile
+    doLast {
+        val missing = expected.filter { !libsDir.resolve(it).exists() }
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "Missing native libraries in $libsDir: ${missing.joinToString(", ")}. " +
+                    "These .so files are NOT tracked by git; copy them from an existing " +
+                    "checkout (src/android/app/src/main/jniLibs/arm64-v8a/) before building. " +
+                    "Building without them produces an APK whose sandbox cannot start.",
+            )
+        }
+    }
+}
+tasks.configureEach {
+    if (name.startsWith("pre") && name.endsWith("Build")) {
+        dependsOn(verifyJniLibs)
+    }
+}
