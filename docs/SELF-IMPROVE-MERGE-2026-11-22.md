@@ -105,4 +105,5 @@ news_search 把「搜索一下今天的新闻」整句作为 query，结果退�
   - `verifyJniLibs` 预检：缺 `.so` 直接构建失败
   - 单测：ToolCallArgsTest 8、ToolLoopDetectorNonPollTest 3、ToolLoopDetectorTest 22、AnthropicProviderTest 32、OpenAIProviderTest 25、ChatCompletionsToolPairingTest 19 全绿
   - v58 已装机（10:02:08），沙箱与一次真实工具调用（shell_execute → TOOLCALL_OK）冒烟通过
-- 待办：R3 文档、R4/R5 规则 A/B、R6 取证
+- **R3 已实现并验证**：`shell_execute` 描述写清沙箱边界（无 logcat/dumpsys/getprop/am/pm/run-as）、`minis-debug --help` + `discover` 列全方法/参数名、交互式提示会挂住；提交 `02ab2fc` 已推送并装机（10:06:05）。真机验证：模型能逐条复述新描述。
+- 待办：R4/R5 规则 A/B、R6 取证
