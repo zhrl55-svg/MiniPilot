@@ -71,5 +71,7 @@ class ShellSettingsHelperTest {
         assertFalse(script.contains("sh -c"))
         // It refuses to act unless it is shell(2000)/root.
         assertTrue(script.contains("2000|0"))
+        // A second loop must not start while the first is alive.
+        assertTrue(script.contains("kill -0"))
     }
 }

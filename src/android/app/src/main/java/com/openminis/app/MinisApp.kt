@@ -860,28 +860,24 @@ class MinisApp : Application(), ImageLoaderFactory {
         com.openminis.app.offload.ShizukuManager.init(this)
         // [T-android-settings-shell-helper] While Shizuku is up, keep a detached
         // uid=shell settings helper alive so non-public Settings.System keys
-        // (SmartModeStatus) stay writable after Shizuku is stopped. Only for a
-        // dev install that already holds WRITE_SECURE_SETTINGS, and never on the
-        // main thread — a failed spawn must not affect startup.
-        if (BuildConfig.DEV_TOOLS &&
-            com.openminis.app.sandbox.offload.SystemSettingsBridge.directWritable(this)
-        ) {
+        // (SmartModeStatus) stay writable after Shizuku is stopped. Driven by the
+        // Shizuku state flow, not a one-shot retry, so restarting Shizuku later
+        // re-seeds without an app restart. Never on the main thread.
+        if (BuildConfig.DEV_TOOLS) {
+            val app = this
             Thread({
-                // Shizuku's binder may land a moment after boot; retry a few times.
-                var attempt = 0
-                while (attempt < 4) {
-                    val ok = runCatching {
-                        com.openminis.app.sandbox.offload.ShellSettingsHelper.ensureSeeded(this)
-                    }.getOrDefault(false)
-                    if (ok) break
-                    attempt++
-                    if (attempt < 4) {
-                        try {
-                            Thread.sleep(15_000)
-                        } catch (_: InterruptedException) {
-                            break
+                try {
+                    kotlinx.coroutines.runBlocking {
+                        com.openminis.app.offload.ShizukuManager.snapshot.collect { snap ->
+                            if (snap.state == com.openminis.app.offload.ShizukuManager.State.READY) {
+                                runCatching {
+                                    com.openminis.app.sandbox.offload.ShellSettingsHelper.ensureSeeded(app)
+                                }
+                            }
                         }
                     }
+                } catch (_: Throwable) {
+                    // A seeding problem must never escape into app startup.
                 }
             }, "settings-helper-seed").apply { isDaemon = true }.start()
         }

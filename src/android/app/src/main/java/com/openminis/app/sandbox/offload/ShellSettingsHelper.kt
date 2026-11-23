@@ -69,22 +69,40 @@ object ShellSettingsHelper {
 
     /**
      * Spawn the helper when Shizuku is READY and nothing is answering yet.
-     * Idempotent: a live helper short-circuits before any file is touched.
-     * Returns true only when a live helper answers afterwards.
+     * Idempotent: a live helper running the current script short-circuits before
+     * any file is touched. When the shipped script changed (an app upgrade), the
+     * old loop is replaced — but only while Shizuku is available to respawn it;
+     * otherwise the working old helper is kept rather than downgraded to none.
      */
     fun ensureSeeded(context: Context): Boolean {
-        if (isAlive(context)) return true
+        val d = dir(context) ?: run {
+            lastError = "external files dir unavailable"
+            return false
+        }
+        if (!d.isDirectory && !d.mkdirs()) {
+            lastError = "cannot create $d"
+            return false
+        }
+        val script = File(d, "helper.sh")
+        val scriptChanged = !script.isFile ||
+            runCatching { script.readText() != SCRIPT }.getOrDefault(true)
+
+        if (!scriptChanged && isAlive(context)) return true
+
         synchronized(seedLock) {
-            if (isAlive(context)) return true
-            val d = dir(context) ?: run {
-                lastError = "external files dir unavailable"
-                return false
+            if (!scriptChanged && isAlive(context)) return true
+
+            if (scriptChanged && isAlive(context)) {
+                if (!ShizukuManager.isReady()) {
+                    // Keep the older loop: it still only runs `settings`, and
+                    // losing it would lose the capability entirely.
+                    lastError = "helper is running an older script; start Shizuku once to upgrade"
+                    return true
+                }
+                killRecordedPid(d)
             }
-            if (!d.isDirectory && !d.mkdirs()) {
-                lastError = "cannot create $d"
-                return false
-            }
-            writeIfChanged(File(d, "helper.sh"), SCRIPT)
+
+            writeIfChanged(script, SCRIPT)
             val tokenFile = File(d, "token")
             if (!tokenFile.isFile || tokenFile.readText().trim().isEmpty()) {
                 if (!runCatching { tokenFile.writeText(randomToken()) }.isSuccess) {
@@ -101,18 +119,9 @@ object ShellSettingsHelper {
 
             // Kill a stale helper recorded in the pid file so a respawn cannot
             // leave two loops racing over the same request directory.
-            val stalePid = runCatching {
-                File(d, "helper.pid").readText().trim().toIntOrNull()
-            }.getOrNull()
-            if (stalePid != null && stalePid > 0) {
-                ShizukuManager.runProcess(
-                    arrayOf("/system/bin/kill", "-9", stalePid.toString()),
-                    timeoutMs = 2_000,
-                )
-            }
+            killRecordedPid(d)
             runCatching { File(d, "helper.pid").delete() }
 
-            val script = File(d, "helper.sh")
             val cmd = "/system/bin/setsid /system/bin/sh '${script.absolutePath}' </dev/null >/dev/null 2>&1 &"
             val spawned = ShizukuManager.runProcess(arrayOf("/system/bin/sh", "-c", cmd), timeoutMs = 4_000)
             if (spawned.exitCode != 0) {
@@ -132,6 +141,14 @@ object ShellSettingsHelper {
             AppLogger.warning(TAG, "seed failed: $lastError")
             return false
         }
+    }
+
+    /** Best-effort SIGKILL of the pid recorded by a previous helper (needs Shizuku). */
+    private fun killRecordedPid(d: File) {
+        val pid = runCatching { File(d, "helper.pid").readText().trim().toIntOrNull() }.getOrNull()
+        if (pid == null || pid <= 0) return
+        ShizukuManager.runProcess(arrayOf("/system/bin/kill", "-9", pid.toString()), timeoutMs = 2_000)
+        Thread.sleep(150)
     }
 
     /**
@@ -292,6 +309,13 @@ esac
 [ -f "~D/token" ] || exit 0
 T=$(cat "~D/token" 2>/dev/null)
 [ -n "~T" ] || exit 0
+if [ -f "~D/helper.pid" ]; then
+  P=$(cat "~D/helper.pid" 2>/dev/null)
+  case "~P" in
+    ''|*[!0-9]*) ;;
+    *) [ "~P" != "~~" ] && kill -0 "~P" 2>/dev/null && exit 0 ;;
+  esac
+fi
 printf '%s\n' "~~" > "~D/helper.pid"
 trap 'rm -f "~D/helper.pid"' EXIT HUP INT TERM
 
