@@ -38,6 +38,20 @@ internal object WakeConversation {
     internal const val MAX_SPEECH_CHARS = 600
 
     /**
+     * [T-wake-origin-hint] One-turn modality hint for a wake command.
+     *
+     * The wake turn is delivered as an ordinary user message, so the model
+     * has no way to tell it was spoken to the voice assistant. With a music
+     * context, 「你不能一直听着呀」 was read as "stop the music" and the agent
+     * even created a scheduled task (self-improve 2026-11-22-57cc96fd-1).
+     * With this hint the same line resolves to the listening state.
+     */
+    internal const val WAKE_TURN_HINT =
+        "本轮输入来自语音唤醒：用户正对着手机上的语音助手说话，句中的「你」指语音助手；" +
+            "「听着/听到/别听了」这类词也可能指唤醒聆听状态（唤醒后聆听窗口、声纹判定），" +
+            "而不是音乐播放。"
+
+    /**
      * The session backing the background conversation.
      *
      * Created on first use and then reused, so the wake conversation keeps
@@ -113,6 +127,7 @@ internal object WakeConversation {
                 text = text,
                 wait = true,
                 timeoutMs = REPLY_TIMEOUT_MS,
+                turnHint = WAKE_TURN_HINT,
             )
         }.getOrElse {
             AppLogger.info(TAG, "语音回合失败：${it.javaClass.simpleName}: ${it.message}")

@@ -953,6 +953,18 @@ class ChatViewModel(
      */
     @Volatile internal var debugSystemPromptAppend: String? = null
 
+    /**
+     * [T-wake-origin-hint] One-turn context hint set by the caller right before
+     * a send and cleared by it afterwards (currently the wake conversation:
+     * "this turn came from voice wake"). Appended at the tail of the system
+     * prompt so an ambiguous utterance like 「你不能一直听着呀」 can be resolved
+     * against the voice-assistant context instead of the previous turn's
+     * topic — the field misfire where the agent read it as "stop the music"
+     * and created a scheduled task (self-improve card 2026-11-22-57cc96fd-1).
+     * Null for every ordinary turn; never written to the DB.
+     */
+    @Volatile internal var turnContextHint: String? = null
+
     /** [T-port-user-ask-recovery] Persistence + recovery hooks; idempotent. */
     private fun ensureUserAskRecovery() {
         com.openminis.app.agent.userask.UserAskRecoveryCoordinator.ensureInstalled(
@@ -17891,6 +17903,14 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             if (harnessRules.isNotBlank()) {
                 append("\n\n")
                 append(harnessRules)
+            }
+            // [T-wake-origin-hint] One-turn modality hint (voice wake), set and
+            // cleared by HeadlessChatRunner around the turn.
+            turnContextHint?.let { hint ->
+                if (hint.isNotBlank()) {
+                    append("\n\n")
+                    append(hint)
+                }
             }
             // [T-probe-overlay] Debug-probe only: a candidate harness text
             // injected through chat.prompt's `systemPromptAppend` param. It is

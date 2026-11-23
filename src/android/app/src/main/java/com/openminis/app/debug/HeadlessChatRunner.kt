@@ -231,10 +231,15 @@ internal object HeadlessChatRunner {
         // overlay lasts for the whole probe session and dies with it. Null
         // clears any overlay left from an earlier call on the same VM.
         systemPromptAppend: String? = null,
+        // [T-wake-origin-hint] One-turn modality hint appended to the system
+        // prompt and cleared when the turn ends (e.g. "this turn came from
+        // voice wake"). Null for ordinary calls.
+        turnHint: String? = null,
     ): PromptResult = ChatViewModelStore.holdingForSend(sessionId) {
         withContext(Dispatchers.Main) {
             val vm = viewModel(context, sessionId)
             vm.debugSystemPromptAppend = systemPromptAppend
+            vm.turnContextHint = turnHint
             // Apply per-call thinking override BEFORE sendMessage so streamMessage
             // picks up the new level. Caller passes null to keep the VM's existing
             // setting (default OFF for a fresh VM, last user-set value otherwise).
@@ -304,6 +309,9 @@ internal object HeadlessChatRunner {
             // the queued prompt went out without them.
             val outcome = vm.submitPrompt(text, prefill, attachments)
             if (outcome is ChatViewModel.SubmitOutcome.Rejected) {
+                // [T-wake-origin-hint] The turn never ran — drop the hint so a
+                // later turn in this session cannot inherit it.
+                vm.turnContextHint = null
                 // 契约不变：真的发不出去，仍然报 no_provider_resolved_in_5s。
                 if (ready == null && outcome.reason == "no_provider") {
                     return@withContext PromptResult(
@@ -315,6 +323,9 @@ internal object HeadlessChatRunner {
                 return@withContext PromptResult(status = "Rejected", responseText = outcome.reason, timedOut = false)
             }
             if (!wait) {
+                // [T-wake-origin-hint] Fire-and-forget callers never pass a
+                // hint; clear anyway so nothing lingers.
+                vm.turnContextHint = null
                 val status = if (outcome is ChatViewModel.SubmitOutcome.Queued) "Queued" else "Running"
                 return@withContext PromptResult(status = status, responseText = null, timedOut = false)
             }
@@ -341,6 +352,9 @@ internal object HeadlessChatRunner {
             val app = app(context)
             val msgs = app.chatRepository.dao.loadMessages(sessionId)
             val responseText = responseTextFor(text, msgs.map { it.role to it.partsJson }, rowsBeforeSubmit)
+            // [T-wake-origin-hint] The turn is over — do not leak the modality
+            // hint into the next send of this session.
+            vm.turnContextHint = null
             PromptResult(
                 status = if (finished) "Completed" else "Timeout",
                 responseText = responseText,

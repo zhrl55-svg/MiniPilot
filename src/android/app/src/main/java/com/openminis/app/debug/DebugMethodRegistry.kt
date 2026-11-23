@@ -1147,6 +1147,7 @@ object DebugMethodRegistry {
                 ParamSpec("wait", "bool", required = false, default = false, description = "Block until completion."),
                 ParamSpec("waitTimeout", "int", required = false, default = 600, description = "Seconds; clamped to [1, 1800]."),
                 ParamSpec("systemPromptAppend", "string", required = false, description = "Probe-only: candidate harness text appended to this session VM's system prompt (A/B without rebuilding). Persists for the VM's lifetime."),
+                ParamSpec("turnHint", "string", required = false, description = "One-turn context hint appended to the system prompt for THIS prompt only (e.g. 'this turn came from voice wake'). Cleared when the prompt finishes; unlike systemPromptAppend it never persists into later turns."),
             ),
             returns = "{sessionId, isNewSession, modelName, status, prompt, responseText, userMessageId, timedOut?}",
             example = ex("prompt" to "Hello", "wait" to true),
