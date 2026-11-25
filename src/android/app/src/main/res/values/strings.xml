@@ -1440,6 +1440,13 @@
     <string name="voice_synthesis_auto">Automatic (match text language)</string>
     <string name="voice_synthesis_auto_voice_note">The engine picks a voice that matches the text language.</string>
     <string name="voice_synthesis_voice_header">Voice</string>
+    <string name="voice_quality_very_high">High quality</string>
+    <string name="voice_quality_high">Standard</string>
+    <string name="voice_synthesis_pitch_header">Voice tuning</string>
+    <string name="voice_synthesis_pitch_footer">The system voice model is fixed; these settings only fine-tune pitch and pace. If a voice sounds stiff, try another voice first.</string>
+    <string name="voice_synthesis_pitch_natural">Natural pitch</string>
+    <string name="voice_synthesis_pitch_low">Lower pitch</string>
+    <string name="voice_synthesis_pitch_high">Higher pitch</string>
     <string name="voice_synthesis_loading">Loading system voices…</string>
     <string name="voice_synthesis_system_empty">No system speech engine detected</string>
     <string name="voice_synthesis_system_empty_desc">Install or enable a text-to-speech service in system settings.</string>

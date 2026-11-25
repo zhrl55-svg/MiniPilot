@@ -71,6 +71,9 @@ fun VoiceSynthesisScreen(
         mutableStateOf(emptyList<SystemTtsVoiceCatalog.SystemVoice>())
     }
     var voicesLoaded by remember { mutableStateOf(false) }
+    // [T-android-system-voice-tuning] Pitch is the framework's only prosody
+    // control (no style/SSML); the row cycles 自然 / 偏低 / 偏高.
+    val pitch by VoiceOutputState.pitch.collectAsState()
 
     LaunchedEffect(Unit) {
         VoiceOutputState.init(context)
@@ -321,9 +324,17 @@ fun VoiceSynthesisScreen(
                         voices.forEachIndexed { index, voice ->
                             SettingsChoiceRow(
                                 title = voice.label,
-                                // Locale tag, not the engine name: Huawei
-                                // reports "zh" for every Chinese variant.
-                                subtitle = voice.locale.toLanguageTag(),
+                                // Locale tag + engine-reported quality: Huawei
+                                // reports "zh" for every Chinese variant, so the
+                                // quality word is what distinguishes rows.
+                                subtitle = listOfNotNull(
+                                    voice.locale.toLanguageTag().ifBlank { null },
+                                    when {
+                                        voice.quality >= 500 -> stringResource(R.string.voice_quality_very_high)
+                                        voice.quality >= 400 -> stringResource(R.string.voice_quality_high)
+                                        else -> null
+                                    },
+                                ).joinToString(" · "),
                                 selected = SystemTtsVoiceCatalog.isSelected(
                                     voice,
                                     systemVoiceName,
@@ -337,6 +348,25 @@ fun VoiceSynthesisScreen(
                             )
                         }
                     }
+                }
+            }
+
+            // ── Level 4: prosody ──
+            SettingsSection(
+                header = stringResource(R.string.voice_synthesis_pitch_header),
+                footer = stringResource(R.string.voice_synthesis_pitch_footer),
+            ) {
+                VoiceOutputState.PITCH_STEPS.forEachIndexed { index, step ->
+                    SettingsChoiceRow(
+                        title = when {
+                            step < 0.95f -> stringResource(R.string.voice_synthesis_pitch_low)
+                            step > 1.05f -> stringResource(R.string.voice_synthesis_pitch_high)
+                            else -> stringResource(R.string.voice_synthesis_pitch_natural)
+                        },
+                        selected = kotlin.math.abs(pitch - step) < 0.001f,
+                        onSelect = { VoiceOutputState.setPitch(step) },
+                        showDivider = index < VoiceOutputState.PITCH_STEPS.lastIndex,
+                    )
                 }
             }
         } else {

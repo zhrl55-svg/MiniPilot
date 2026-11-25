@@ -58,6 +58,7 @@ class VoicePreviewPlayer(context: Context) {
             if (gen != generation) return@launch
             manager.preferredVoiceName = voiceId
             manager.speechRate = 1.0f
+            manager.speechPitch = VoiceOutputState.pitch.value
             manager.speak(text)
         }
     }

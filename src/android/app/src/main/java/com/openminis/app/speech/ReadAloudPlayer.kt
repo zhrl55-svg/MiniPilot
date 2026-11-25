@@ -740,6 +740,10 @@ class ReadAloudPlayer(
         // the property setter forwards to tts.setSpeechRate, so mid-reply
         // speed changes take effect from the next sentence.
         system.speechRate = VoiceOutputState.speed.value
+        // [T-android-system-voice-tuning] Pitch is the only prosody knob the
+        // framework exposes (no style/SSML); applied per utterance so a change
+        // in Settings takes effect from the next sentence.
+        system.speechPitch = VoiceOutputState.pitch.value
         // [T-android-system-voice-catalog] Apply the picked system voice (null
         // = engine default / auto language), and surface its label on the
         // capsule chip — matching iOS, whose chip shows "Tingting (Chinese)"

@@ -48,6 +48,8 @@ object SystemTtsVoiceCatalog {
         val label: String,
         val locale: Locale,
         val networkRequired: Boolean,
+        /** [android.speech.tts.Voice.getQuality] — used to prefer better voices. */
+        val quality: Int = 0,
     )
 
     /** Stable key for a raw engine voice. */
@@ -76,6 +78,28 @@ object SystemTtsVoiceCatalog {
     /** Does the engine [Voice] match a saved preference (id or legacy name)? */
     fun matches(voice: Voice, saved: String): Boolean =
         key(voice.name, voice.locale) == saved || voice.name == saved
+
+    /**
+     * Prefer the engine's higher-quality voices whenever the user has not
+     * explicitly picked one. Android exposes this as Voice.quality:
+     * VERY_HIGH > ELEVATED > COARSE. On Huawei/iFlytek the difference is
+     * audible (more natural prosody, less robotic), and these voices still
+     * handle English/proper nouns, which a Mandarin-only lexicon
+     * silently drops.
+     */
+    fun preferredByQuality(voices: List<Voice>, locale: Locale? = null): Voice? {
+        val pool = if (locale == null) voices else voices.filter { it.locale == locale }
+        val candidates = pool.ifEmpty { voices }
+        return candidates.maxWithOrNull(
+            compareBy<Voice> { qualityRank(it) }.thenBy { it.name },
+        )
+    }
+
+    private fun qualityRank(voice: Voice): Int = when (voice.quality) {
+        Voice.QUALITY_VERY_HIGH -> 3
+        Voice.QUALITY_HIGH -> 2       // legacy alias / enhanced on older SDKs
+        else -> 1
+    }
 
     private const val TAG = "SystemTtsVoiceCatalog"
     private const val INIT_TIMEOUT_MS = 4_000L
@@ -146,6 +170,7 @@ object SystemTtsVoiceCatalog {
                     label = label,
                     locale = v.locale,
                     networkRequired = net,
+                    quality = v.quality,
                 )
             }
             // UI language's voices first, then other Chinese/English, then rest;
@@ -157,7 +182,11 @@ object SystemTtsVoiceCatalog {
                     { it.label },
                 ),
             )
-        AppLogger.info(TAG, "enumerated ${mapped.size} voices (raw=${raw.size})")
+        AppLogger.info(
+            TAG,
+            "enumerated ${mapped.size} voices (raw=${raw.size}) " +
+                mapped.joinToString("; ") { "${it.name}/${it.locale.toLanguageTag()}/q${it.quality}" },
+        )
         return mapped
     }
 

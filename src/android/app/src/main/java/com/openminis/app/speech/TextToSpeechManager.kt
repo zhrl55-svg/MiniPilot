@@ -604,6 +604,7 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
             val rc = runCatching { engine.setLanguage(candidate) }
                 .getOrDefault(TextToSpeech.LANG_NOT_SUPPORTED)
             if (rc != TextToSpeech.LANG_MISSING_DATA && rc != TextToSpeech.LANG_NOT_SUPPORTED) {
+                applyHighestQualityVoice(engine, candidate)
                 return
             }
         }
@@ -614,9 +615,31 @@ class TextToSpeechManager : TextToSpeech.OnInitListener {
         )
     }
 
+    /**
+     * [T-android-system-voice-tuning] Prefer a higher-quality voice for the
+     * language we just selected, unless the user explicitly chose one (in
+     * which case autoDetectAndSetLanguage already setVoice() and returned).
+     * OEM engines ship several voices with very different naturalness; the
+     * default can be the coarsest one even when a VERY_HIGH voice is installed.
+     */
+    private fun applyHighestQualityVoice(engine: TextToSpeech, locale: Locale) {
+        if (preferredVoiceName != null) return
+        val voice = SystemTtsVoiceCatalog.preferredByQuality(
+            runCatching { engine.voices?.toList() }.getOrNull().orEmpty(),
+            locale,
+        ) ?: return
+        val rc = runCatching { engine.setVoice(voice) }
+            .getOrDefault(TextToSpeech.ERROR)
+        if (rc == TextToSpeech.SUCCESS) {
+            Log.i(TAG, "auto-selected ${voice.quality} voice=${voice.name} locale=${voice.locale}")
+        }
+    }
+
     private fun buildSpeechParams(): android.os.Bundle {
         return android.os.Bundle().apply {
             putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, speechVolume)
+            // Pitch is applied via setPitch(); no stable per-utterance Bundle
+            // key exists across OEM engines.
             if (audioSessionId > 0) putInt(TextToSpeech.Engine.KEY_PARAM_SESSION_ID, audioSessionId)
         }
     }

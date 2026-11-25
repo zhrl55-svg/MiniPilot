@@ -1336,6 +1336,13 @@
     <string name="voice_synthesis_auto">自动（跟随文本语言）</string>
     <string name="voice_synthesis_auto_voice_note">跟随文本语言时，由引擎自动选择音色。</string>
     <string name="voice_synthesis_voice_header">音色</string>
+    <string name="voice_quality_very_high">高音质</string>
+    <string name="voice_quality_high">标准</string>
+    <string name="voice_synthesis_pitch_header">语音调校</string>
+    <string name="voice_synthesis_pitch_footer">系统语音的声学模型是固定的，这里只能微调音调和语速。如果听着生硬，优先换一个音色。</string>
+    <string name="voice_synthesis_pitch_natural">自然音调</string>
+    <string name="voice_synthesis_pitch_low">偏低音调</string>
+    <string name="voice_synthesis_pitch_high">偏高音调</string>
     <string name="voice_synthesis_loading">正在读取系统音色…</string>
     <string name="voice_synthesis_system_empty">未检测到系统语音引擎</string>
     <string name="voice_synthesis_system_empty_desc">请在系统设置中安装或启用文字转语音服务。</string>

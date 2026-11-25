@@ -29,6 +29,7 @@ object VoiceOutputState {
     private const val KEY_ENABLED = "readReplies"
     private const val KEY_MUTED = "readReplies.muted"
     private const val KEY_SPEED = "readReplies.speed"
+    private const val KEY_PITCH = "readReplies.pitch"
     private const val KEY_VOLUME = "readReplies.volume"
     private const val KEY_SYSTEM_VOICE = "readReplies.systemVoice"
     private const val KEY_SYSTEM_VOICE_LABEL = "readReplies.systemVoiceLabel"
@@ -46,6 +47,13 @@ object VoiceOutputState {
     /** Speed cycle, matching iOS `VoiceOutputPreferences.speedSteps`. */
     val SPEED_STEPS = floatArrayOf(1.0f, 1.25f, 1.5f, 2.0f)
 
+    /**
+     * [T-android-system-voice-tuning] Pitch cycle for the system engine.
+     * Android has no style/emotion API; small pitch shifts are the only
+     * prosody lever apps control, and 0.1 steps stay natural on Huawei/iFlytek.
+     */
+    val PITCH_STEPS = floatArrayOf(1.0f, 0.9f, 1.1f)
+
     // @Volatile: init() runs from both ChatScreen's LaunchedEffect and
     // ReadAloudPlayer.init, and a player can be constructed off the main
     // thread — without it a caller could observe a half-published object.
@@ -60,6 +68,9 @@ object VoiceOutputState {
 
     private val _speed = MutableStateFlow(1.0f)
     val speed: StateFlow<Float> = _speed.asStateFlow()
+
+    private val _pitch = MutableStateFlow(1.0f)
+    val pitch: StateFlow<Float> = _pitch.asStateFlow()
 
     /**
      * [T-readaloud-volume] Read-aloud gain, 0..[MAX_VOLUME], applied to BOTH
@@ -270,6 +281,7 @@ object VoiceOutputState {
         _isEnabled.value = p.getBoolean(KEY_ENABLED, false)
         _isMuted.value = p.getBoolean(KEY_MUTED, false)
         _speed.value = p.getFloat(KEY_SPEED, 1.0f)
+        _pitch.value = p.getFloat(KEY_PITCH, 1.0f).coerceIn(0.5f, 2.0f)
         _volume.value = clampVolume(p.getFloat(KEY_VOLUME, DEFAULT_VOLUME))
         _systemVoiceName.value = p.getString(KEY_SYSTEM_VOICE, null)
         _systemVoiceLabel.value = p.getString(KEY_SYSTEM_VOICE_LABEL, null)
@@ -344,6 +356,25 @@ object VoiceOutputState {
         if (_speed.value == value) return
         _speed.value = value
         prefs?.edit()?.putFloat(KEY_SPEED, value)?.apply()
+    }
+
+    fun setPitch(value: Float) {
+        val v = value.coerceIn(0.5f, 2.0f)
+        if (_pitch.value == v) return
+        _pitch.value = v
+        prefs?.edit()?.putFloat(KEY_PITCH, v)?.apply()
+    }
+
+    /** Cycle 自然 → 偏低 → 偏高 → 自然 for the system engine. */
+    fun nextPitch() {
+        val idx = PITCH_STEPS.indexOfFirst { kotlin.math.abs(it - _pitch.value) < 0.001f }
+        setPitch(PITCH_STEPS[(if (idx < 0) 0 else idx + 1) % PITCH_STEPS.size])
+    }
+
+    fun pitchLabel(p: Float = _pitch.value): String = when {
+        p < 0.95f -> "偏低"
+        p > 1.05f -> "偏高"
+        else -> "自然"
     }
 
     /**
