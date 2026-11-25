@@ -74,32 +74,6 @@ class DebugRPCHandler(private val context: Context) {
         return when (method) {
             "rpc.discover" -> DebugMethodRegistry.discover()
             "debug.appInfo" -> handleAppInfo()
-            // [T-android-system-voice-tuning] One-shot cleanup for the retired
-            // on-device TTS tiers (Kokoro / Matcha) after the user asked to
-            // remove them: app-private dirs + their preference files.
-            "debug.storage.cleanupTtsLegacy" -> {
-                if (!BuildConfig.DEV_TOOLS) throw RPCException(-32601, "Method not found: $method")
-                withContext(Dispatchers.IO) {
-                    val files = context.filesDir
-                    val removed = mutableListOf<String>()
-                    listOf(
-                        File(files, "kokoro"),
-                        File(files, "kokoro-tmp"),
-                        File(files, "kokoro-poc"),
-                        File(files, "models/tts"),
-                    ).forEach { dir ->
-                        if (dir.exists()) {
-                            dir.deleteRecursively()
-                            removed += dir.absolutePath
-                        }
-                    }
-                    listOf("kokoro_tts", "matcha_tts").forEach { name ->
-                        context.getSharedPreferences(name, Context.MODE_PRIVATE)
-                            .edit().clear().commit()
-                    }
-                    JSONObject().put("ok", true).put("removed", removed)
-                }
-            }
             // [T-loadtest-limits] Load-test caps and process sampling (DEV_TOOLS).
             "debug.limits.get" -> LoadTestDebugMethods.limitsGet()
             "debug.limits.set" -> LoadTestDebugMethods.limitsSet(params)

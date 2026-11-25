@@ -206,13 +206,6 @@ object DebugMethodRegistry {
             example = JSONObject(),
         ),
         MethodSpec(
-            name = "debug.storage.cleanupTtsLegacy",
-            description = "Remove retired on-device TTS model dirs and prefs (Kokoro/Matcha). DEBUG only.",
-            params = emptyList(),
-            returns = "{ok, removed:[paths]}",
-            example = JSONObject(),
-        ),
-        MethodSpec(
             name = "debug.screenshot",
             description = "Capture a live screenshot of the foreground Activity as PNG.",
             params = listOf(
