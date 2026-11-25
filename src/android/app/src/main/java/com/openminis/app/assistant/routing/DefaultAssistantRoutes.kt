@@ -365,13 +365,46 @@ object DefaultAssistantRoutes {
         ),
 
         // ── Life: settings, scheduled tasks, curated handlers ──────────
+        // [T-settings-open-intent-guard] 关键词一律带意图动词。
+        //
+        // 这里曾经收录裸名词「系统设置」「电池设置」等，而匹配器是
+        // 「文本包含关键词即命中」——只要一句话里出现「系统设置」四个字
+        // （「你测试一下系统设置执行生效了没有」），快速路径就真的去打开
+        // 设置页，用户说的明明是另一件事。设置页是给别人看的界面，
+        // 不是一句话里顺带提到软件功能就该弹出的东西。
+        //
+        // 现在只有「打开/进入/去 + 设置」这类明确命令才命中；不确定的
+        // 一律留给我们后面的云端模型（它能读上下文）。patterns 兜住中间
+        // 多几个字的说法（「打开一下系统设置」）。
         r(
             "life.settings-open", "Open system settings", "life", "settings", "open", 220,
             listOf(
-                "打开设置", "系统设置", "打开wifi设置", "打开蓝牙设置", "飞行模式设置",
-                "电池设置", "显示设置", "声音设置", "位置设置", "通知设置",
-                "无障碍设置", "应用详情", "open settings", "wifi settings", "bluetooth settings",
-                "勿扰模式设置", "自动旋转设置", "亮度设置", "息屏设置",
+                // 通用设置页
+                "打开设置", "进入设置", "去设置", "设置页面", "设置界面",
+                "打开系统设置", "进入系统设置", "去系统设置",
+                "系统设置页", "系统设置页面", "系统设置界面",
+                // 具体子页
+                "打开wifi设置", "进入wifi设置", "打开wi-fi设置", "打开wlan设置",
+                "打开蓝牙设置", "进入蓝牙设置",
+                "打开飞行模式设置", "进入飞行模式设置",
+                "打开电池设置", "进入电池设置", "电池设置页",
+                "打开显示设置", "进入显示设置",
+                "打开声音设置", "进入声音设置",
+                "打开位置设置", "进入位置设置",
+                "打开通知设置", "进入通知设置",
+                "打开无障碍设置", "进入无障碍设置",
+                "打开应用详情", "进入应用详情", "应用详情页",
+                "打开勿扰模式设置", "进入勿扰模式设置",
+                "打开自动旋转设置", "进入自动旋转设置",
+                "打开亮度设置", "进入亮度设置",
+                "打开息屏设置", "进入息屏设置",
+                // English
+                "open settings", "open system settings", "go to system settings",
+                "system settings page", "open wifi settings", "open bluetooth settings",
+            ),
+            patterns = listOf(
+                """(?:打开|进入|前往|跳到|跳转|去|查看|看看)\s*.{0,4}(?:系统|应用)?设置(?:页|页面|界面)?""",
+                """(?:open|launch|go\s+to|show\s+me)\s+(?:the\s+)?(?:system\s+|app\s+)?settings""",
             ),
             examples = listOf("打开WiFi设置", "open bluetooth settings"),
         ),
@@ -379,8 +412,9 @@ object DefaultAssistantRoutes {
             "life.settings-open-english", "Open system settings (English)", "life",
             "settings", "open", 220,
             listOf(
-                "brightness settings", "rotation settings", "screen timeout settings",
-                "dnd settings", "do not disturb settings",
+                "open brightness settings", "open rotation settings",
+                "open screen timeout settings", "open dnd settings",
+                "open do not disturb settings",
             ),
         ),
         r(

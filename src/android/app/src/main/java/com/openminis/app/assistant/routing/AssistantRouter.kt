@@ -225,8 +225,14 @@ class AssistantRouter(
          * [T-fastpath-topic-guard] 这些只读能力的 query 是 SlotExtractor
          * 把整句原样回填的（见 SlotExtractor.extract），不是真实抽取的槽位。
          * 不能拿它豁免「话题提及保护」。
+         *
+         * [T-settings-open-intent-guard] `settings.open` 的 target 同理：
+         * 它由 detectSettingsTarget() 在整句里硬找「设置/电池/亮度…」，
+         * 只要句子提到这些词就一定填得上，这不是「用户给出了槽位」。
+         * 曾经正因为它被当成抽到了槽位，话题守卫整段被跳过，
+         * 「你测试一下系统设置执行生效了没有」直接去打开了设置页。
          */
-        val QUERY_ECHO_CAPABILITIES = setOf("news_search", "stock_quote", "web_search")
+        val QUERY_ECHO_CAPABILITIES = setOf("news_search", "stock_quote", "web_search", "settings")
 
         /** 以检索/播报动词开头的句子，这些能力可以按指令处理。 */
         val RETRIEVAL_CAPABILITIES = QUERY_ECHO_CAPABILITIES + setOf("weather")

@@ -87,7 +87,8 @@ class AssistantRouteCorpusTest {
         local("我的记忆", "memory_get", "search"),
         local("我说过什么", "memory_get", "search"),
 
-        // Settings
+        // Settings —— [T-settings-open-intent-guard] 打开设置页必须有意图动词，
+        // 句子里顺带提到「系统设置」不算。裸名词全部留给云端模型。
         local("打开WiFi设置", "settings", "open"),
         local("打开蓝牙设置", "settings", "open"),
         local("打开设置", "settings", "open"),
@@ -95,8 +96,17 @@ class AssistantRouteCorpusTest {
         local("打开无障碍设置", "settings", "open"),
         local("打开应用详情", "settings", "open"),
         local("打开勿扰模式设置", "settings", "open"),
-        local("自动旋转设置", "settings", "open"),
+        local("打开自动旋转设置", "settings", "open"),
+        local("打开系统设置", "settings", "open"),
+        local("进入系统设置", "settings", "open"),
+        local("打开一下系统设置", "settings", "open"),
+        local("系统设置页", "settings", "open"),
         local("open bluetooth settings", "settings", "open"),
+        cloud("自动旋转设置"),
+        cloud("你测试一下系统设置执行现在生效了没有"),
+        cloud("系统设置里有这个选项吗"),
+        cloud("系统设置这个词经常出现在日志里"),
+        cloud("系统设置刚才是不是又被快速路径吃掉了"),
         local("把亮度调到50%", "settings", "set"),
         local("打开勿扰模式", "settings", "set"),
         local("关闭WiFi", "settings", "set"),
