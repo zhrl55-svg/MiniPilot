@@ -813,8 +813,10 @@ object SessionActivityTracker {
      * [T-wake-current-chat] The chat session the UI is showing right now, or
      * null when the user is not inside a chat.
      *
-     * Driven by MainActivity from the navigation back stack (the same place
-     * that maintains presence). The wake conversation reads it so a spoken
+     * Driven by the ChatScreen that is on screen (the same place that
+     * maintains presence): the route is not a usable signal because list and
+     * detail share one route and an in-pane switch never changes it. The wake
+     * conversation reads it so a spoken
      * command issued while the user is looking at a chat is appended to THAT
      * chat instead of being routed into the separate 语音对话 session — which
      * looked like a brand-new conversation opening under the user.
@@ -831,6 +833,27 @@ object SessionActivityTracker {
         if (_visibleChatSession.value == sessionId) return
         _visibleChatSession.value = sessionId
         Log.d(TAG, "Visible chat session: $sessionId")
+    }
+
+    /**
+     * [T-wake-current-chat] Withdraw the visible-chat claim, but only if it is
+     * still [sessionId]'s.
+     *
+     * The claim is published by the chat screen that is on screen, and a screen
+     * withdraws it when it leaves composition. During an in-pane switch the old
+     * chat and the new one briefly overlap (the pane animates), so the OLD
+     * screen's dispose can arrive AFTER the new screen already claimed the slot.
+     * An unconditional clear there would blank a correct claim and drop the next
+     * wake turn back into the background 语音对话 session. Comparing first keeps
+     * "whoever is on screen now" the single truth.
+     *
+     * A null [sessionId] is a no-op: there is nothing to own.
+     */
+    fun clearVisibleChatSessionIfCurrent(sessionId: String?) {
+        if (sessionId == null) return
+        if (_visibleChatSession.value != sessionId) return
+        _visibleChatSession.value = null
+        Log.d(TAG, "Visible chat session cleared: $sessionId")
     }
 
     /**

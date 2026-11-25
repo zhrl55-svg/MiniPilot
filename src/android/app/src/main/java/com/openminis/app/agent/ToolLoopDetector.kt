@@ -223,6 +223,21 @@ class ToolLoopDetector(private val config: ToolLoopConfig = ToolLoopConfig()) {
             }
         }
 
+        // [T-loop-nonpoll-escalation] Non-poll tools previously only ever got
+        // the generic `generic_repeat` WARNING no matter how many times the
+        // SAME call returned the SAME failing result — the field case was
+        // hub_call with empty args failing 14 times in a row (self-improve
+        // card 2026-11-22-91f2a642-1). Escalate an identical no-progress
+        // streak to CRITICAL at the same bar poll tools already use.
+        if (!isPollTool(toolName, params) && noProgressStreak >= config.criticalThreshold) {
+            val msg = "[LOOP BLOCKED] CRITICAL: $toolName has produced the same " +
+                "no-progress result $noProgressStreak times with identical arguments. " +
+                "Stop retrying and report the task as failed."
+            AppLogger.warning("ToolLoopDetector",
+                "CRITICAL non_poll_no_progress tool=$toolName streak=$noProgressStreak")
+            return LoopCheckResult(Level.CRITICAL, msg)
+        }
+
         // 4. generic_repeat — non-poll tools only; counts non-consecutive hits
         //    so flaky-but-progressing calls eventually fall out of the window.
         if (!isPollTool(toolName, params)) {

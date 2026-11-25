@@ -592,9 +592,19 @@ class MainActivity : ComponentActivity() {
                                     SessionActivityTracker.setPresent(sid)
                                 }
                                 currentChatSessionId = sid
-                                // [T-wake-current-chat] The wake conversation
-                                // targets the chat the user is looking at.
-                                SessionActivityTracker.setVisibleChatSession(sid)
+                                // [T-wake-current-chat] The route is NOT a
+                                // reliable source for the visible chat: the
+                                // list and a chat share this scaffold, and an
+                                // in-pane switch never changes the route, so a
+                                // claim made here can name a chat the user has
+                                // since left (observed 2026-11-22: viewing
+                                // 6443d25e, wake landed in 5ae83322). The pane's
+                                // ChatScreen publishes the chat it is actually
+                                // rendering; here we only withdraw the claim
+                                // when the route stops being a chat.
+                                if (sid == null) {
+                                    SessionActivityTracker.setVisibleChatSession(null)
+                                }
                             }
                         }
                     }

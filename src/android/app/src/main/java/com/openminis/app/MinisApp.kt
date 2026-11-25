@@ -858,6 +858,29 @@ class MinisApp : Application(), ImageLoaderFactory {
         // up the binder lifecycle listeners + StateFlow.
         NativeOffloadServer.register("android-shizuku-cli", ShizukuOffloadHandler(this))
         com.openminis.app.offload.ShizukuManager.init(this)
+        // [T-android-settings-shell-helper] While Shizuku is up, keep a detached
+        // uid=shell settings helper alive so non-public Settings.System keys
+        // (SmartModeStatus) stay writable after Shizuku is stopped. Driven by the
+        // Shizuku state flow, not a one-shot retry, so restarting Shizuku later
+        // re-seeds without an app restart. Never on the main thread.
+        if (BuildConfig.DEV_TOOLS) {
+            val app = this
+            Thread({
+                try {
+                    kotlinx.coroutines.runBlocking {
+                        com.openminis.app.offload.ShizukuManager.snapshot.collect { snap ->
+                            if (snap.state == com.openminis.app.offload.ShizukuManager.State.READY) {
+                                runCatching {
+                                    com.openminis.app.sandbox.offload.ShellSettingsHelper.ensureSeeded(app)
+                                }
+                            }
+                        }
+                    }
+                } catch (_: Throwable) {
+                    // A seeding problem must never escape into app startup.
+                }
+            }, "settings-helper-seed").apply { isDaemon = true }.start()
+        }
 
         // T-android-minis-debug-cli: shell-side CLI wrapper around the in-app
         // DebugServer (127.0.0.1:5321) JSON-RPC. DEBUG-only — Release builds

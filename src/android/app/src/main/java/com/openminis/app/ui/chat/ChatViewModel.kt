@@ -953,6 +953,18 @@ class ChatViewModel(
      */
     @Volatile internal var debugSystemPromptAppend: String? = null
 
+    /**
+     * [T-wake-origin-hint] One-turn context hint set by the caller right before
+     * a send and cleared by it afterwards (currently the wake conversation:
+     * "this turn came from voice wake"). Appended at the tail of the system
+     * prompt so an ambiguous utterance like 「你不能一直听着呀」 can be resolved
+     * against the voice-assistant context instead of the previous turn's
+     * topic — the field misfire where the agent read it as "stop the music"
+     * and created a scheduled task (self-improve card 2026-11-22-57cc96fd-1).
+     * Null for every ordinary turn; never written to the DB.
+     */
+    @Volatile internal var turnContextHint: String? = null
+
     /** [T-port-user-ask-recovery] Persistence + recovery hooks; idempotent. */
     private fun ensureUserAskRecovery() {
         com.openminis.app.agent.userask.UserAskRecoveryCoordinator.ensureInstalled(
@@ -12744,6 +12756,10 @@ class ChatViewModel(
             // and logged that number — field log: "dynamicMaxTokens: 8730" while
             // the request went out with 16384. Removed.
             val toolCalls = mutableListOf<Triple<String, String, JSONObject>>() // id, name, args
+            // [T-toolcall-args-integrity] toolCallId → why its argument JSON
+            // could not be parsed (truncated stream or glued parallel deltas).
+            // Such a call must be refused, not executed on `{}`.
+            val invalidToolArgs = mutableMapOf<String, String>()
             // [T-android-gemini3-thoughtsig / #179] toolCallId -> Gemini 3.x
             // thoughtSignature for this turn's calls (null for other providers).
             val toolCallSignatures = mutableMapOf<String, String>()
@@ -13281,6 +13297,10 @@ class ChatViewModel(
                         // same value (matches the rename applied at start).
                         val toolCompleteId = dedupeToolCompleteId(chunk.id)
                         android.util.Log.d("ToolChain[VM]", "[turn=$turn] ToolCallComplete id=$toolCompleteId name=${chunk.name} args=${chunk.args.toString().take(300)}")
+                        // [T-toolcall-args-integrity] Remember a provider-side
+                        // parse failure so the dispatch below refuses the call
+                        // instead of executing it with `{}`.
+                        chunk.argsInvalidReason?.let { invalidToolArgs[toolCompleteId] = it }
                         toolCalls.add(Triple(toolCompleteId, chunk.name, chunk.args))
                         // [T-android-gemini3-thoughtsig / #179] Stash the Gemini
                         // 3.x thought signature keyed by the (deduped) tool call id.
@@ -13575,6 +13595,7 @@ class ChatViewModel(
                         turnTextBlockIdx = -1
                         turnThinking.clear()
                         toolCalls.clear()
+                        invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                         toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
                         // T94 fix 2 + T256: throttle bookkeeping is per-stream
                         // attempt; reset alongside the partial-block rollback so
@@ -13666,6 +13687,7 @@ class ChatViewModel(
                             turnTextBlockIdx = -1
                             turnThinking.clear()
                             toolCalls.clear()
+                            invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                             toolCallSignatures.clear()
                             continue
                         }
@@ -13799,6 +13821,7 @@ class ChatViewModel(
                         turnTextBlockIdx = -1
                         turnThinking.clear()
                         toolCalls.clear()
+                        invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                         toolCallSignatures.clear()  // [T-android-gemini3-thoughtsig / #179]
                         // loop continues — will retry collect with currentProvider
                     } else {
@@ -13849,6 +13872,7 @@ class ChatViewModel(
                 )
                 allToolBlocks.removeAll { it.kind == "tool_use" && it.id in refusedIds }
                 toolCalls.clear()
+                invalidToolArgs.clear()  // [T-toolcall-args-integrity]
                 withContext(Dispatchers.Main) {
                     updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
                 }
@@ -14660,6 +14684,48 @@ class ChatViewModel(
                                 content = blockedMsg,
                                 isError = true,
                             ))
+                            return@withPermit
+                        }
+
+                        // [T-toolcall-args-integrity] The provider could not
+                        // parse this call's argument JSON (truncated stream or
+                        // parallel deltas glued together) and marked it. Refuse
+                        // before execution: running `{}` loses the model's
+                        // intent silently and, in the field, produced 14
+                        // identical failing hub_call retries (self-improve
+                        // card 2026-11-22-91f2a642-1).
+                        val invalidArgsReason = invalidToolArgs[id]
+                        if (invalidArgsReason != null) {
+                            AppLogger.warning(
+                                "ToolPreflight",
+                                "REFUSED invalid-args tool=$name id=$id reason=\"$invalidArgsReason\""
+                            )
+                            val uiMessageInvalid = "Blocked invalid tool call"
+                            val modelMessageInvalid = "Error: Tool call rejected before execution. " +
+                                "$invalidArgsReason Nothing was executed. Re-issue this call with the " +
+                                "complete argument JSON; do not retry the same truncated call."
+                            val blockIdxInvalid = allToolBlocks.indexOfFirst { it.id == id }
+                            if (blockIdxInvalid >= 0) {
+                                val elapsedInvalid = System.currentTimeMillis() - allToolBlocks[blockIdxInvalid].startTimeMs
+                                allToolBlocks[blockIdxInvalid] = allToolBlocks[blockIdxInvalid].copy(
+                                    toolStatus = ToolBlockStatus.FAILED,
+                                    content = uiMessageInvalid,
+                                    durationMs = elapsedInvalid,
+                                )
+                            }
+                            toolLoopDetector.record(
+                                toolName = name, params = paramsMap,
+                                result = null, errorMessage = modelMessageInvalid, toolCallId = id
+                            )
+                            resultParts.add(AgentContentPart.ToolResult(
+                                id = id, name = name,
+                                content = modelMessageInvalid,
+                                isError = true,
+                            ))
+                            withContext(Dispatchers.Main) {
+                                updateAssistantMessage(assistantId, accumulatedText, true, allToolBlocks)
+                            }
+                            toolInputChunkRings.remove(id)
                             return@withPermit
                         }
 
@@ -17837,6 +17903,14 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
             if (harnessRules.isNotBlank()) {
                 append("\n\n")
                 append(harnessRules)
+            }
+            // [T-wake-origin-hint] One-turn modality hint (voice wake), set and
+            // cleared by HeadlessChatRunner around the turn.
+            turnContextHint?.let { hint ->
+                if (hint.isNotBlank()) {
+                    append("\n\n")
+                    append(hint)
+                }
             }
             // [T-probe-overlay] Debug-probe only: a candidate harness text
             // injected through chat.prompt's `systemPromptAppend` param. It is

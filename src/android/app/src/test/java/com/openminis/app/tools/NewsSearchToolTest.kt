@@ -46,6 +46,22 @@ class NewsSearchToolTest {
         assertEquals("英伟达", NewsSearchTool.normalizeQuery("英伟达最新消息"))
     }
 
+    /**
+     * [T-news-query-keywords] The field failure was "搜索一下今天的新闻": after
+     * stripping the command and the topic word, a bare "的" survived and became
+     * the query, so the feed answered 「“的”的新闻」. A topic-less request must
+     * collapse to the latest-headlines default instead.
+     */
+    @Test
+    fun `query normalization never leaves a bare particle`() {
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("搜索一下今天的新闻"))
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("播报一下新闻"))
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("今天的新闻"))
+        assertEquals("最新新闻", NewsSearchTool.normalizeQuery("查一下最近的消息"))
+        assertEquals("科技新闻", NewsSearchTool.normalizeQuery("搜索一下今天的科技新闻"))
+        assertEquals("财经新闻", NewsSearchTool.normalizeQuery("今天的有啥财经新闻"))
+    }
+
     @Test
     fun `rss parser extracts titles sources and plain summaries`() {
         val items = NewsSearchTool.parseRss(rssFixture)
@@ -56,6 +72,39 @@ class NewsSearchToolTest {
         assertEquals("英伟达 & 台积电 宣布合作", items[0].description)
         assertEquals("https://example.com/a", items[0].link)
         assertEquals("新浪科技", items[1].source)
+    }
+
+    @Test
+    fun `parser does not repeat the source when both title suffix and source tag exist`() {
+        // Field report 2026-11-23: Google News fills <source> AND appends
+        // " - Source" to the title, so the source was rendered (and spoken)
+        // twice. The earlier split ran only when the tag was missing.
+        val xml = """
+            <rss version="2.0"><channel>
+              <item>
+                <title>拦截、下架！红果短剧最新公告 - 中国宁波网</title>
+                <source url="https://example.com">中国宁波网</source>
+                <link>https://example.com/c</link>
+                <pubDate>Fri, 13 Nov 2026 09:30:00 GMT</pubDate>
+                <description>拦截、下架！红果短剧最新公告 中国宁波网</description>
+              </item>
+              <item>
+                <title>标题和来源不一致 - 别的网站</title>
+                <source url="https://example.com">中国宁波网</source>
+                <link>https://example.com/d</link>
+                <pubDate>Fri, 13 Nov 2026 09:30:00 GMT</pubDate>
+              </item>
+            </channel></rss>
+        """.trimIndent()
+        val items = NewsSearchTool.parseRss(xml)
+
+        assertEquals(2, items.size)
+        assertEquals("拦截、下架！红果短剧最新公告", items[0].title)
+        assertEquals("中国宁波网", items[0].source)
+        // The description repeated the headline verbatim → dropped.
+        assertTrue("summary should be dropped when it repeats the title", items[0].description.isBlank())
+        // A suffix that does not match the tag is part of the title.
+        assertEquals("标题和来源不一致 - 别的网站", items[1].title)
     }
 
     @Test

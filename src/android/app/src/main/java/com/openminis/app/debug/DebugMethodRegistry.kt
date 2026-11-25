@@ -99,6 +99,36 @@ object DebugMethodRegistry {
             ),
         ),
         MethodSpec(
+            name = "debug.systemSettings.write",
+            description = "[T-android-settings-direct-write] DEBUG-only: write a system setting (global/secure/system) with readback verification. Tiers: Shizuku -> direct WRITE_SECURE_SETTINGS -> detached shell helper (for non-public Settings.System keys when Shizuku is stopped). Returns {ok, backend, namespace, key, expected, actual}; a blank/mismatched readback is reported as ok=false (never a silent success).",
+            params = listOf(
+                ParamSpec("namespace", "string", required = true, description = "global | secure | system"),
+                ParamSpec("key", "string", required = true, description = "setting key, e.g. low_power"),
+                ParamSpec("value", "string", required = true, description = "value to store"),
+            ),
+            returns = "{ok, backend, namespace, key, expected, actual, error?}",
+            example = ex("namespace" to "global", "key" to "low_power", "value" to "1"),
+        ),
+        MethodSpec(
+            name = "debug.systemSettings.get",
+            description = "[T-android-settings-direct-write] DEBUG-only: read a system setting via the same bridge (fresh shell read when Shizuku is ready, else a direct read). Returns {value, backend}.",
+            params = listOf(
+                ParamSpec("namespace", "string", required = true, description = "global | secure | system"),
+                ParamSpec("key", "string", required = true, description = "setting key, e.g. low_power"),
+            ),
+            returns = "{namespace, key, value, backend}",
+            example = ex("namespace" to "global", "key" to "low_power"),
+        ),
+        MethodSpec(
+            name = "debug.systemSettings.helper",
+            description = "[T-android-settings-shell-helper] DEBUG-only: manage the detached uid=shell settings helper (the tier that writes non-public Settings.System keys while the Shizuku server is stopped). action=status|seed|stop. seed requires Shizuku READY; the helper then survives Shizuku being stopped until the device reboots.",
+            params = listOf(
+                ParamSpec("action", "string", required = false, description = "status (default) | seed | stop"),
+            ),
+            returns = "{alive, pid, dir, shizuku, lastError, ok?, stopped?}",
+            example = ex("action" to "status"),
+        ),
+        MethodSpec(
             name = "debug.modelUse.exec",
             description = "DEBUG-only: invoke ModelUseOffloadHandler directly with the given argv. Parallels debug.shizuku.exec — lets harnesses trigger `minis-model-use run/list/search` without an in-shell prompt.",
             params = listOf(
@@ -1124,6 +1154,7 @@ object DebugMethodRegistry {
                 ParamSpec("wait", "bool", required = false, default = false, description = "Block until completion."),
                 ParamSpec("waitTimeout", "int", required = false, default = 600, description = "Seconds; clamped to [1, 1800]."),
                 ParamSpec("systemPromptAppend", "string", required = false, description = "Probe-only: candidate harness text appended to this session VM's system prompt (A/B without rebuilding). Persists for the VM's lifetime."),
+                ParamSpec("turnHint", "string", required = false, description = "One-turn context hint appended to the system prompt for THIS prompt only (e.g. 'this turn came from voice wake'). Cleared when the prompt finishes; unlike systemPromptAppend it never persists into later turns."),
             ),
             returns = "{sessionId, isNewSession, modelName, status, prompt, responseText, userMessageId, timedOut?}",
             example = ex("prompt" to "Hello", "wait" to true),

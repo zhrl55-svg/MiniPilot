@@ -796,6 +796,45 @@ fun ChatScreen(
         com.openminis.app.diagnostics.JankDiag.enterScreen("chat")
         onDispose { com.openminis.app.diagnostics.JankDiag.leaveScreen("chat") }
     }
+    // [T-wake-current-chat] Publish the chat this screen is ACTUALLY showing to
+    // the wake pipeline. MainActivity's hook only watches the NavHost route, and
+    // opening or switching chats inside the list/detail pair never changes that
+    // route: the pane navigator owns list-vs-detail. So the tracker kept naming
+    // whatever chat a route navigation had last claimed (or nothing at all), and
+    // a spoken command was appended to a conversation the user had already left.
+    // Observed on device 2026-11-22 12:14: viewing 6443d25e, wake turned up in
+    // 5ae83322 — a chat the route had claimed earlier and nothing ever updated.
+    //
+    // Published from INSIDE the detail content on purpose. An earlier attempt
+    // published from ChatSplitScaffold, just above NavigableListDetailPane-
+    // Scaffold, and crashed on every launch. Compose's `remember` is positional:
+    // adding composables there (a conditionally-called `remember` among them)
+    // moved the slot its `rememberTransition()` lives in, so animation-core
+    // built a SECOND Transition for the SAME SeekableTransitionState — "An
+    // instance of SeekableTransitionState has been used in different
+    // Transitions" (MutableThreePaneScaffoldState.rememberTransition). This
+    // screen is the detail content, a separate composable below the scaffold;
+    // nothing here can move that group.
+    //
+    // `rememberPersistedId`, not `resolvePersistedId`: a draft that is promoted
+    // on its first send is aliased rather than re-keyed, so keying only on
+    // `sessionId` would publish `__new__…` forever.
+    //
+    // A DisposableEffect rather than LaunchedEffect + onDispose: publishing is a
+    // plain StateFlow write, and doing it synchronously means the tracker names
+    // this chat from the frame it appears. On the way out we withdraw only while
+    // the claim is still ours — during an in-pane switch the old screen can
+    // dispose AFTER the new one has claimed the slot, and an unconditional clear
+    // would wipe the newer, correct claim.
+    val wakeVisibleSessionId = ChatViewModelStore.rememberPersistedId(sessionId)
+    DisposableEffect(wakeVisibleSessionId) {
+        com.openminis.app.service.SessionActivityTracker
+            .setVisibleChatSession(wakeVisibleSessionId)
+        onDispose {
+            com.openminis.app.service.SessionActivityTracker
+                .clearVisibleChatSessionIfCurrent(wakeVisibleSessionId)
+        }
+    }
     val canResume by viewModel.canResume.collectAsState()
     // [T-android-context-usage-hint] Context-window pressure. `contextUsage`
     // is live (drives the glow on every usage chunk); `contextUsageHint` is

@@ -163,11 +163,11 @@ class WakeWordService : Service() {
 
         /**
          * How long the conversation survives after the window closed on an
-         * unfinished utterance.
+         * unfinished utterance when the VOICEPRINT GATE IS OFF.
          *
-         * The utterance still has to be transcribed, checked against the
-         * voiceprint and answered, and none of that may be cut short by the
-         * deadline that just expired.
+         * Only the pre-e2c0667 flush/sleep path uses this now. With the gate
+         * on, a failed verdict sleeps immediately — a 20 s grace there is what
+         * flushed the room's music into the chat for 28–48 s (owner, 2026-11-22).
          */
         private const val FLUSH_GRACE_MS = 20_000L
 
@@ -344,16 +344,37 @@ class WakeWordService : Service() {
     @Volatile
     private var conversationDeadline = 0L
 
+    /** When the current LISTENING phase began (elapsedRealtime), for the hard cap. */
+    @Volatile
+    private var conversationListeningSince = 0L
+
+    /** Bounded voiceprint graces used by the current listening phase. */
+    @Volatile
+    private var voiceprintGraceUsed = 0
+
+    /**
+     * Serialises [WakeVoiceprintGate.verify].
+     *
+     * sherpa's `SpeakerEmbeddingExtractor` is not safe for concurrent calls:
+     * the window-renewal check runs on the IO dispatcher while a request
+     * utterance may be verifying on its own coroutine. Two overlapping
+     * extractions corrupt the native stream (crash or garbage score), so
+     * every `verify` goes through this lock.
+     */
+    private val voiceprintLock = Any()
+
     /**
      * How long the assistant keeps listening for the request — user-tunable
      * (3–30 s, default 8 s), read live so a settings change applies to the
      * next window without restarting the service.
      *
      * A SILENCE window, not a speech cap: it starts at the wake hit / after
-     * the reply and is renewed while the VAD reports speech, so a long
-     * uninterrupted request is never cut off mid-sentence ("长语音只进去前半段").
-     * Once the speaker has been quiet for this long with nothing buffered,
-     * the assistant goes back to sleep.
+     * the reply and is renewed only when the buffered speech tail passes the
+     * OWNER's voiceprint, so a long uninterrupted request is never cut off
+     * mid-sentence ("长语音只进去前半段"). Once this long has passed with no
+     * owner speech, the assistant goes back to standby immediately — noise
+     * (music, a fan, a stranger) does not renew and is not delivered
+     * ([WakeListenWindowPolicy]).
      */
     private val conversationWindowMs: Long
         get() = WakeWordSettings.voiceSleepWindowMs.value
@@ -911,7 +932,7 @@ class WakeWordService : Service() {
             return true
         }
 
-        val score = gate.verify(pcm)
+        val score = synchronized(voiceprintLock) { gate.verify(pcm) }
         if (score == null) {
             AppLogger.info(TAG, "唤醒声纹无法校验，放行")
             return true
@@ -941,6 +962,8 @@ class WakeWordService : Service() {
         if (conversationState != ConversationState.IDLE) return
         conversationState = ConversationState.LISTENING
         conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
+        conversationListeningSince = SystemClock.elapsedRealtime()
+        voiceprintGraceUsed = 0
         // [T-music-pause-on-voice] 音乐会被麦克风录进去，也会盖住「我在」和
         // 用户的请求：整段语音对话期间暂停，回到待命时再恢复。
         suspendPlaybackForConversation()
@@ -959,7 +982,7 @@ class WakeWordService : Service() {
         // instead (see [acknowledge] / [onUtterance]).
         installVad()
         publish(VoiceWakePhase.LISTENING, "正在聆听")
-        AppLogger.info(TAG, "进入聆听状态")
+        AppLogger.info(TAG, "进入聆听状态 窗口=${conversationWindowMs / 1000}s")
         scope.launch { acknowledge() }
     }
 
@@ -1215,7 +1238,7 @@ class WakeWordService : Service() {
      * for the user: while the assistant is transcribing, thinking or talking,
      * the clock does not matter.
      */
-    private fun handleConversationTick(
+    private suspend fun handleConversationTick(
         now: Long,
         enabled: Boolean,
         permission: Boolean,
@@ -1243,6 +1266,13 @@ class WakeWordService : Service() {
                 append(" 剩余=")
                 append(((conversationDeadline - now) / 1000).coerceAtLeast(0))
                 append("s")
+                if (conversationState == ConversationState.LISTENING) {
+                    // Only meaningful inside a listening phase; VERIFYING、
+                    // TRANSCRIBING 期间这个起点已经过期。
+                    append(" 聆听=")
+                    append((now - conversationListeningSince) / 1000)
+                    append("s")
+                }
             }
             AppLogger.info(TAG, line)
             VoiceWakeState.trace(this, line)
@@ -1257,21 +1287,112 @@ class WakeWordService : Service() {
                 abortConversation("麦克风权限被收回")
                 publish(VoiceWakePhase.ERROR, "需要麦克风权限")
             }
+            conversationState == ConversationState.LISTENING &&
+                WakeListenWindowPolicy.listeningExpired(conversationListeningSince, now) -> {
+                AppLogger.info(TAG, "聆听已达 ${WakeListenWindowPolicy.MAX_LISTENING_MS / 1000}s 上限，回到待命")
+                VoiceWakeState.trace(this, "聆听上限到点，回到待命")
+                sleepConversation()
+            }
             conversationState == ConversationState.LISTENING && now > conversationDeadline -> {
-                // [T-voice-request-silence] The window is a SILENCE window:
-                // while the user is still speaking, renew it instead of
-                // flushing the sentence mid-word. A long request with no
-                // 1.2 s pause used to be cut here after 8 s, and only its
-                // first half reached the model. The VAD now decides the end
-                // of the request; this deadline only closes a quiet mic.
+                // [T-voice-window-voiceprint] The window is a SILENCE window,
+                // but only the OWNER's voice renews it. e2c0667 renewed on
+                // `isInSpeech` alone, and energy VAD calls a fan or a TV
+                // "speech" — the window then renewed itself forever (device
+                // log 2026-11-22: 138 次「正在说话」, 30 s → 5 min). The
+                // expiry runs the voiceprint once on the buffered tail:
+                // pass renews, "could not judge" gets a bounded grace.
+                //
+                // [T-voice-wake-sleep-on-fail] Owner, 2026-11-22: a failed
+                // verdict sleeps right away. 702e429 used to hand the buffered
+                // segment over once and add FLUSH_GRACE_MS on top, so the
+                // music playing in the room was flushed into the chat and the
+                // microphone stayed open for 28–48 s (log 16:58:21 /
+                // 16:59:39 「唤醒命令进入当前会话」). A long sentence is kept
+                // alive by the Renew branch, so nothing is delivered here.
                 val detector = vad
-                if (detector?.isInSpeech == true) {
-                    conversationDeadline = now + conversationWindowMs
-                } else if (detector?.flush() == true) {
-                    conversationDeadline = now + FLUSH_GRACE_MS
-                    AppLogger.info(TAG, "窗口到点，但 VAD 里还有半句，先处理")
+                if (!WakeWordSettings.voiceprintEnabled.value) {
+                    // A user who turned the voiceprint off keeps the
+                    // pre-e2c0667 flush/sleep behaviour, with the hard cap
+                    // as the backstop.
+                    if (detector?.flush() == true) {
+                        conversationDeadline = now + FLUSH_GRACE_MS
+                        AppLogger.info(TAG, "窗口到点，但 VAD 里还有半句，先处理")
+                    } else {
+                        sleepConversation()
+                    }
+                    return
+                }
+                val tail = detector?.currentSegmentTailPcm(WakeListenWindowPolicy.RENEW_TAIL_MS)
+                val score = if (tail != null) {
+                    withContext(Dispatchers.IO) {
+                        synchronized(voiceprintLock) { voiceprint.verify(tail) }
+                    }
                 } else {
-                    sleepConversation()
+                    null
+                }
+                if (conversationState != ConversationState.LISTENING) return // 判定期间状态已变
+                val threshold = WakeWordSettings.voiceprintThreshold.value
+                when (val d = WakeListenWindowPolicy.decide(
+                    hasSpeech = tail != null,
+                    score = score,
+                    threshold = threshold,
+                    graceUsed = voiceprintGraceUsed,
+                )) {
+                    is WakeListenWindowPolicy.Decision.Renew -> {
+                        conversationDeadline = now + conversationWindowMs
+                        voiceprintGraceUsed = 0
+                        AppLogger.info(
+                            TAG,
+                            "声纹续期 score=%.2f 阈值=%.2f，再听 ${conversationWindowMs / 1000}s".format(
+                                d.score,
+                                threshold,
+                            ),
+                        )
+                        VoiceWakeState.trace(this, "声纹续期 ${"%.2f".format(d.score)}")
+                    }
+                    is WakeListenWindowPolicy.Decision.NullGrace -> {
+                        voiceprintGraceUsed = d.attempt
+                        conversationDeadline = now + conversationWindowMs
+                        AppLogger.info(
+                            TAG,
+                            "声纹无法校验（第 ${d.attempt}/${WakeListenWindowPolicy.MAX_VOICEPRINT_GRACE} 次），" +
+                                "再给一个 ${conversationWindowMs / 1000}s 聆听窗口",
+                        )
+                        VoiceWakeState.trace(this, "声纹无法校验 ${d.attempt}")
+                    }
+                    WakeListenWindowPolicy.Decision.Sleep -> {
+                        val bufferedMs = detector?.bufferedSegmentMs ?: 0
+                        when {
+                            tail == null -> {
+                                AppLogger.info(TAG, "窗口到点，没有本人语音，回到待命")
+                                VoiceWakeState.trace(this, "窗口到点，无本人语音，休眠")
+                            }
+                            score == null -> {
+                                AppLogger.info(
+                                    TAG,
+                                    "窗口到点，声纹仍无法校验（宽限已用尽 " +
+                                        "${WakeListenWindowPolicy.MAX_VOICEPRINT_GRACE} 次），" +
+                                        "丢弃缓冲 ${bufferedMs}ms，回到待命",
+                                )
+                                VoiceWakeState.trace(this, "窗口到点，声纹无法校验，丢弃 ${bufferedMs}ms")
+                            }
+                            else -> {
+                                AppLogger.info(
+                                    TAG,
+                                    "窗口到点，声纹未通过 score=%.2f/阈值=%.2f，丢弃缓冲 %dms，回到待命".format(
+                                        score,
+                                        threshold,
+                                        bufferedMs,
+                                    ),
+                                )
+                                VoiceWakeState.trace(
+                                    this,
+                                    "窗口到点，声纹 ${"%.2f".format(score)} 未通过，丢弃 ${bufferedMs}ms",
+                                )
+                            }
+                        }
+                        sleepConversation()
+                    }
                 }
             }
             conversationState == ConversationState.VERIFYING && now > conversationDeadline -> {
@@ -1366,6 +1487,17 @@ class WakeWordService : Service() {
         // assistant's own words are sent back to it as a request.
         val overlapsAck = ackStartedAt > 0L && (ackPlaying || now < echoDeadline)
         val raw = transcribeOffline(pcm)
+        // [T-voice-wake-sleep-on-fail] The listening window may have closed
+        // while this segment was being transcribed (voiceprint failed →
+        // standby), or the user may already have woken a fresh conversation.
+        // Audio from an older listening phase must not resurrect a
+        // conversation or hijack the new one.
+        if (conversationState != ConversationState.LISTENING || destroying) {
+            val ms = pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+            AppLogger.info(TAG, "识别期间状态已变，丢弃 ${ms}ms")
+            VoiceWakeState.trace(this, "识别期间状态已变，丢弃 ${ms}ms")
+            return
+        }
         if (raw.isNullOrBlank()) {
             AppLogger.info(TAG, "识别结果为空，继续聆听")
             VoiceWakeState.trace(this, "识别结果为空，继续聆听")
@@ -1387,6 +1519,14 @@ class WakeWordService : Service() {
             AppLogger.info(TAG, "声纹不通过，忽略这句话")
             VoiceWakeState.trace(this, "声纹不通过，忽略")
             publish(VoiceWakePhase.LISTENING, "等待本人说话")
+            return
+        }
+        // The voiceprint check can take a moment too; do not clobber a state
+        // that moved on in the meantime (standby or a new wake).
+        if (conversationState != ConversationState.LISTENING || destroying) {
+            val ms = pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+            AppLogger.info(TAG, "声纹判定期间状态已变，丢弃 ${ms}ms")
+            VoiceWakeState.trace(this, "声纹判定期间状态已变，丢弃 ${ms}ms")
             return
         }
 
@@ -1571,11 +1711,16 @@ class WakeWordService : Service() {
     private fun resumeListening(renewWindow: Boolean) {
         if (conversationState != ConversationState.REPLYING) return
         conversationState = ConversationState.LISTENING
+        // A reply ends the previous listening phase: the hard cap and the
+        // voiceprint grace budget start over for the next one.
+        conversationListeningSince = SystemClock.elapsedRealtime()
+        voiceprintGraceUsed = 0
         if (renewWindow) {
             conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         }
         installVad()
         publish(VoiceWakePhase.LISTENING, "正在聆听")
+        AppLogger.info(TAG, "回到聆听 窗口=${conversationWindowMs / 1000}s 续期=$renewWindow")
     }
 
     /**
@@ -1593,7 +1738,7 @@ class WakeWordService : Service() {
             gate.enrollIfAbsent(pcm, ENROLL_MIN_SECONDS)
             return true
         }
-        val score = gate.verify(pcm) ?: return true
+        val score = synchronized(voiceprintLock) { gate.verify(pcm) } ?: return true
         val threshold = WakeWordSettings.voiceprintThreshold.value
         val ok = score >= threshold
         AppLogger.info(
@@ -1667,7 +1812,7 @@ class WakeWordService : Service() {
         resumePlaybackAfterConversation()
         engine?.setDetecting(true)
         publish(VoiceWakePhase.WAITING, "等待唤醒词「${WakeWordSettings.wakeWord.value}」")
-        AppLogger.info(TAG, "8 秒内没有通过声纹的语音，回到待命")
+        AppLogger.info(TAG, "回到待命（聆听窗口 ${conversationWindowMs / 1000}s 内没有本人语音）")
     }
 
     /** Something interrupted the conversation (in-app voice input, disabled). */

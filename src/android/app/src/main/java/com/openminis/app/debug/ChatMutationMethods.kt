@@ -90,6 +90,11 @@ internal object ChatMutationMethods {
         // system prompt (A/B without rebuilding). Absent in normal use.
         val systemPromptAppend = if (params.has("systemPromptAppend") && !params.isNull("systemPromptAppend"))
             params.optString("systemPromptAppend").ifEmpty { null } else null
+        // [T-wake-origin-hint] One-turn context hint (modality/origin). Same
+        // lifetime contract as the caller's turn — removed when the prompt
+        // finishes. Exposed here so the wake path and debug probes share it.
+        val turnHint = if (params.has("turnHint") && !params.isNull("turnHint"))
+            params.optString("turnHint").ifEmpty { null } else null
         val result = HeadlessChatRunner.prompt(
             context = context,
             sessionId = sessionId,
@@ -99,6 +104,7 @@ internal object ChatMutationMethods {
             wait = wait,
             timeoutMs = timeoutSec * 1000L,
             systemPromptAppend = systemPromptAppend,
+            turnHint = turnHint,
         )
 
         // Re-read DB to pick up the latest message metadata after the run.

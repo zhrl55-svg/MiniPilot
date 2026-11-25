@@ -251,6 +251,30 @@ class DebugRPCHandler(private val context: Context) {
                 }
                 handleA11yExec(params)
             }
+            // [T-android-settings-direct-write] Verified system-settings write/read
+            // through SystemSettingsBridge (Shizuku first, direct WRITE_SECURE_SETTINGS
+            // fallback). Lets harnesses prove the fallback works with Shizuku stopped.
+            "debug.systemSettings.write" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleSystemSettingsWrite(params)
+            }
+            "debug.systemSettings.get" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleSystemSettingsGet(params)
+            }
+            // [T-android-settings-shell-helper] Inspect / seed / stop the detached
+            // uid=shell settings helper that carries non-public Settings.System
+            // writes when the Shizuku server is stopped.
+            "debug.systemSettings.helper" -> {
+                if (!BuildConfig.DEV_TOOLS) {
+                    throw RPCException(-32601, "Method not found: $method. Call 'rpc.discover' to list available methods.")
+                }
+                handleSystemSettingsHelper(params)
+            }
             // [T-multi-select-share] Share Chat picker / export, served by the
             // ChatScreen showing the session (iOS parity, DEBUG only).
             "debug.chatShare.openPicker" -> {
@@ -1321,6 +1345,81 @@ class DebugRPCHandler(private val context: Context) {
             put("output", result.output)
             put("argv", JSONArray(argvTail))
         }
+    }
+
+    /**
+     * [T-android-settings-direct-write] DEBUG-only verified system-settings write
+     * through [com.openminis.app.sandbox.offload.SystemSettingsBridge]. Proves the
+     * direct-write fallback works without Shizuku, and that a blank/mismatched
+     * readback is reported as failure. Gated in [dispatch].
+     */
+    private fun handleSystemSettingsWrite(params: JSONObject): JSONObject {
+        val ns = params.optString("namespace")
+        val key = params.optString("key")
+        val value = params.optString("value")
+        if (!com.openminis.app.sandbox.offload.SystemSettingsBridge.isValidNamespace(ns)) {
+            throw RPCException(-32602, "namespace must be global, secure or system")
+        }
+        if (key.isBlank()) throw RPCException(-32602, "key is required")
+        val res = com.openminis.app.sandbox.offload.SystemSettingsBridge.write(context, ns, key, value)
+        return JSONObject().apply {
+            put("ok", res.ok)
+            put("backend", res.backend?.name?.lowercase() ?: "none")
+            put("namespace", ns)
+            put("key", key)
+            put("expected", res.expected)
+            put("actual", res.actual ?: JSONObject.NULL)
+            res.error?.let { put("error", it) }
+        }
+    }
+
+    private fun handleSystemSettingsGet(params: JSONObject): JSONObject {
+        val ns = params.optString("namespace")
+        val key = params.optString("key")
+        if (!com.openminis.app.sandbox.offload.SystemSettingsBridge.isValidNamespace(ns)) {
+            throw RPCException(-32602, "namespace must be global, secure or system")
+        }
+        if (key.isBlank()) throw RPCException(-32602, "key is required")
+        val r = com.openminis.app.sandbox.offload.SystemSettingsBridge.read(context, ns, key)
+        return JSONObject().apply {
+            put("namespace", ns)
+            put("key", key)
+            put("value", r.value ?: JSONObject.NULL)
+            put("backend", r.backend.name.lowercase())
+        }
+    }
+
+    /**
+     * [T-android-settings-shell-helper] status | seed | stop for the detached
+     * shell helper. `seed` needs Shizuku READY (the spawn itself must run as
+     * shell uid); `stop` works without it because the app owns the token file.
+     */
+    private fun handleSystemSettingsHelper(params: JSONObject): JSONObject {
+        val helper = com.openminis.app.sandbox.offload.ShellSettingsHelper
+        val shizuku = com.openminis.app.offload.ShizukuManager.snapshot.value.state.name
+        return when (val action = params.optString("action", "status")) {
+            "status" -> helperJson(helper.status(context), shizuku)
+            "seed" -> {
+                val ok = helper.ensureSeeded(context)
+                helperJson(helper.status(context), shizuku).put("ok", ok)
+            }
+            "stop" -> {
+                val stopped = helper.stop(context)
+                helperJson(helper.status(context), shizuku).put("stopped", stopped)
+            }
+            else -> throw RPCException(-32602, "action must be status|seed|stop (got '$action')")
+        }
+    }
+
+    private fun helperJson(
+        s: com.openminis.app.sandbox.offload.ShellSettingsHelper.Status,
+        shizuku: String,
+    ): JSONObject = JSONObject().apply {
+        put("alive", s.alive)
+        put("pid", s.pid ?: JSONObject.NULL)
+        put("dir", s.dir ?: JSONObject.NULL)
+        put("shizuku", shizuku)
+        put("lastError", s.lastError ?: JSONObject.NULL)
     }
 
     /**

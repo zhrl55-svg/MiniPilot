@@ -494,6 +494,40 @@ class LocalCapabilityExecutor(private val context: Context) {
         val value = args.optString("value")
         if (value.isBlank()) return NativeOffloadResult(2, "没有听清要设置的值。")
 
+        // [T-android-settings-direct-write] Battery-saver / performance are written
+        // straight to Settings.Global `low_power` via the verified bridge (Shizuku
+        // when available, otherwise the WRITE_SECURE_SETTINGS direct write). This
+        // works even when Shizuku is stopped — which the old open-the-page fallback
+        // did not — and a blank/mismatched readback is an error, not a success.
+        if (target in setOf("power_save", "battery_saver", "low_power", "performance", "battery")) {
+            val on = when (value.trim().lowercase()) {
+                "on", "true", "1", "enable", "enabled", "开", "开启", "打开", "省电", "省电模式", "节能" -> true
+                "off", "false", "0", "disable", "disabled", "关", "关闭", "关掉", "性能", "性能模式" -> false
+                else -> return NativeOffloadResult(2, "省电 / 性能开关需要「开」或「关」。")
+            }
+            // "打开性能" means battery saver OFF; everything else maps on -> low_power=1.
+            val lowPower = if (target == "performance") !on else on
+            val wanted = if (lowPower) "1" else "0"
+            val res = com.openminis.app.sandbox.offload.SystemSettingsBridge.write(
+                context, "global", "low_power", wanted,
+            )
+            if (!res.ok) {
+                return NativeOffloadResult(1, "省电模式未生效：${res.error ?: "读回与写入不一致"}")
+            }
+            return NativeOffloadResult(
+                0,
+                JSONObject()
+                    .put("changed", true)
+                    .put("target", target)
+                    .put("key", "low_power")
+                    .put("value", res.expected)
+                    .put("actual", res.actual ?: JSONObject.NULL)
+                    .put("backend", res.backend?.name?.lowercase() ?: "none")
+                    .put("verified", true)
+                    .toString(2),
+            )
+        }
+
         if (!ShizukuManager.isReady()) {
             val opened = openSettings(target)
             return NativeOffloadResult(
@@ -537,7 +571,18 @@ class LocalCapabilityExecutor(private val context: Context) {
                     "--ez", "state", if (value == "off") "false" else "true",
                 ),
             )
-            else -> return openSettings(target)
+            else -> {
+                // [T-android-settings-direct-write] Opening a settings page is NOT a
+                // successful change. This used to return exit 0 ("已打开设置页"), which
+                // reported success for a setting that was never written — the
+                // 2026-11-23 power-save false-success bug. Report it as a failure that
+                // asks the user to adjust manually.
+                val opened = openSettings(target)
+                return NativeOffloadResult(
+                    1,
+                    "无法直接修改「$target」，已打开对应设置页，请手动调整。\n${opened.output}",
+                )
+            }
         }
 
         val outputs = mutableListOf<String>()

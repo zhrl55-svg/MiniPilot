@@ -120,6 +120,11 @@ class WakeEnergyVad(
     @get:Synchronized
     val isInSpeech: Boolean get() = inSpeech
 
+    /** Length of the utterance being accumulated — diagnostics only. */
+    @get:Synchronized
+    val bufferedSegmentMs: Int
+        get() = segment.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+
     private var lastRmsValue = 0.0
     private var framesFed = 0
 
@@ -237,6 +242,27 @@ class WakeEnergyVad(
         val pcm = segment.toShortArray()
         segment.clear()
         commitSegment(pcm, if (cutBySilence) "静音" else "上限")
+    }
+
+    /**
+     * Snapshot of the tail of the segment being accumulated.
+     *
+     * The listening window uses this to run the voiceprint once, at the
+     * moment the window would otherwise expire: the energy VAD stays "in
+     * speech" on a noisy room forever, and only the owner's voice may renew
+     * the window. Returns null while no utterance is open — there is nothing
+     * to judge, and the caller must not treat "no audio" as "not the owner".
+     *
+     * Detached copy on purpose: the capture thread keeps appending to
+     * [segment] while the extractor runs on another thread.
+     */
+    @Synchronized
+    fun currentSegmentTailPcm(tailMs: Int): ShortArray? {
+        if (!inSpeech || segment.isEmpty()) return null
+        val want = (tailMs.coerceAtLeast(0).toLong() * WakeAudioCapture.SAMPLE_RATE / 1000).toInt()
+        if (want <= 0) return null
+        val from = (segment.size - want).coerceAtLeast(0)
+        return ShortArray(segment.size - from) { segment[from + it] }
     }
 
     /**

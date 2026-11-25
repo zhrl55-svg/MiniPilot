@@ -67,10 +67,16 @@ object NewsSearchTool {
         description = "Search recent news headlines with Google News RSS. Returns up to 5 " +
             "items with title, source, publish time and a short summary. Prefer this for " +
             "\"latest news\", tech/finance/entertainment headlines and \"what happened today\" " +
-            "questions. Use browser_use when the user needs the full article text.",
+            "questions. Use browser_use when the user needs the full article text. " +
+            // [T-news-query-keywords] Rule 2026-11-22-0c91b94d-1: the model passed
+            // the user's whole sentence as `query`, degrading the search to
+            // meaningless keywords. State the contract on the tool itself.
+            "`query` takes a topic or 2-4 keywords — never the user's sentence or an " +
+            "instruction such as \"搜索一下今天的新闻\"; for a generic \"today's news\" " +
+            "request leave `query` empty (empty means latest headlines).",
         parameters = mapOf(
             "tool_title" to AgentToolParam("string", "A concise 5-10 word summary of what this tool call does, shown to the user. Use the same language as the user."),
-            "query" to AgentToolParam("string", "News topic, e.g. \"人工智能\", \"财经\", \"英伟达\". Empty means latest headlines."),
+            "query" to AgentToolParam("string", "News topic or 2-4 keywords, e.g. \"人工智能\", \"财经\", \"英伟达\". Pass only the topic — not the user's sentence and not an instruction. Empty means latest headlines (use it for \"新闻\"/\"今天有什么新闻\")."),
             "range" to AgentToolParam(
                 "string",
                 "\"auto\" (default): last 24h, widened to 7 days when fewer than `limit` items. " +
@@ -282,19 +288,31 @@ object NewsSearchTool {
             val sourceTag = childText(item, "source")
             val link = childText(item, "link").ifBlank { childAttribute(item, "link", "href") }
 
-            // Google News often appends " - Source" to the title and leaves
-            // <source> empty. Split only when the tag is missing.
+            // Google News appends " - Source" to the title AND (usually) fills
+            // <source>. Stripping only when the tag was missing printed every
+            // source twice in the transcript — and the TTS read it twice,
+            // because it speaks the rendered result (field report
+            // 2026-11-23). Drop the suffix whenever it matches the source.
             val splitAt = rawTitle.lastIndexOf(" - ")
-            val source = sourceTag.ifBlank {
-                if (splitAt > 0) rawTitle.substring(splitAt + 3) else "新闻来源"
-            }
-            val title = if (sourceTag.isBlank() && splitAt > 0) {
+            val inferred = if (splitAt > 0) rawTitle.substring(splitAt + 3).trim() else ""
+            val source = sourceTag.ifBlank { inferred.ifBlank { "新闻来源" } }
+            val title = if (splitAt > 0 && inferred.isNotEmpty() && inferred == source) {
                 rawTitle.substring(0, splitAt)
             } else {
                 rawTitle
             }
             val description = plainText(childText(item, "description")).take(MAX_DESCRIPTION)
-            out += NewsItem(title.trim(), source.trim(), link.trim(), publishedAt, description)
+            // Google News repeats the headline in <description> — sometimes as
+            // "Title Source" with no separator. Showing it as 摘要 printed (and
+            // spoke) the same sentence twice.
+            val norm = { s: String -> s.replace(Regex("\\s+"), "").trim() }
+            val titleNorm = norm(title)
+            val summary = description.takeIf {
+                val d = norm(it)
+                d.isNotBlank() && d != titleNorm && d != norm(rawTitle) &&
+                    d != titleNorm + norm(source)
+            }.orEmpty()
+            out += NewsItem(title.trim(), source.trim(), link.trim(), publishedAt, summary)
         }
         return out.distinctBy { it.title to it.source }
     }
@@ -383,6 +401,14 @@ object NewsSearchTool {
         q = q.replace(Regex("^(?:今天|今日|现在|目前|刚刚|这几天|这两天)\\s*"), "")
         q = q.trim(' ', '，', ',', '。', '.', '？', '?', '！', '!', '：', ':', '；', ';')
         q = q.removeSuffix("吧").removeSuffix("吗").removeSuffix("呢").trim()
+        // [T-news-query-keywords] Removing the topic word used to leave a bare
+        // particle behind: "搜索一下今天的新闻" -> "今天的新闻" -> "今天的 " ->
+        // "的", which then became the query "的" and the feed answered
+        // 「“的”的新闻」 (self-improve card 2026-11-22-0c91b94d-1). Drop
+        // leading/dangling particles so an empty topic falls back to the
+        // latest-headlines default instead of searching for a stop word.
+        q = q.replace(Regex("^[的了啊呀哦呢嘛着过]+"), "").trim()
+        q = q.replace(Regex("\\s[的了啊呀哦呢嘛着过]\\s"), " ").trim()
 
         if (q.isBlank()) {
             return when {
@@ -424,7 +450,17 @@ object NewsSearchTool {
     }
 
     private fun format(query: String, items: List<NewsItem>, rangeLabel: String): String = buildString {
-        append("“").append(query).append("”的新闻，范围：").append(rangeLabel)
+        // [T-news-query-keywords] The default query is already "最新新闻", so
+        // the old "“$query”的新闻" header read 「“最新新闻”的新闻」. Keep the
+        // quoted form only when the query is a bare topic.
+        val topicLabel = if (query.endsWith("新闻") || query.endsWith("资讯") ||
+            query.endsWith("动态") || query.endsWith("头条")
+        ) {
+            query
+        } else {
+            "“$query”的新闻"
+        }
+        append(topicLabel).append("，范围：").append(rangeLabel)
         append("（共 ").append(items.size).append(" 条）\n")
         items.forEachIndexed { index, item ->
             append('\n').append(index + 1).append(". ").append(item.title.take(MAX_TITLE))
