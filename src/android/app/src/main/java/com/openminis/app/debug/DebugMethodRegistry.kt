@@ -40,7 +40,11 @@ object DebugMethodRegistry {
         buildList {
             addAll(BASE_METHODS)
             addAll(NetDebugMethods.specs)
-            if (BuildConfig.DEV_TOOLS) addAll(DEBUG_ONLY_METHODS)
+            if (BuildConfig.DEV_TOOLS) {
+                addAll(DEBUG_ONLY_METHODS)
+                // [T-android-debug-prefs-rpc] SharedPreferences read/write RPCs.
+                addAll(PrefsDebugMethods.specs)
+            }
         }
     }
 

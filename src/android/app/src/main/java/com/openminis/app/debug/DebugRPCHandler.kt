@@ -92,6 +92,9 @@ class DebugRPCHandler(private val context: Context) {
             "debug.backup.remotes.remove" -> BackupDebugMethods.remotesRemove(context, params)
             // [T-net-android-phase0] Embedded Tailscale node.
             in NetDebugMethods.names -> NetDebugMethods.dispatch(context, method, params)
+            // [T-android-debug-prefs-rpc] SharedPreferences read/write (DEV_TOOLS only;
+            // each entry re-checks BuildConfig.DEV_TOOLS inside PrefsDebugMethods).
+            in PrefsDebugMethods.names -> PrefsDebugMethods.dispatch(context.applicationContext, method, params)
             "debug.subAgents.list" -> BackupDebugMethods.subAgentsList(context)
             "debug.subAgents.upsert" -> BackupDebugMethods.subAgentsUpsert(context, params)
             "debug.subAgents.delete" -> BackupDebugMethods.subAgentsDelete(context, params)
