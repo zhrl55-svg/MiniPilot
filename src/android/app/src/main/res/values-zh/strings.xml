@@ -165,6 +165,11 @@
     <!-- [T-android-voice-synthesis-settings] 系统语音与云端 TTS 模型 -->
     <string name="settings_voice_synthesis">语音合成</string>
     <string name="settings_voice_synthesis_current">当前：%1$s</string>
+    <!-- [T-android-ondevice-models] 设置行：手动下载不随 APK 分发端侧模型 -->
+    <string name="settings_ondevice_models">端侧模型</string>
+    <string name="settings_ondevice_models_none">未下载模型</string>
+    <string name="settings_ondevice_models_some">已下载 %1$d/2</string>
+    <string name="settings_ondevice_models_downloading">下载中…</string>
     <string name="settings_agent_runtime_subtitle">工具、技能、记忆、MCP 与运行时模型</string>
     <string name="settings_context_entry_subtitle">时间、电量、网络、位置、通知、屏幕文本</string>
     <string name="settings_section_general">通用</string>
@@ -1325,6 +1330,32 @@
     <!-- [T-android-voice-synthesis-settings] 设置 › 语音合成 页面 -->
     <string name="voice_synthesis_title">语音合成</string>
     <string name="voice_synthesis_intro">选择朗读回复和选中内容时使用的声音。系统语音在本机运行；云端合成使用已配置的语音供应商。</string>
+    <!-- [T-android-ondevice-models] 设置 › 端侧模型 页面 -->
+    <string name="ondevice_models_title">端侧模型</string>
+    <string name="ondevice_models_intro">这些模型不随应用一起安装。下载后，语音识别与助理快速路径可以完全在本机运行；随时删除即可释放空间。</string>
+    <string name="ondevice_models_source_note">下载完成后会校验 SHA-256 再使用。文件来自 ModelScope 与 Hugging Face 镜像，实际由其中任一提供。</string>
+    <string name="ondevice_section_asr">语音识别</string>
+    <string name="ondevice_section_fast_llm">快路径小模型</string>
+    <string name="ondevice_asr_name">SenseVoice Small（int8）</string>
+    <string name="ondevice_asr_desc">支持中文、英文、日语、韩语和粤语；语音输入与唤醒转写无需联网。</string>
+    <string name="ondevice_fast_llm_name">Pocket 0.3B（int4）</string>
+    <string name="ondevice_fast_llm_desc">开启助理快速路径后，用它生成简短的本地回复并路由意图；需要 arm64 设备。</string>
+    <string name="ondevice_status_installed">已安装 · %1$s</string>
+    <string name="ondevice_status_missing">未安装 · %1$s</string>
+    <string name="ondevice_status_partial">未安装 · 已下载 %1$s，可继续</string>
+    <string name="ondevice_status_downloading_short">下载中…</string>
+    <string name="ondevice_status_verifying">校验中…</string>
+    <string name="ondevice_status_failed">下载失败</string>
+    <string name="ondevice_status_downloading">正在下载 %1$d%% · %2$s / %3$s</string>
+    <string name="ondevice_action_download">下载</string>
+    <string name="ondevice_action_resume">继续下载</string>
+    <string name="ondevice_action_cancel">取消</string>
+    <string name="ondevice_action_delete">删除</string>
+    <string name="ondevice_download_title">下载 %1$s？</string>
+    <string name="ondevice_download_body">将下载约 %1$s，建议在 Wi-Fi 下进行。</string>
+    <string name="ondevice_delete_title">删除 %1$s？</string>
+    <string name="ondevice_delete_body">可释放 %1$s。再次下载前，该功能会回退到云端或系统处理。</string>
+    <string name="ondevice_abi_unavailable">该模型需要 arm64 设备，当前 CPU 无法运行。</string>
     <string name="voice_synthesis_mode_header">合成方式</string>
     <string name="voice_synthesis_mode_system">系统语音</string>
     <string name="voice_synthesis_mode_system_desc">使用手机内置引擎，离线可用</string>
@@ -1339,10 +1370,12 @@
     <string name="voice_quality_very_high">高音质</string>
     <string name="voice_quality_high">标准</string>
     <string name="voice_synthesis_pitch_header">语音调校</string>
-    <string name="voice_synthesis_pitch_footer">系统语音的声学模型是固定的，这里只能微调音调和语速。如果听着生硬，优先换一个音色。</string>
+    <string name="voice_synthesis_pitch_footer">微调音调和语速。系统音色会自动选择，与每段回复的语言匹配。</string>
     <string name="voice_synthesis_pitch_natural">自然音调</string>
     <string name="voice_synthesis_pitch_low">偏低音调</string>
     <string name="voice_synthesis_pitch_high">偏高音调</string>
+    <string name="voice_synthesis_speed_header">语速</string>
+    <string name="voice_synthesis_speed_footer">拖动可在 0.5× 至 3× 之间调节；朗读回复和试听都会跟随，系统语音与云端合成均适用。</string>
     <string name="voice_synthesis_loading">正在读取系统音色…</string>
     <string name="voice_synthesis_system_empty">未检测到系统语音引擎</string>
     <string name="voice_synthesis_system_empty_desc">请在系统设置中安装或启用文字转语音服务。</string>
@@ -1849,6 +1882,7 @@
     <string name="backup_dest_no_password">无密码（匿名）</string>
     <string name="backup_dest_edit_failed">使用这些设置无法连接，因此未保存。%1$s</string>
     <string name="backup_dest_remove_footer">移除后将在本机忘记该服务器及其密码。服务器上已有的备份不会被删除。</string>
+    <string name="backup_dest_details">服务器详情</string>
     <string name="mount_folders_title">已挂载文件夹</string>
     <string name="mount_folders_info_banner">所选文件夹会被绑定到 /var/minis/mounts/&lt;name&gt;。最多可同时挂载 10 个文件夹。</string>
     <string name="mount_picker_intro_title">选择要挂载的文件夹</string>

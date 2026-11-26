@@ -25,6 +25,7 @@ import com.openminis.app.icons.outlined.Apps
 import com.openminis.app.icons.outlined.AutoAwesome
 import com.openminis.app.icons.outlined.Bolt
 import com.openminis.app.icons.outlined.Cloud
+import com.openminis.app.icons.outlined.CloudDownload
 import androidx.compose.material.icons.outlined.Notifications
 import androidx.compose.material.icons.outlined.Place
 import com.openminis.app.icons.outlined.Schedule
@@ -105,6 +106,8 @@ fun SettingsScreen(
     onDefaultModelsClick: () -> Unit = {},
     /** [T-android-voice-synthesis-settings] System voice or cloud TTS model. */
     onVoiceSynthesisClick: () -> Unit = {},
+    /** [T-android-ondevice-models] 手动下载语音识别与快路径端侧模型。 */
+    onOnDeviceModelsClick: () -> Unit = {},
     onUsageClick: () -> Unit = {},
     /** Settings › Agent Runtime: tools, skills, memory, MCP, runtime models. */
     onAgentRuntimeClick: () -> Unit = {},
@@ -164,6 +167,25 @@ fun SettingsScreen(
     } else {
         val label = listOfNotNull(systemVoiceText, systemVoiceLabel).joinToString(" · ")
         stringResource(R.string.settings_voice_synthesis_current, label)
+    }
+
+    // [T-android-ondevice-models] 端侧模型的状态行：模型不随 APK 安装，
+    // 新装用户从这里进入手动下载。
+    val onDeviceStates by com.openminis.app.ondevice.OnDeviceModelManager.states.collectAsState()
+    LaunchedEffect(Unit) { com.openminis.app.ondevice.OnDeviceModelManager.refreshAsync(context) }
+    val onDeviceSubtitle = when {
+        onDeviceStates.values.any { it.isBusy } ->
+            stringResource(R.string.settings_ondevice_models_downloading)
+        else -> {
+            val installed = com.openminis.app.ondevice.OnDeviceModelManager.specs.count { spec ->
+                onDeviceStates[spec.key]?.installed == true
+            }
+            if (installed == 0) {
+                stringResource(R.string.settings_ondevice_models_none)
+            } else {
+                stringResource(R.string.settings_ondevice_models_some, installed)
+            }
+        }
     }
     Scaffold(
         topBar = {
@@ -230,6 +252,16 @@ fun SettingsScreen(
                     title = stringResource(R.string.settings_voice_synthesis),
                     subtitle = voiceSubtitle,
                     onClick = onVoiceSynthesisClick,
+                )
+                // [T-android-ondevice-models] 语音识别（SenseVoice）与快路径小模型
+                // （Pocket 0.3B）都不进 APK；新装用户在这里下载，已装的显示进度/
+                // 容量。放在语音合成下面，因为它们同属「端侧运行」这一组选择。
+                SettingsItem(
+                    icon = Icons.Outlined.CloudDownload,
+                    iconColor = Color(0xFF34C759),
+                    title = stringResource(R.string.settings_ondevice_models),
+                    subtitle = onDeviceSubtitle,
+                    onClick = onOnDeviceModelsClick,
                 )
                 SettingsItem(
                     icon = Icons.Outlined.AutoAwesome,

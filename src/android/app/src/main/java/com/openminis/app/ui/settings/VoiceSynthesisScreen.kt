@@ -2,10 +2,17 @@ package com.openminis.app.ui.settings
 
 import android.content.Intent
 import android.provider.Settings
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -14,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -30,7 +38,6 @@ import com.openminis.app.speech.VoiceOutputState
 import com.openminis.app.speech.VoicePreviewPlayer
 import com.openminis.app.ui.components.SectionDesign
 import com.openminis.app.ui.components.SectionFooter
-import java.util.Locale
 
 /**
  * [T-android-voice-synthesis-settings] Settings › Speech synthesis, in two
@@ -38,7 +45,9 @@ import java.util.Locale
  *
  *   1. How should replies be spoken — the on-device engine, or a cloud vendor?
  *   2. Only then the details of that choice:
- *      • System → language, then a voice inside that language.
+ *      • System → Automatic only: the engine picks a voice matching the text
+ *        language. No manual language/voice list — that selection was removed
+ *        because it fought the per-reply language switch.
  *      • Cloud  → the provider, then its voice (MiniMax voice ids, or the
  *        provider's model entries for vendors whose entries ARE voices).
  *
@@ -74,6 +83,7 @@ fun VoiceSynthesisScreen(
     // [T-android-system-voice-tuning] Pitch is the framework's only prosody
     // control (no style/SSML); the row cycles 自然 / 偏低 / 偏高.
     val pitch by VoiceOutputState.pitch.collectAsState()
+    val speed by VoiceOutputState.speed.collectAsState()
 
     LaunchedEffect(Unit) {
         VoiceOutputState.init(context)
@@ -116,64 +126,20 @@ fun VoiceSynthesisScreen(
             }
     }
 
-    // ── Level 2, system branch: languages → voices in that language ──
-    val languageGroups = remember(systemVoices) {
-        val uiLocale = Locale.getDefault()
-        systemVoices
-            .groupBy { it.locale.language }
-            .map { (code, voices) ->
-                val name = runCatching {
-                    Locale.forLanguageTag(code).getDisplayName(uiLocale)
-                }.getOrDefault(code).ifBlank { code }
-                SystemLanguageGroup(code = code, label = name, voices = voices)
-            }
-        // groupBy keeps the catalog's own order: the UI language's voices
-        // first, then Chinese/English, then the rest.
+    // ── Level 2, system branch: Automatic only ──
+    // A saved manual voice would keep overriding the engine behind this
+    // screen's back, so clear it once. From here on the engine always picks
+    // the voice whose language matches each reply's text.
+    LaunchedEffect(systemVoiceName) {
+        if (systemVoiceName != null) VoiceOutputState.setSystemVoice(null, null)
     }
 
-    // Composite id for new picks; a legacy bare engine name still resolves to
-    // the first voice carrying it, which is what the old lookup used.
-    val currentSystemLanguage = systemVoices
-        .firstOrNull { it.id == systemVoiceName || it.name == systemVoiceName }
-        ?.locale?.language
-
-    // Local browse state for the two-step system flow. Null = "follow the
-    // saved voice" (and, when no voice is saved, the Automatic row).
-    var browsingLanguage by remember { mutableStateOf<String?>(null) }
-    val displayedLanguage = browsingLanguage
-        ?.takeIf { code -> languageGroups.any { it.code == code } }
-        ?: currentSystemLanguage
-
     fun useSystem() {
+        VoiceOutputState.setSystemVoice(null, null)
         providerRepository.voiceOutputOverrideEntryId = systemEntryId
     }
 
-    fun pickLanguage(group: SystemLanguageGroup) {
-        browsingLanguage = group.code
-        // Commit a concrete voice so the radio state always matches what the
-        // engine will actually use: the first voice of the picked language
-        // when the saved voice belongs to another one.
-        if (currentSystemLanguage != group.code) {
-            group.voices.firstOrNull()?.let { voice ->
-                VoiceOutputState.setSystemVoice(voice.id, voice.label)
-                useSystem()
-            }
-        }
-    }
-
-    fun pickSystemVoice(voice: SystemTtsVoiceCatalog.SystemVoice) {
-        browsingLanguage = voice.locale.language
-        // Composite id: the locale is part of the identity because OEM engines
-        // can report one name for several locale variants.
-        VoiceOutputState.setSystemVoice(voice.id, voice.label)
-        useSystem()
-    }
-
-    fun pickAutoSystemVoice() {
-        browsingLanguage = null
-        VoiceOutputState.setSystemVoice(null, null)
-        useSystem()
-    }
+    fun pickAutoSystemVoice() = useSystem()
 
     // ── Level 2, cloud branch: providers → voices ──
     val selectedCloudInstance = cloudEntry?.first
@@ -252,28 +218,18 @@ fun VoiceSynthesisScreen(
         }
 
         if (isSystemMode) {
-            // ── Level 2: language ──
+            // ── Level 2: automatic voice only ──
             SettingsSection(
                 header = stringResource(R.string.voice_synthesis_language_header),
                 footer = stringResource(R.string.voice_synthesis_system_footer),
             ) {
                 SettingsChoiceRow(
                     title = stringResource(R.string.voice_synthesis_auto),
-                    selected = displayedLanguage == null,
+                    selected = true,
                     onSelect = { pickAutoSystemVoice() },
-                    // Something always follows: language rows, the loading
-                    // row, or the empty-engine rows.
-                    showDivider = true,
+                    onPreview = { preview.previewSystem(null, previewSample) },
+                    showDivider = !voicesLoaded || systemVoices.isEmpty(),
                 )
-                languageGroups.forEachIndexed { index, group ->
-                    SettingsChoiceRow(
-                        title = group.label,
-                        selected = displayedLanguage == group.code,
-                        onSelect = { pickLanguage(group) },
-                        showDivider = index < languageGroups.lastIndex ||
-                            !voicesLoaded || systemVoices.isEmpty(),
-                    )
-                }
                 if (!voicesLoaded) {
                     SettingsRow(
                         title = stringResource(R.string.voice_synthesis_loading),
@@ -306,52 +262,9 @@ fun VoiceSynthesisScreen(
                     )
                 }
             }
+            SectionFooter(text = stringResource(R.string.voice_synthesis_auto_voice_note))
 
-            // ── Level 3: voice in the picked language ──
-            if (displayedLanguage == null) {
-                if (systemVoices.isNotEmpty()) {
-                    SectionFooter(text = stringResource(R.string.voice_synthesis_auto_voice_note))
-                }
-            } else {
-                val voices = languageGroups
-                    .firstOrNull { it.code == displayedLanguage }
-                    ?.voices
-                    .orEmpty()
-                if (voices.isNotEmpty()) {
-                    SettingsSection(
-                        header = stringResource(R.string.voice_synthesis_voice_header),
-                    ) {
-                        voices.forEachIndexed { index, voice ->
-                            SettingsChoiceRow(
-                                title = voice.label,
-                                // Locale tag + engine-reported quality: Huawei
-                                // reports "zh" for every Chinese variant, so the
-                                // quality word is what distinguishes rows.
-                                subtitle = listOfNotNull(
-                                    voice.locale.toLanguageTag().ifBlank { null },
-                                    when {
-                                        voice.quality >= 500 -> stringResource(R.string.voice_quality_very_high)
-                                        voice.quality >= 400 -> stringResource(R.string.voice_quality_high)
-                                        else -> null
-                                    },
-                                ).joinToString(" · "),
-                                selected = SystemTtsVoiceCatalog.isSelected(
-                                    voice,
-                                    systemVoiceName,
-                                    voices,
-                                ),
-                                onSelect = { pickSystemVoice(voice) },
-                                showDivider = index < voices.lastIndex,
-                                onPreview = {
-                                    preview.previewSystem(voice.id, previewSample)
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            // ── Level 4: prosody ──
+            // ── Level 3: prosody ──
             SettingsSection(
                 header = stringResource(R.string.voice_synthesis_pitch_header),
                 footer = stringResource(R.string.voice_synthesis_pitch_footer),
@@ -369,7 +282,37 @@ fun VoiceSynthesisScreen(
                     )
                 }
             }
-        } else {
+        }
+
+        // 语速同时作用于系统引擎与云端合成的朗读，因此放在两种模式之外。
+        // 连续滑动，0.05× 一档；系统语音与云端朗读共用 VoiceOutputState.speed。
+        SettingsSection(
+            header = stringResource(R.string.voice_synthesis_speed_header),
+            footer = stringResource(R.string.voice_synthesis_speed_footer),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = VoiceOutputState.speedLabel(speed),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Spacer(Modifier.width(12.dp))
+                Slider(
+                    value = speed,
+                    onValueChange = { VoiceOutputState.setSpeed(it) },
+                    valueRange = 0.5f..3f,
+                    steps = 50,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
+        if (!isSystemMode) {
             // ── Level 2: cloud provider ──
             SettingsSection(
                 header = stringResource(R.string.voice_synthesis_cloud_service_header),
@@ -475,13 +418,6 @@ fun VoiceSynthesisScreen(
         Spacer(Modifier.height(SectionDesign.SectionTopGap))
     }
 }
-
-/** One device language and the voices the TTS engine exposes for it. */
-private data class SystemLanguageGroup(
-    val code: String,
-    val label: String,
-    val voices: List<SystemTtsVoiceCatalog.SystemVoice>,
-)
 
 /** Provider + model summary for the Settings row, mirroring the capsule chip. */
 internal fun voiceSynthesisSummary(

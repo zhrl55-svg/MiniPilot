@@ -197,6 +197,11 @@
     <!-- [T-android-voice-synthesis-settings] System voice vs cloud TTS model. -->
     <string name="settings_voice_synthesis">Speech Synthesis</string>
     <string name="settings_voice_synthesis_current">Current: %1$s</string>
+    <!-- [T-android-ondevice-models] Settings row: manual downloads for models not shipped in the APK. -->
+    <string name="settings_ondevice_models">On-device Models</string>
+    <string name="settings_ondevice_models_none">No models downloaded</string>
+    <string name="settings_ondevice_models_some">%1$d of 2 downloaded</string>
+    <string name="settings_ondevice_models_downloading">Downloading…</string>
     <string name="settings_agent_runtime_subtitle">Tools, skills, memory, MCP and runtime models</string>
     <string name="settings_context_entry_subtitle">Time, battery, network, location, notifications, screen text</string>
     <string name="settings_section_general">General</string>
@@ -1429,6 +1434,32 @@
     <!-- [T-android-voice-synthesis-settings] Settings › Speech Synthesis page. -->
     <string name="voice_synthesis_title">Speech Synthesis</string>
     <string name="voice_synthesis_intro">Choose what reads replies and selected text aloud. System voices run on this device; cloud synthesis uses a configured speech provider.</string>
+    <!-- [T-android-ondevice-models] Settings › On-device Models page. -->
+    <string name="ondevice_models_title">On-device Models</string>
+    <string name="ondevice_models_intro">These models are not bundled with the app. Download them to run speech recognition and the assistant fast path entirely on this device; delete them at any time to free the space.</string>
+    <string name="ondevice_models_source_note">Downloads are verified with SHA-256 before use. Files come from ModelScope and Hugging Face mirrors; either source may serve them.</string>
+    <string name="ondevice_section_asr">Speech recognition</string>
+    <string name="ondevice_section_fast_llm">Fast-path small model</string>
+    <string name="ondevice_asr_name">SenseVoice Small (int8)</string>
+    <string name="ondevice_asr_desc">Chinese, English, Japanese, Korean and Cantonese. Powers voice input and wake-word transcription without a network.</string>
+    <string name="ondevice_fast_llm_name">Pocket 0.3B (int4)</string>
+    <string name="ondevice_fast_llm_desc">Answers quick local replies and routes intent when the assistant fast path is enabled. Needs an arm64 device.</string>
+    <string name="ondevice_status_installed">Installed · %1$s</string>
+    <string name="ondevice_status_missing">Not installed · %1$s</string>
+    <string name="ondevice_status_partial">Not installed · %1$s downloaded, can resume</string>
+    <string name="ondevice_status_downloading_short">Downloading…</string>
+    <string name="ondevice_status_verifying">Verifying…</string>
+    <string name="ondevice_status_failed">Download failed</string>
+    <string name="ondevice_status_downloading">Downloading %1$d%% · %2$s / %3$s</string>
+    <string name="ondevice_action_download">Download</string>
+    <string name="ondevice_action_resume">Resume</string>
+    <string name="ondevice_action_cancel">Cancel</string>
+    <string name="ondevice_action_delete">Delete</string>
+    <string name="ondevice_download_title">Download %1$s?</string>
+    <string name="ondevice_download_body">About %1$s will be downloaded. Wi-Fi is recommended.</string>
+    <string name="ondevice_delete_title">Delete %1$s?</string>
+    <string name="ondevice_delete_body">Frees %1$s. Until you download it again, this feature falls back to the cloud or the system.</string>
+    <string name="ondevice_abi_unavailable">This model needs an arm64 device and cannot run on this CPU.</string>
     <string name="voice_synthesis_mode_header">Synthesis type</string>
     <string name="voice_synthesis_mode_system">System voice</string>
     <string name="voice_synthesis_mode_system_desc">On-device engine, works offline</string>
@@ -1443,10 +1474,12 @@
     <string name="voice_quality_very_high">High quality</string>
     <string name="voice_quality_high">Standard</string>
     <string name="voice_synthesis_pitch_header">Voice tuning</string>
-    <string name="voice_synthesis_pitch_footer">The system voice model is fixed; these settings only fine-tune pitch and pace. If a voice sounds stiff, try another voice first.</string>
+    <string name="voice_synthesis_pitch_footer">Fine-tune pitch and pace. The system voice is chosen automatically to match the language of each reply.</string>
     <string name="voice_synthesis_pitch_natural">Natural pitch</string>
     <string name="voice_synthesis_pitch_low">Lower pitch</string>
     <string name="voice_synthesis_pitch_high">Higher pitch</string>
+    <string name="voice_synthesis_speed_header">Speech rate</string>
+    <string name="voice_synthesis_speed_footer">Drag to fine-tune from 0.5× to 3×. Applies to replies and previews, with both system and cloud voices.</string>
     <string name="voice_synthesis_loading">Loading system voices…</string>
     <string name="voice_synthesis_system_empty">No system speech engine detected</string>
     <string name="voice_synthesis_system_empty_desc">Install or enable a text-to-speech service in system settings.</string>

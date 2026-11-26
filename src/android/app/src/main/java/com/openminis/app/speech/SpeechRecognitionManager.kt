@@ -266,6 +266,41 @@ object SpeechRecognitionManager {
     private fun pickDefaultEngineId(): String =
         engines.firstOrNull { it.isAvailable }?.id ?: "system"
 
+    /**
+     * 端侧模型刚由设置页下载完（[com.openminis.app.ondevice.OnDeviceModelManager]）。
+     *
+     * [init] 里「端侧就绪 → 设为首选」只在进程启动时跑一次；运行期装好模型
+     * 必须主动补这一步，否则文件在位但引擎仍停在系统识别。
+     */
+    fun onLocalModelInstalled() {
+        if (!::appContext.isInitialized) return
+        val local = engines.filterIsInstance<LocalSenseVoiceEngine>().firstOrNull() ?: return
+        local.clearDegraded()
+        local.warmUp()
+        if (!prefs.getBoolean(KEY_LOCAL_PREFERRED, false)) {
+            prefs.edit().putBoolean(KEY_LOCAL_PREFERRED, true).apply()
+            selectEngine(local.id)
+            AppLogger.info("LocalAsr", "端侧 SenseVoice 下载完成，已设为默认识别引擎")
+        }
+        refreshAvailability()
+    }
+
+    /** 模型被删除：释放已载入的识别器，并把默认选择让回其它引擎。 */
+    fun onLocalModelRemoved() {
+        if (!::appContext.isInitialized) return
+        engines.filterIsInstance<LocalSenseVoiceEngine>().firstOrNull()?.onModelRemoved()
+        // 允许下次下载完成后重新自动选中端侧引擎。
+        prefs.edit().putBoolean(KEY_LOCAL_PREFERRED, false).apply()
+        if (_selectedEngineId.value == LocalSenseVoiceEngine.ENGINE_ID) {
+            val fallback = pickDefaultEngineId()
+            if (fallback != LocalSenseVoiceEngine.ENGINE_ID) {
+                _selectedEngineId.value = fallback
+                prefs.edit().putString(KEY_ENGINE_ID, fallback).apply()
+            }
+        }
+        refreshAvailability()
+    }
+
     fun selectEngine(id: String) {
         if (_selectedEngineId.value == id) return
         _selectedEngineId.value = id

@@ -57,7 +57,7 @@ class VoicePreviewPlayer(context: Context) {
             }
             if (gen != generation) return@launch
             manager.preferredVoiceName = voiceId
-            manager.speechRate = 1.0f
+            manager.speechRate = VoiceOutputState.speed.value
             manager.speechPitch = VoiceOutputState.pitch.value
             manager.speak(text)
         }
@@ -159,6 +159,16 @@ class VoicePreviewPlayer(context: Context) {
                 }
                 mp.prepare()
                 mp.start()
+                // 云端试听跟随设置页语速。与朗读链路一致：start() 后单独容错了再改速度，
+                // 某些 OEM MediaPlayer 在 prepared 状态下拒绝换速，不能让它吞掉音频。
+                val speed = VoiceOutputState.speed.value
+                if (speed != 1.0f) {
+                    runCatching {
+                        mp.playbackParams = mp.playbackParams.setSpeed(speed)
+                    }.onFailure {
+                        AppLogger.error(TAG, "preview playback speed $speed rejected by this ROM's MediaPlayer, playing at 1×: $it")
+                    }
+                }
             }.onFailure {
                 AppLogger.error(TAG, "preview MediaPlayer setup failed: $it")
                 finish()

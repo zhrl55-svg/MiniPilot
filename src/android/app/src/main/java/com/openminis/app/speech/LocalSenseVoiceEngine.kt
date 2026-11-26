@@ -340,6 +340,15 @@ class LocalSenseVoiceEngine(private val context: Context) : SpeechRecognitionEng
         degraded = false
     }
 
+    /** 模型目录刚被删除：释放已载入的识别器，isAvailable 随即回到 false。 */
+    fun onModelRemoved() {
+        synchronized(lock) {
+            runCatching { recognizer?.release() }
+            recognizer = null
+            recognizerPath = null
+        }
+    }
+
     /**
      * [T-android-voice-wake] Transcribe audio captured by somebody else.
      *

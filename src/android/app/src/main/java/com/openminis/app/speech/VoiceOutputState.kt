@@ -48,6 +48,13 @@ object VoiceOutputState {
     val SPEED_STEPS = floatArrayOf(1.0f, 1.25f, 1.5f, 2.0f)
 
     /**
+     * Finer speed steps for Settings › Voice Synthesis. The capsule's cycle
+     * stays coarse (and aligned with iOS), while the settings page can pick
+     * exact multipliers the user actually wants.
+     */
+    val VOICE_TUNING_SPEED_STEPS = floatArrayOf(1.0f, 1.1f, 1.15f, 1.2f, 1.25f, 1.5f)
+
+    /**
      * [T-android-system-voice-tuning] Pitch cycle for the system engine.
      * Android has no style/emotion API; small pitch shifts are the only
      * prosody lever apps control, and 0.1 steps stay natural on Huawei/iFlytek.
@@ -352,10 +359,15 @@ object VoiceOutputState {
         if (value) activePlayer?.stop()
     }
 
+    /**
+     * 设置页滑块会连续调用 [onValueChange]，这里 0.05× 量化一档再写盘：
+     * 既让界面读数稳定，也避免拖一次滑块做上百次 SharedPreferences 写。
+     */
     fun setSpeed(value: Float) {
-        if (_speed.value == value) return
-        _speed.value = value
-        prefs?.edit()?.putFloat(KEY_SPEED, value)?.apply()
+        val quantized = kotlin.math.round(value * 20f) / 20f
+        if (_speed.value == quantized) return
+        _speed.value = quantized
+        prefs?.edit()?.putFloat(KEY_SPEED, quantized)?.apply()
     }
 
     fun setPitch(value: Float) {
@@ -394,13 +406,17 @@ object VoiceOutputState {
 
     /** Cycle 1× → 1.25× → 1.5× → 2× → 1×. */
     fun nextSpeed() {
-        // Tolerance, not exact float equality: the current value round-trips
-        // through SharedPreferences.getFloat, and any future step that isn't
-        // exactly representable would miss, making idx -1 → the cycle would
-        // RESET to 1× instead of advancing. Today's steps happen to round-trip
-        // exactly; this stops that from being load-bearing.
         val idx = SPEED_STEPS.indexOfFirst { kotlin.math.abs(it - _speed.value) < 0.001f }
-        setSpeed(SPEED_STEPS[(if (idx < 0) 0 else idx + 1) % SPEED_STEPS.size])
+        setSpeed(
+            when {
+                // An exact step advances as before.
+                idx >= 0 -> SPEED_STEPS[(idx + 1) % SPEED_STEPS.size]
+                // A Settings pick between two capsule steps (e.g. 1.15×) advances
+                // to the next HIGHER step; never silently resets it to 1×.
+                else -> SPEED_STEPS.firstOrNull { it > _speed.value + 0.001f }
+                    ?: SPEED_STEPS.first()
+            },
+        )
     }
 
     fun speedLabel(s: Float = _speed.value): String =

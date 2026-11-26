@@ -104,6 +104,8 @@ object Routes {
     const val MODEL_DEFAULTS = "model_defaults"
     /** [T-android-voice-synthesis-settings] System voice or cloud TTS model. */
     const val VOICE_SYNTHESIS = "voice_synthesis"
+    /** [T-android-ondevice-models] 手动下载语音识别 / 快路径端侧模型。 */
+    const val ON_DEVICE_MODELS = "ondevice_models"
     /** Models and groups the assistant may switch to at runtime (agent loop). */
     const val RUNTIME_MODELS = "runtime_models"
     /** Settings › Agent Runtime hub: tools, skills, memory, MCP, env vars. */
@@ -671,6 +673,7 @@ fun AppNavigation(
                 onModelGroupsClick = { navController.safeNavigate(Routes.MODEL_GROUPS) },
                 onDefaultModelsClick = { navController.safeNavigate(Routes.MODEL_DEFAULTS) },
                 onVoiceSynthesisClick = { navController.safeNavigate(Routes.VOICE_SYNTHESIS) },
+                onOnDeviceModelsClick = { navController.safeNavigate(Routes.ON_DEVICE_MODELS) },
                 onUsageClick = { navController.safeNavigate(Routes.USAGE_STATS) },
                 onAgentRuntimeClick = { navController.safeNavigate(Routes.ASSISTANT_SETTINGS) },
                 onContextClick = { navController.safeNavigate(Routes.CONTEXT_SETTINGS) },
@@ -723,6 +726,13 @@ fun AppNavigation(
                 providerRepository = providerRepository,
                 onBack = { navController.safePopBackStack() },
                 onAddProvider = { navController.safeNavigate(Routes.ADD_PROVIDER) },
+            )
+        }
+
+        // [T-android-ondevice-models] 语音识别 / 快路径端侧模型的应用内下载。
+        composable(Routes.ON_DEVICE_MODELS) {
+            com.openminis.app.ui.settings.OnDeviceModelsScreen(
+                onBack = { navController.safePopBackStack() },
             )
         }
 
