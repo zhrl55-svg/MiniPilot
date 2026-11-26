@@ -113,6 +113,14 @@ class WakeWordService : Service() {
         private const val TRANSCRIBE_TIMEOUT_MS = 30_000L
 
         /**
+         * Extra time after the listening window expires for an utterance
+         * that was already cut and is being transcribed. Without it the
+         * sleep branch wins the race and the finished transcript is thrown
+         * away as "state changed during recognition".
+         */
+        private const val WINDOW_TRANSCRIBE_GRACE_MS = 3_000L
+
+        /**
          * Minimum speech before a first utterance may enrol the owner
          * template — a cough is not a voiceprint.
          *
@@ -981,6 +989,12 @@ class WakeWordService : Service() {
         // The assistant's own voice is filtered out by the echo window
         // instead (see [acknowledge] / [onUtterance]).
         installVad()
+        // Set the acknowledgement markers BEFORE arming the VAD and before
+        // launching the coroutine: on a busy scheduler acknowledge() can be
+        // delayed, and any TTS frame arriving in that gap would otherwise
+        // be cut into the user's request and drag its voiceprint down.
+        ackStartedAt = SystemClock.elapsedRealtime()
+        ackPlaying = WakeWordSettings.toneEnabled.value
         publish(VoiceWakePhase.LISTENING, "正在聆听")
         AppLogger.info(TAG, "进入聆听状态 窗口=${conversationWindowMs / 1000}s")
         scope.launch { acknowledge() }
@@ -1035,7 +1049,10 @@ class WakeWordService : Service() {
      * answer, so it also proves the TTS works before the request starts.
      */
     private suspend fun acknowledge(): Boolean {
-        if (!WakeWordSettings.toneEnabled.value) return false
+        if (!WakeWordSettings.toneEnabled.value) {
+            ackPlaying = false
+            return false
+        }
         val speaker = tts ?: com.openminis.app.speech.TextToSpeechManager().also {
             it.init(applicationContext)
             tts = it
@@ -1043,8 +1060,6 @@ class WakeWordService : Service() {
         val text = runCatching { getString(R.string.voice_wake_acknowledgement) }
             .getOrDefault(DEFAULT_ACKNOWLEDGEMENT)
         ackText = text
-        ackStartedAt = SystemClock.elapsedRealtime()
-        ackPlaying = true
         AppLogger.info(TAG, "开始播报「$text」")
         val spoken = runCatching { WakeConversation.speakQuietly(speaker, text) }
             .getOrElse {
@@ -1053,6 +1068,10 @@ class WakeWordService : Service() {
             }
         ackPlaying = false
         ackEndedAt = SystemClock.elapsedRealtime()
+        // Discard any segment the VAD opened from the very first TTS frame
+        // before the gate took effect. Gating continues through echoDeadline
+        // so the room's tail ring cannot start a request either.
+        vad?.pause()
         // The room keeps ringing for a moment after the engine stops;
         // anything the microphone picked up until now is the assistant's
         // own voice.
@@ -1091,7 +1110,15 @@ class WakeWordService : Service() {
             maxSegmentMs = { REQUEST_MAX_SEGMENT_MS },
         )
         vad = detector
-        engine?.onFrame = { frame, len -> detector.feed(frame, len) }
+        engine?.onFrame = { frame, len ->
+            // The microphone stays open for the whole conversation, but
+            // frames carrying the assistant's own "我在" are not the user's
+            // request. Feeding them made the request segment start with TTS
+            // and fail the voiceprint (device log 2026-11-26: wake 0.55,
+            // request 0.10). The VAD's pre-roll state survives the pause.
+            val echoTail = SystemClock.elapsedRealtime() < echoDeadline
+            if (!ackPlaying && !echoTail) detector.feed(frame, len)
+        }
     }
 
     private fun removeVad() {
@@ -1294,6 +1321,18 @@ class WakeWordService : Service() {
                 sleepConversation()
             }
             conversationState == ConversationState.LISTENING && now > conversationDeadline -> {
+                // A segment may have been cut and handed to the recogniser
+                // just before the clock ran out. Let that transcription
+                // finish before deciding the window failed: otherwise the
+                // sleep below flips the state and handleUtterance() throws
+                // away a sentence that was already being understood
+                // (device log 2026-11-26 10:29: 「识别期间状态已变，丢弃 4580ms」).
+                // Bounded by the transcriber's own timeout/retry budget —
+                // the extra deadline here only covers a stuck callback.
+                if (utteranceBusy || pendingUtterances.isNotEmpty()) {
+                    if (now < conversationDeadline + WINDOW_TRANSCRIBE_GRACE_MS) return
+                    AppLogger.info(TAG, "识别超时未返回，窗口到点按失败处理")
+                }
                 // [T-voice-window-voiceprint] The window is a SILENCE window,
                 // but only the OWNER's voice renews it. e2c0667 renewed on
                 // `isInSpeech` alone, and energy VAD calls a fan or a TV

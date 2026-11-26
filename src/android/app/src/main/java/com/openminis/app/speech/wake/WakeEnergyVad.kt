@@ -68,6 +68,17 @@ class WakeEnergyVad(
     private val onEvent: ((String) -> Unit)? = null,
 ) {
 
+    /**
+     * Minimum room between two cut segments.
+     *
+     * The wake service pauses VAD frames while its own "我在" acknowledgement
+     * is playing, so a segment cut just before the pause may be followed by
+     * the user's request within a few hundred milliseconds. Without this gap
+     * the two would be glued into one utterance: the short acknowledgement
+     * would dominate the voiceprint score and the request would be rejected.
+     */
+    private var lastCutAtMs = -1L
+
     /** Ambient level. Drives the open threshold; only moves while idle. */
     private var noiseFloor = 120.0
 
@@ -139,10 +150,36 @@ class WakeEnergyVad(
         peakRms = 0.0
         lastRmsValue = 0.0
         framesFed = 0
+        lastCutAtMs = -1L
         adaptiveFloor = noiseFloor
         speechLevel = 0.0
         floorAtOpen = noiseFloor
         segmentPeak = 0.0
+    }
+
+    /**
+     * Drop any segment opened by the assistant's own acknowledgement and
+     * start a minimum inter-segment gap.
+     *
+     * The wake service gates frames at its source while "我在" is playing,
+     * but a segment may already be open from the very first frame before the
+     * gate took effect. Calling this when the acknowledgement ends discards
+     * that echo segment and keeps the next human syllable from being glued
+     * to it. The noise floor is kept so the room estimate stays accurate.
+     */
+    @Synchronized
+    fun pause() {
+        // Count the pause itself in the inter-segment gap: the acknowledgement
+        // ends with the same echo energy that just played, and the very next
+        // human syllable must not be attached to it.
+        lastCutAtMs = framesFed.toLong()
+        inSpeech = false
+        voicedFrames = 0
+        silentFrames = 0
+        segment.clear()
+        preRoll.clear()
+        levelWindow.clear()
+        adaptiveFloor = noiseFloor
     }
 
     @Synchronized
@@ -153,6 +190,11 @@ class WakeEnergyVad(
         if (rms > peakRms) peakRms = rms
         levelWindow.addLast(rms)
         while (levelWindow.size > WINDOW_FRAMES) levelWindow.removeFirst()
+
+        // A cut made moments ago (e.g. the acknowledgement, or a sentence
+        // ended by a pause) must not be glued to the next utterance just
+        // because the new speaker starts before minSilenceMs has passed.
+        if (lastCutAtMs >= 0 && framesFed - lastCutAtMs < MIN_GAP_FRAMES) return
 
         // While nobody is talking the noise floor tracks slowly: it rises
         // slowly and falls fast, so a single cough cannot drag it away.
@@ -239,6 +281,7 @@ class WakeEnergyVad(
         inSpeech = false
         voicedFrames = 0
         silentFrames = 0
+        lastCutAtMs = framesFed.toLong()
         val pcm = segment.toShortArray()
         segment.clear()
         commitSegment(pcm, if (cutBySilence) "静音" else "上限")
@@ -259,6 +302,11 @@ class WakeEnergyVad(
     @Synchronized
     fun currentSegmentTailPcm(tailMs: Int): ShortArray? {
         if (!inSpeech || segment.isEmpty()) return null
+        val ms = segment.size * 1000 / WakeAudioCapture.SAMPLE_RATE
+        // A short utterance is all owner's voice; using only its 2 s tail
+        // can end up judging a pause or the assistant's echo. Long segments
+        // still use the tail so a noisy room cannot dilute the recent voice.
+        if (ms <= WHOLE_SEGMENT_VERIFY_MAX_MS) return segment.toShortArray()
         val want = (tailMs.coerceAtLeast(0).toLong() * WakeAudioCapture.SAMPLE_RATE / 1000).toInt()
         if (want <= 0) return null
         val from = (segment.size - want).coerceAtLeast(0)
@@ -345,6 +393,22 @@ class WakeEnergyVad(
         private const val MIN_SPEECH_MS = 300
         private const val MAX_SEGMENT_MS = 60_000
         private const val PRE_ROLL_FRAMES = 15 // 300ms
+
+        /**
+         * Ignore this long after a cut before opening a new segment.
+         *
+         * A VAD cut already consumed [minSilenceMs] of quiet; the extra gap
+         * covers the acknowledgement / request boundary where the assistant
+         * stops speaking and the user starts immediately. 100 ms at 20 ms
+         * per frame — short enough not to eat the first syllable.
+         */
+        private const val MIN_GAP_FRAMES = 5
+
+        /**
+         * Segments no longer than this are verified in full at window
+         * expiry. Longer ones still use the recent tail only.
+         */
+        private const val WHOLE_SEGMENT_VERIFY_MAX_MS = 8_000
 
         /**
          * How many recent frames the "quietest recent level" looks at.

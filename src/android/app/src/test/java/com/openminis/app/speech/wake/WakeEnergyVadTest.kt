@@ -139,6 +139,67 @@ class WakeEnergyVadTest {
         assertEquals(1, segments.size)
     }
 
+    // ── 唤醒确认音不得混进请求句 ────────────────────────────────────
+
+    /**
+     * 真机日志 2026-11-26：唤醒声纹 0.55 通过，但 VAD 同秒就开口（rms 5832
+     * 是「我在」），请求句声纹只有 0.10。确认音播放期间暂停喂帧后，切出的
+     * 片段只能包含确认音之后的人声。
+     */
+    @Test
+    fun `frames fed while paused do not contaminate the request segment`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        val ack = ShortArray(FRAME_SAMPLES) { 6_000 }
+        val quiet = ShortArray(FRAME_SAMPLES)
+        repeat(3) { v.feed(ack, ack.size) } // 若未暂停，这里会开出一段
+        v.pause()
+        // 服务层在 ackPlaying 期间完全不喂帧；这里只模拟确认音结束后紧接
+        // 的人声（含 300ms 的回声尾巴静音）。
+        repeat(15) { v.feed(silence, silence.size) }
+        repeat(3) { v.feed(speech, speech.size) } // 用户紧接着开口
+        repeat(10) { v.feed(speech, speech.size) }
+        repeat(60) { v.feed(quiet, quiet.size) } // 1.2s 静音切句
+        assertEquals(1, segments.size)
+        assertEquals(
+            "片段里不应残留确认音的 6000 幅值帧",
+            3_000,
+            segments[0].maxOf { it.toInt() },
+        )
+    }
+
+    /**
+     * 切句后用户马上说下一句（不超过 100ms 间隔）时，两段不能粘成一段 ——
+     * 否则刚说过的确认音/上一句会被算进新句子的声纹。
+     */
+    @Test
+    fun `a new segment does not open immediately after a cut`() {
+        val segments = mutableListOf<ShortArray>()
+        val v = vad(1_000, 60_000) { segments += it }
+        repeat(3) { v.feed(speech, speech.size) }
+        repeat(60) { v.feed(silence, silence.size) } // 第一句 1.2s 静音切出
+        assertEquals(1, segments.size)
+        repeat(3) { v.feed(silence, silence.size) } // 切句后 60ms 的间隔
+        repeat(3) { v.feed(speech, speech.size) } // 紧接着开口
+        assertEquals("100ms 内的帧不应重开片段", 1, segments.size)
+        repeat(7) { v.feed(silence, silence.size) } // 间隔过后照常收第二句
+        repeat(3) { v.feed(speech, speech.size) }
+        repeat(60) { v.feed(silence, silence.size) }
+        assertEquals(2, segments.size)
+    }
+
+    /**
+     * 窗口到点判定用整段（≤8s）而不是最后 2s：短请求里尾巴可能只有停顿
+     * 或尾音，声纹分数会被压到阈值以下。
+     */
+    @Test
+    fun `short segments are returned in full for voiceprint verification`() {
+        val v = vad(1_000, 60_000) {}
+        repeat(3 + 197) { v.feed(speech, speech.size) } // 约 4s，未切句
+        val sample = v.currentSegmentTailPcm(2_000)
+        assertEquals("短句应整段返回（不是 2s 尾巴）", 4_000, sample!!.size * 1000 / WakeAudioCapture.SAMPLE_RATE)
+    }
+
     private companion object {
         const val FRAME_SAMPLES = WakeAudioCapture.SAMPLE_RATE / 1000 * WakeAudioCapture.FRAME_MS
     }
