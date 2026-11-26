@@ -105,8 +105,30 @@ class WakeWordService : Service() {
          * [T-voice-wake-owner-pause] The request ends when the owner's
          * voiceprint has not passed for this long — the owner's definition of
          * "中途静音超过 1 秒". An energy-silence test cannot fire in a car.
+         *
+         * 2 s, not 1 s: the probe only runs about every 800 ms (400 ms gate
+         * tick + 500 ms throttle), and in road noise the owner's own score
+         * dips below the threshold mid-sentence. With 1 s two unlucky probes
+         * cut the request in half, and the second half — a new segment that
+         * must pass the whole-segment voiceprint in the same noise — was lost.
          */
-        private const val OWNER_PAUSE_MS = 1_000L
+        private const val OWNER_PAUSE_MS = 2_000L
+
+        /**
+         * Consecutive failing probes required before [OWNER_PAUSE_MS] may end
+         * the request. Time alone is not enough: a probe skipped because the
+         * extractor was busy must not count as "the owner stopped talking".
+         */
+        private const val OWNER_PAUSE_MIN_MISSES = 3
+
+        /**
+         * Audio the owner-pause probe judges once the owner is confirmed:
+         * only the newest 1.5 s, never the whole segment. A short segment
+         * judged whole still contains the owner's voice and keeps passing
+         * after they stopped, which held a 1.5 s request in road noise for
+         * ~10 s. 1.5 s is well above the extractor's 0.6 s minimum.
+         */
+        private const val OWNER_PAUSE_TAIL_MS = 1_500
 
         /** One in-window voiceprint probe per this interval. */
         private const val OWNER_PROBE_INTERVAL_MS = 500L
@@ -426,12 +448,21 @@ class WakeWordService : Service() {
     @Volatile
     private var lastOwnerProbeAt = 0L
 
+    /** Consecutive failing in-window probes since the owner last passed. */
+    @Volatile
+    private var ownerMissCount = 0
+
     /**
-     * One segment that may skip the per-utterance voiceprint.
+     * Marks the NEXT segment the VAD cuts as exempt from the per-utterance
+     * voiceprint.
      *
-     * Set when [ownerVerifiedInWindow] lets an over-long noisy segment out at
-     * the deadline; consumed by the next [handleUtterance] so that a later
-     * stranger's sentence in the same phase still goes through the gate.
+     * Set right before a deliberate [WakeEnergyVad.flush] and read by the
+     * VAD's `onSegment` callback, which `flush()` invokes synchronously — so
+     * the flag is bound to exactly that segment's audio and travels with it
+     * through the pending queue. It used to be read later by whichever
+     * [handleUtterance] ran next; when an earlier segment was still being
+     * transcribed, that earlier segment consumed the exemption and the
+     * request it was meant for was checked (and dropped) instead.
      */
     @Volatile
     private var voiceprintExemptSegment = false
@@ -481,7 +512,7 @@ class WakeWordService : Service() {
      * Dropping the second one made the assistant answer "我在" and then go
      * silent even though the user had already asked the question.
      */
-    private val pendingUtterances = ArrayDeque<ShortArray>()
+    private val pendingUtterances = ArrayDeque<Pair<ShortArray, Boolean>>()
 
     /** When the assistant's own voice is over (elapsedRealtime). */
     @Volatile
@@ -1073,6 +1104,7 @@ class WakeWordService : Service() {
         voiceprintExemptSegment = false
         ownerVerifiedAt = 0L
         lastOwnerProbeAt = 0L
+        ownerMissCount = 0
         // [T-music-pause-on-voice] 音乐会被麦克风录进去，也会盖住「我在」和
         // 用户的请求：整段语音对话期间暂停，回到待命时再恢复。
         suspendPlaybackForConversation()
@@ -1195,7 +1227,11 @@ class WakeWordService : Service() {
             onSegment = { pcm ->
                 AppLogger.info(TAG, "VAD 切出一句 ${pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE}ms")
                 VoiceWakeState.trace(this, "VAD 切句 ${pcm.size * 1000 / WakeAudioCapture.SAMPLE_RATE}ms")
-                scope.launch { onUtterance(pcm) }
+                // Bind the exemption to THIS segment's audio (see
+                // [voiceprintExemptSegment]); flush() calls us synchronously.
+                val exempt = voiceprintExemptSegment
+                voiceprintExemptSegment = false
+                scope.launch { onUtterance(pcm, exempt) }
             },
             onEvent = { line ->
                 AppLogger.info(TAG, line)
@@ -1415,16 +1451,28 @@ class WakeWordService : Service() {
         // 2026-11-26 15:39 / 15:41 / 15:46: `VAD 切句 60000ms 原因=上限`),
         // while the same sentences transcribe fine with the voiceprint off.
         //
-        // Only runs once this phase has verified the owner at least once: the
-        // first utterance still has the normal window to start ("我在" and
-        // the beginning of the request are not a pause).
+        // Runs from the start of the listening phase. It used to wait for
+        // [ownerVerifiedInWindow], which only the deadline renewal sets — so a
+        // short request ("导航回家", 1.5 s) never got a passing probe, the VAD
+        // never cut it in road noise, and the 8 s deadline judged a tail of
+        // pure road noise and dropped the whole request: the original bug.
+        // A pause is still only declared after at least one passing probe
+        // ([ownerVerifiedAt] > 0), so road noise before the owner speaks is
+        // never delivered on its own.
         if (conversationState == ConversationState.LISTENING &&
             WakeWordSettings.voiceprintEnabled.value &&
-            ownerVerifiedInWindow &&
             now - lastOwnerProbeAt >= OWNER_PROBE_INTERVAL_MS
         ) {
             val detector = vad
-            val tail = detector?.currentSegmentTailPcm(WakeListenWindowPolicy.RENEW_TAIL_MS)
+            // Before the owner is confirmed, judge as much of the segment as
+            // the VAD offers (a short segment whole) — the best chance to
+            // recognise the owner in noise. After that, judge only the
+            // newest audio, so the moment the owner stops is actually seen.
+            val tail = if (ownerVerifiedInWindow) {
+                detector?.currentSegmentRecentPcm(OWNER_PAUSE_TAIL_MS)
+            } else {
+                detector?.currentSegmentTailPcm(WakeListenWindowPolicy.RENEW_TAIL_MS)
+            }
             if (tail != null) {
                 lastOwnerProbeAt = now
                 val score = withContext(Dispatchers.IO) {
@@ -1433,17 +1481,30 @@ class WakeWordService : Service() {
                 if (conversationState != ConversationState.LISTENING) return
                 val threshold = WakeWordSettings.voiceprintThreshold.value
                 if (score != null && score >= threshold) {
+                    if (!ownerVerifiedInWindow) {
+                        AppLogger.info(TAG, "聆听中声纹确认本人 score=%.2f".format(score))
+                        VoiceWakeState.trace(this, "聆听中确认本人 ${"%.2f".format(score)}")
+                    }
+                    ownerVerifiedInWindow = true
                     ownerVerifiedAt = now
+                    ownerMissCount = 0
+                    // The owner is talking: the silence window must not
+                    // expire under a sentence that is still going.
+                    conversationDeadline = maxOf(conversationDeadline, now + conversationWindowMs)
                 } else if (score != null &&
                     ownerVerifiedAt > 0L &&
+                    ++ownerMissCount >= OWNER_PAUSE_MIN_MISSES &&
                     now - ownerVerifiedAt >= OWNER_PAUSE_MS
                 ) {
-                    // A full second without a passing verdict: the request is
-                    // over. Hand the whole buffered segment over — it starts
-                    // with the audio that did verify earlier.
+                    // Long enough, and several probes in a row, without a
+                    // passing verdict: the request is over. Hand the whole
+                    // buffered segment over — it contains the audio that did
+                    // verify earlier.
+                    voiceprintExemptSegment = true
                     if (detector?.flush() == true) {
-                        voiceprintExemptSegment = true
                         conversationDeadline = now + FLUSH_GRACE_MS
+                        ownerMissCount = 0
+                        ownerVerifiedAt = 0L
                         AppLogger.info(
                             TAG,
                             "声纹 %.2f 超过 %dms 未再通过，结束请求并交付缓冲".format(
@@ -1457,6 +1518,7 @@ class WakeWordService : Service() {
                         )
                         return
                     }
+                    voiceprintExemptSegment = false
                 }
             }
         }
@@ -1588,8 +1650,8 @@ class WakeWordService : Service() {
                                 // Hand the buffered request over instead of
                                 // discarding it; the same sentences transcribe
                                 // fine with the voiceprint switch off.
+                                if (ownerVerifiedInWindow) voiceprintExemptSegment = true
                                 if (ownerVerifiedInWindow && detector?.flush() == true) {
-                                    voiceprintExemptSegment = true
                                     conversationDeadline = now + FLUSH_GRACE_MS
                                     AppLogger.info(
                                         TAG,
@@ -1604,6 +1666,7 @@ class WakeWordService : Service() {
                                     )
                                     return
                                 }
+                                voiceprintExemptSegment = false
                                 AppLogger.info(
                                     TAG,
                                     "窗口到点，声纹未通过 score=%.2f/阈值=%.2f，丢弃缓冲 %dms，回到待命".format(
@@ -1642,7 +1705,7 @@ class WakeWordService : Service() {
      * sentence is dropped and the assistant keeps waiting — if nothing
      * passes the gate before the window closes, it goes back to sleep.
      */
-    private suspend fun onUtterance(pcm: ShortArray) {
+    private suspend fun onUtterance(pcm: ShortArray, voiceprintExempt: Boolean = false) {
         if (conversationState != ConversationState.LISTENING || destroying) return
         // One turn at a time: the transcription takes a second or two, and a
         // second segment cut in the meantime would race it for the recogniser.
@@ -1654,24 +1717,24 @@ class WakeWordService : Service() {
                 // segment silently, so a lost sentence left no trace at all
                 // and the transcript simply skipped a request. Say it out
                 // loud — a dropped utterance is a bug the user has to see.
-                val dropped = pendingUtterances.removeFirst()
+                val dropped = pendingUtterances.removeFirst().first
                 val droppedMs = dropped.size * 1000 / WakeAudioCapture.SAMPLE_RATE
                 AppLogger.info(TAG, "语音队列已满，丢弃最早一句 ${droppedMs}ms")
                 VoiceWakeState.trace(this, "语音队列已满，丢弃最早一句 ${droppedMs}ms")
             }
-            pendingUtterances.addLast(pcm)
+            pendingUtterances.addLast(pcm to voiceprintExempt)
             AppLogger.info(TAG, "上一句还在处理，先排队（${pendingUtterances.size}）")
             VoiceWakeState.trace(this, "语音排队 ${pendingUtterances.size}")
             return
         }
         utteranceBusy = true
         try {
-            var segment: ShortArray? = pcm
+            var segment: Pair<ShortArray, Boolean>? = pcm to voiceprintExempt
             while (segment != null &&
                 conversationState == ConversationState.LISTENING &&
                 !destroying
             ) {
-                handleUtterance(segment)
+                handleUtterance(segment.first, segment.second)
                 segment = if (conversationState == ConversationState.LISTENING) {
                     pendingUtterances.removeFirstOrNull()
                 } else {
@@ -1685,7 +1748,7 @@ class WakeWordService : Service() {
         }
     }
 
-    private suspend fun handleUtterance(pcm: ShortArray) {
+    private suspend fun handleUtterance(pcm: ShortArray, voiceprintExempt: Boolean) {
         if (conversationState != ConversationState.LISTENING || destroying) {
             // [T-voice-wake-queue-log] The audio was captured but the state
             // moved on before it could be transcribed (the window closed, or
@@ -1743,11 +1806,10 @@ class WakeWordService : Service() {
             return
         }
         // A segment released by the deadline after this phase already
-        // verified the owner (see [voiceprintExemptSegment]): its edges are
-        // room noise, so a whole-segment re-check here would drop exactly the
-        // request the deadline path just saved.
-        val voiceprintExempt = voiceprintExemptSegment
-        voiceprintExemptSegment = false
+        // verified the owner (the flag travels with the segment, see
+        // [voiceprintExemptSegment]): its edges are room noise, so a
+        // whole-segment re-check here would drop exactly the request the
+        // deadline / owner-pause path just saved.
         if (!voiceprintExempt && !passesVoiceprint(pcm)) {
             AppLogger.info(TAG, "声纹不通过，忽略这句话")
             VoiceWakeState.trace(this, "声纹不通过，忽略")
@@ -1954,6 +2016,7 @@ class WakeWordService : Service() {
         voiceprintExemptSegment = false
         ownerVerifiedAt = 0L
         lastOwnerProbeAt = 0L
+        ownerMissCount = 0
         if (renewWindow) {
             conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         }

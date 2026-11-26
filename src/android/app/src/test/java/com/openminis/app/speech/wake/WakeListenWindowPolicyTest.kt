@@ -26,7 +26,10 @@ class WakeListenWindowPolicyTest {
     // ── WakeEnergyVad.currentSegmentTailPcm ────────────────────────────
 
     @Test
-    fun `the tail accessor returns the newest samples of the buffered segment`() {
+    fun `the tail accessor returns a short segment whole`() {
+        // Segments up to WHOLE_SEGMENT_VERIFY_MAX_MS (8 s) are judged whole:
+        // a short utterance is all owner's voice, and its 2 s tail could be a
+        // pause or the assistant's echo.
         val v = WakeEnergyVad(onSpeechStart = {}, onSegment = {}, maxSegmentMs = { 60_000 })
         repeat(3) { v.feed(speech, speech.size) } // 开口
         repeat(25) { v.feed(speech, speech.size) } // 500ms 语音
@@ -34,11 +37,37 @@ class WakeListenWindowPolicyTest {
         val tail = v.currentSegmentTailPcm(200)
         assertNotNull("说话中的片段必须能取到尾部", tail)
         assertEquals(
-            "200ms @ 16kHz",
-            WakeAudioCapture.SAMPLE_RATE / 1000 * 200,
+            "短片段整段返回",
+            v.bufferedSegmentMs * WakeAudioCapture.SAMPLE_RATE / 1000,
             tail!!.size,
         )
+        assertTrue("短片段要长于请求的 200ms 尾部", tail.size > WakeAudioCapture.SAMPLE_RATE / 1000 * 200)
         assertTrue("尾部取的是真实缓冲，不是静音占位", tail.all { it.toInt() == 3000 })
+    }
+
+    /**
+     * [T-voice-wake-owner-pause] The owner-pause probe must see only the
+     * newest audio even in a short segment; judged whole, a 1.5 s request in
+     * road noise kept passing and was held for ~10 s.
+     */
+    @Test
+    fun `the recent accessor returns only the newest samples even for a short segment`() {
+        val v = WakeEnergyVad(onSpeechStart = {}, onSegment = {}, maxSegmentMs = { 60_000 })
+        repeat(3) { v.feed(speech, speech.size) } // 开口
+        repeat(25) { v.feed(speech, speech.size) } // 500ms 语音
+
+        val recent = v.currentSegmentRecentPcm(200)
+        assertNotNull("说话中的片段必须能取到最近音频", recent)
+        assertEquals(
+            "200ms @ 16kHz",
+            WakeAudioCapture.SAMPLE_RATE / 1000 * 200,
+            recent!!.size,
+        )
+        assertTrue("最近音频取的是真实缓冲", recent.all { it.toInt() == 3000 })
+        assertNull(
+            "没有在说话时不返回",
+            WakeEnergyVad(onSpeechStart = {}, onSegment = {}, maxSegmentMs = { 60_000 }).currentSegmentRecentPcm(200),
+        )
     }
 
     @Test

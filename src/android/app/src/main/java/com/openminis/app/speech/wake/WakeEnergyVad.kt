@@ -314,6 +314,23 @@ class WakeEnergyVad(
     }
 
     /**
+     * The newest [tailMs] of the buffered segment, ALWAYS only the tail.
+     *
+     * Unlike [currentSegmentTailPcm] this never returns the whole segment
+     * for short utterances. The owner-pause probe needs it: judging the
+     * whole (still owner-containing) segment keeps passing long after the
+     * owner stopped, so a short request in road noise was only released
+     * once the segment had grown past 8 s.
+     */
+    fun currentSegmentRecentPcm(tailMs: Int): ShortArray? {
+        if (!inSpeech || segment.isEmpty()) return null
+        val want = (tailMs.coerceAtLeast(0).toLong() * WakeAudioCapture.SAMPLE_RATE / 1000).toInt()
+        if (want <= 0) return null
+        val from = (segment.size - want).coerceAtLeast(0)
+        return ShortArray(segment.size - from) { segment[from + it] }
+    }
+
+    /**
      * Force the current utterance out (used when the idle window closes).
      *
      * Flush 走与 [feed] 相同的质量判定：过短或噪声片段照丢，不因为窗口
