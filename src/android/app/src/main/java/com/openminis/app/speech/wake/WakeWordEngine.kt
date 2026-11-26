@@ -55,6 +55,10 @@ class WakeWordEngine(
     /** The most recent [ms] milliseconds of captured audio. */
     fun recentAudio(ms: Int): ShortArray = capture?.recentAudio(ms) ?: ShortArray(0)
 
+    /** AudioRecord session id of the live capture, 0 when the engine is down. */
+    val audioSessionId: Int
+        get() = capture?.sessionId ?: 0
+
     /** Stop or resume keyword spotting without touching the microphone. */
     fun setDetecting(on: Boolean) {
         detecting = on

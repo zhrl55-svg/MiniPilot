@@ -26,6 +26,13 @@ object WakeWordSettings {
     const val KEY_VOICEPRINT_THRESHOLD = "voiceprintThreshold"
     const val KEY_VOICE_SLEEP_WINDOW_MS = "voiceSleepWindowMs"
 
+    /**
+     * The user still wants wake listening, but the service could not be
+     * started in a usable state (the app was in the background, or a live
+     * service was degraded). The next foreground transition starts it.
+     */
+    const val KEY_PENDING_START = "pendingStart"
+
     private const val KEY_OVERLAY_X = "overlayX"
     private const val KEY_OVERLAY_Y = "overlayY"
     private const val KEY_OVERLAY_LAND_X = "overlayLandscapeX"
@@ -160,6 +167,18 @@ object WakeWordSettings {
         init(context)
         prefs?.edit()?.putBoolean(KEY_ENABLED, value)?.apply()
         _enabled.value = value
+    }
+
+    /** See [KEY_PENDING_START]. Not exposed as a StateFlow: only the
+     *  controller and the recovery paths read it. */
+    fun pendingStart(context: Context): Boolean {
+        init(context)
+        return prefs?.getBoolean(KEY_PENDING_START, false) ?: false
+    }
+
+    fun setPendingStart(context: Context, value: Boolean) {
+        init(context)
+        prefs?.edit()?.putBoolean(KEY_PENDING_START, value)?.apply()
     }
 
     fun setWakeWord(context: Context, raw: String): Boolean {

@@ -130,6 +130,9 @@ fun BackgroundSettingsScreen(
     val scheduledCountdownLead by backgroundRepo.scheduledCountdownLead.collectAsState()
     WakeWordSettings.init(context)
     val voiceWakeEnabled by WakeWordSettings.enabled.collectAsState()
+    // The preference stays on; this only reflects whether the live service
+    // is actually able to hear. A degraded service is rebuilt on foreground.
+    val voiceWakeDegraded by WakeWordController.degraded.collectAsState()
     val voiceWakeWord by WakeWordSettings.wakeWord.collectAsState()
     val voiceWakeOverlay by WakeWordSettings.showOverlay.collectAsState()
     val voiceWakeTone by WakeWordSettings.toneEnabled.collectAsState()
@@ -347,7 +350,7 @@ fun BackgroundSettingsScreen(
                 icon = Icons.Outlined.Mic,
                 iconColor = Color(0xFFFF9500),
                 title = stringResource(R.string.settings_voice_wake),
-                checked = voiceWakeEnabled,
+                checked = voiceWakeEnabled && !voiceWakeDegraded,
                 onCheckedChange = { wanted ->
                     if (wanted) {
                         enableVoiceWake()
@@ -357,10 +360,13 @@ fun BackgroundSettingsScreen(
                 },
             )
             BgFooter(
-                if (voiceWakeEnabled && !micGranted) {
-                    stringResource(R.string.settings_voice_wake_permission_needed)
-                } else {
-                    stringResource(R.string.settings_voice_wake_footer)
+                when {
+                    voiceWakeDegraded ->
+                        stringResource(R.string.settings_voice_wake_degraded)
+                    voiceWakeEnabled && !micGranted ->
+                        stringResource(R.string.settings_voice_wake_permission_needed)
+                    else ->
+                        stringResource(R.string.settings_voice_wake_footer)
                 },
             )
 

@@ -256,6 +256,18 @@ class WakeWordService : Service() {
         private var instance: WakeWordService? = null
 
         /**
+         * The app itself is stopping the service (to rebuild a degraded
+         * microphone FGS). [onDestroy] must not report that as a system
+         * refusal, or every foreground transition would restart the service.
+         */
+        @Volatile
+        private var intentionalStop = false
+
+        /** AudioRecord session id of the live engine, 0 when it is down. */
+        val currentAudioSessionId: Int
+            get() = instance?.engine?.audioSessionId ?: 0
+
+        /**
          * Give the microphone up for an in-app recording.
          *
          * Called *before* the composer opens its own AudioRecord: the engine
@@ -304,6 +316,18 @@ class WakeWordService : Service() {
 
         fun stop(context: Context) {
             runCatching { context.stopService(Intent(context, WakeWordService::class.java)) }
+        }
+
+        /**
+         * Stop because the caller is about to start a fresh instance.
+         *
+         * A plain [stop] is indistinguishable from a system kill in
+         * [onDestroy]; this flag keeps the recovery path from treating the
+         * intentional teardown as a failure and restarting in a loop.
+         */
+        fun requestStop(context: Context) {
+            intentionalStop = true
+            stop(context)
         }
     }
 
@@ -538,6 +562,16 @@ class WakeWordService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        intentionalStop = false
+        // A service created while the app is in the background (START_STICKY
+        // restart, boot/package broadcast) is the degraded case: Android 12+
+        // grants the start but disables "while in use" microphone access, so
+        // the recording is fed silence. Remember to rebuild on the next
+        // foreground transition instead of listening to silence forever.
+        if ((application as? MinisApp)?.isAppForeground() != true) {
+            WakeWordSettings.setPendingStart(this, true)
+            AppLogger.info(TAG, "唤醒服务在后台启动，已标记待前台重建")
+        }
         isAlive = true
         instance = this
         WakeWordSettings.init(this)
@@ -616,11 +650,16 @@ class WakeWordService : Service() {
             // The service died while the feature is still on. Android 14+
             // refuses a microphone foreground service that is started from
             // the background, so the next attempt has to wait for the app
-            // to be in the foreground again.
-            WakeWordController.onServiceStartRefused(this)
+            // to be in the foreground again. An intentional teardown (the
+            // degraded-service rebuild) is not a failure.
+            if (!intentionalStop) {
+                WakeWordController.onServiceStartRefused(this)
+            }
         } else {
             VoiceWakeState.update(this, VoiceWakePhase.OFF, "语音唤醒已停止")
         }
+        WakeWordController.setDegraded(false)
+        intentionalStop = false
         scope.cancel()
         super.onDestroy()
     }
@@ -692,6 +731,10 @@ class WakeWordService : Service() {
                 }
                 if (engine?.isListening == true) {
                     // The engine is up: any earlier failure is over.
+                    // Ask the platform whether this recording is being fed
+                    // silence (a background-started microphone FGS keeps
+                    // running but cannot hear anything).
+                    WakeWordController.observeCapture(this, engine?.audioSessionId ?: 0)
                     if (engineError != null) {
                         engineError = null
                         nextEngineRetryAt = 0L

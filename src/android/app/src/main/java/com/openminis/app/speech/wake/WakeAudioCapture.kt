@@ -28,6 +28,17 @@ class WakeAudioCapture(
         private set
 
     /**
+     * The live [AudioRecord] session id, 0 when not capturing.
+     *
+     * The service uses it to ask [android.media.AudioManager] whether the
+     * system is feeding this recording silence — the observable symptom of a
+     * microphone foreground service that was started from the background.
+     */
+    @Volatile
+    var sessionId: Int = 0
+        private set
+
+    /**
      * Loudest frame seen since the last reset, as a 0..1 RMS ratio.
      *
      * Diagnostics only: a wake hit that lands on a loud frame is usually
@@ -120,8 +131,9 @@ class WakeAudioCapture(
             return false
         }
         record = rec
+        sessionId = rec.audioSessionId
         running = true
-        AppLogger.info(TAG, "AudioCapture 启动 ${SAMPLE_RATE}Hz buf=$bufSize")
+        AppLogger.info(TAG, "AudioCapture 启动 ${SAMPLE_RATE}Hz buf=$bufSize session=$sessionId")
 
         thread = Thread {
             val frame = ShortArray(FRAME_SAMPLES)
@@ -166,6 +178,7 @@ class WakeAudioCapture(
             runCatching { it.release() }
         }
         record = null
+        sessionId = 0
         AppLogger.info(TAG, "AudioCapture 停止")
     }
 

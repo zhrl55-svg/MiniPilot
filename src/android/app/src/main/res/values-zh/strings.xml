@@ -1474,6 +1474,7 @@
     <string name="settings_voice_wake_section">语音唤醒</string>
     <string name="settings_voice_wake">后台语音唤醒</string>
     <string name="settings_voice_wake_footer">MiniPilot 在后台时持续监听唤醒词。需要麦克风权限；多数手机还需要把 MiniPilot 加入电池优化白名单。唤醒后会打开新的语音对话。</string>
+    <string name="settings_voice_wake_degraded">后台录音被系统暂停，打开 MiniPilot 后会自动恢复</string>
     <string name="settings_voice_wake_permission_needed">需要麦克风权限</string>
     <string name="settings_voice_wake_word">唤醒词</string>
     <string name="settings_voice_wake_word_footer">最多四个中文唤醒词，用逗号分隔。默认「你好米尼斯」在旧版 Android 上也有预置拼音。</string>

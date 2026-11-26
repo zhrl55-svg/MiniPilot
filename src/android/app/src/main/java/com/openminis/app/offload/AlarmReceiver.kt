@@ -51,16 +51,15 @@ class AlarmReceiver : BroadcastReceiver() {
                 AppLogger.warning(TAG, "reminder rescheduleAll failed: ${t.message}")
             }
             // The wake-word service does not survive a reboot or an app
-            // update, so the feature would silently stop working until the
-            // user opens the app again. BOOT_COMPLETED is one of the few
-            // background foreground-service exemptions Android grants, so
-            // it is worth trying here; if the system still refuses, the
-            // controller remembers the refusal and retries the next time
-            // the app comes to the foreground.
+            // update, but it must NOT be started here. These broadcasts are
+            // background foreground-service exemptions, so the start would
+            // succeed with allowWhileInUsePermissionInFgs=false and the
+            // microphone would be fed silence. Record the intent instead;
+            // the first foreground transition starts a healthy instance.
             try {
-                com.openminis.app.speech.wake.WakeWordController.init(context)
+                com.openminis.app.speech.wake.WakeWordController.markPendingRestore(context)
             } catch (t: Throwable) {
-                AppLogger.warning(TAG, "wake-word resync failed: ${t.message}")
+                AppLogger.warning(TAG, "wake-word restore mark failed: ${t.message}")
             }
             return
         }
