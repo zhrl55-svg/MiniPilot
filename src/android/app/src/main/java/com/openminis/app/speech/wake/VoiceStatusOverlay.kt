@@ -12,11 +12,13 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.LinearInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -24,7 +26,10 @@ import android.widget.LinearLayout
 import com.openminis.app.R
 import com.openminis.app.logging.AppLogger
 import com.openminis.app.service.OverlayPosition
+import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 
 /**
  * Floating "voice status ball" shown while Minis is in the background.
@@ -33,6 +38,16 @@ import kotlin.math.abs
  * the tool capsule is a half-screen pill anchored bottom-left and only exists
  * while an agent turn is running; this one is a compact ball anchored to the
  * right edge and exists whenever wake-word listening is enabled.
+ *
+ * The ball has three looks (see [VoiceBallState]) and every one of them keeps
+ * moving, so the current state reads at a glance without any text:
+ *  - asleep — dim microphone, one slow breath per cycle;
+ *  - listening — microphone beats like a pulse, a ring pulse leaves the ball;
+ *  - replying — speaker bounces, three sound waves radiate out.
+ *
+ * One animator drives both the icon and the ring so the two never drift apart.
+ * The sleep motion is intentionally slow and low-amplitude: this window can
+ * stay on screen for hours.
  */
 class VoiceStatusOverlay(private val context: Context) {
 
@@ -45,6 +60,22 @@ class VoiceStatusOverlay(private val context: Context) {
     private var icon: ImageView? = null
     private var params: WindowManager.LayoutParams? = null
     private var latest: VoiceWakeSnapshot = VoiceWakeSnapshot()
+
+    /** Shared clock for the icon and the ring: 0..1, one full cycle. */
+    private var animator: ValueAnimator? = null
+    private var cycleFraction = 0f
+
+    /** Animators are disabled system-wide (battery saver / accessibility). */
+    private var staticFrame = false
+
+    private var ballState = VoiceBallState.SLEEP
+
+    /** State currently painted by [icon]; avoids re-decoding the drawable. */
+    private var drawnState: VoiceBallState? = null
+
+    /** Throttles the long-running sleep animation; see [applyFrame]. */
+    private var lastFrameAt = 0L
+    private var lastFrameState: VoiceBallState? = null
 
     var isShown: Boolean = false
         private set
@@ -103,6 +134,7 @@ class VoiceStatusOverlay(private val context: Context) {
     private fun apply(snapshot: VoiceWakeSnapshot) {
         val r = ring ?: return
         val b = ball ?: return
+        val icon = icon ?: return
         val color = when (snapshot.phase) {
             VoiceWakePhase.WAITING,
             VoiceWakePhase.LISTENING,
@@ -114,31 +146,127 @@ class VoiceStatusOverlay(private val context: Context) {
             VoiceWakePhase.OFF -> COLOR_OFF
         }
         (b.background as? GradientDrawable)?.setColor(color)
-        // The icon is the state: a microphone while the assistant listens,
-        // a loudspeaker while it answers. No text at all.
-        icon?.setImageResource(
-            if (snapshot.phase == VoiceWakePhase.REPLYING) {
-                R.drawable.ic_voice_speaker
-            } else {
-                android.R.drawable.ic_btn_speak_now
-            },
-        )
-        r.setMode(
-            when (snapshot.phase) {
-                // Idle: a plain circle, nothing moves.
-                VoiceWakePhase.WAITING -> RingMode.NONE
-                // Listening: the pulse says "I hear you".
-                VoiceWakePhase.LISTENING,
-                VoiceWakePhase.WAKING,
-                -> RingMode.PULSE
-                // Answering: sound waves going out.
-                VoiceWakePhase.REPLYING -> RingMode.WAVE
-                else -> RingMode.NONE
-            },
-            color,
-        )
+        r.color = color
+
+        // The icon is the state: a microphone while the assistant sleeps or
+        // listens, a loudspeaker while it answers.
+        val next = snapshot.phase.toBallState()
+        ballState = next
+        if (drawnState != next) {
+            icon.setImageResource(
+                if (next == VoiceBallState.SPEAK) {
+                    R.drawable.ic_voice_speaker
+                } else {
+                    R.drawable.ic_voice_mic
+                },
+            )
+            drawnState = next
+        }
+
+        ensureAnimator()
+        applyFrame()
+
         val detail = snapshot.detail.trim()
-        root?.contentDescription = detail.ifEmpty { context.getString(R.string.voice_wake_overlay_title) }
+        root?.contentDescription = detail.ifEmpty {
+            context.getString(
+                when (snapshot.phase) {
+                    VoiceWakePhase.OFF -> R.string.voice_wake_state_off
+                    VoiceWakePhase.WAITING -> R.string.voice_wake_state_waiting
+                    VoiceWakePhase.WAKING -> R.string.voice_wake_state_waking
+                    VoiceWakePhase.LISTENING -> R.string.voice_wake_state_listening
+                    VoiceWakePhase.REPLYING -> R.string.voice_wake_state_replying
+                    VoiceWakePhase.PAUSED -> R.string.voice_wake_state_paused
+                    VoiceWakePhase.ERROR -> R.string.voice_wake_state_error
+                },
+            )
+        }
+    }
+
+    /**
+     * Starts the shared clock on first use. When system animations are off we
+     * paint one representative frame instead: a `ValueAnimator` with a zero
+     * duration scale would otherwise spin the main thread while doing nothing.
+     */
+    private fun ensureAnimator() {
+        if (animator != null || staticFrame) return
+        if (!ValueAnimator.areAnimatorsEnabled()) {
+            staticFrame = true
+            cycleFraction = STATIC_FRAME_FRACTION
+            return
+        }
+        animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = CYCLE_MS
+            repeatCount = ValueAnimator.INFINITE
+            interpolator = LinearInterpolator()
+            addUpdateListener {
+                cycleFraction = it.animatedFraction
+                applyFrame()
+            }
+            start()
+        }
+    }
+
+    /** Paints one frame from [cycleFraction] for the current [ballState]. */
+    private fun applyFrame() {
+        val icon = icon ?: return
+        val r = ring ?: return
+        // Sleep is the long-running state — the ball can sit there for hours.
+        // Its breath has a 4.8s period, so 20fps looks identical and costs a
+        // third of the redraws. Listening and replying keep the full rate.
+        val now = SystemClock.elapsedRealtime()
+        if (ballState == VoiceBallState.SLEEP &&
+            lastFrameState == ballState &&
+            now - lastFrameAt < SLEEP_FRAME_INTERVAL_MS
+        ) {
+            return
+        }
+        lastFrameAt = now
+        lastFrameState = ballState
+        val f = cycleFraction
+        when (ballState) {
+            // Asleep: a slow breath — dim, shrink a touch, come back. Low
+            // amplitude on purpose: this runs for as long as the ball is up.
+            VoiceBallState.SLEEP -> {
+                val breath = ((1.0 - cos(2.0 * PI * f)) / 2.0).toFloat()
+                val scale = 0.94f + 0.06f * breath
+                icon.scaleX = scale
+                icon.scaleY = scale
+                icon.alpha = 0.55f + 0.35f * breath
+                r.mode = RingMode.NONE
+                r.phase = f
+            }
+            // Listening: the microphone beats, a pulse leaves the ball once
+            // per beat.
+            VoiceBallState.LISTEN -> {
+                val p = (f * LISTEN_BEATS) % 1f
+                val beat = sin(PI * p).toFloat()
+                val scale = 1f + 0.09f * beat
+                icon.scaleX = scale
+                icon.scaleY = scale
+                icon.alpha = 1f
+                r.mode = RingMode.PULSE
+                r.phase = p
+            }
+            // Replying: the speaker bounces in step with the outgoing waves.
+            VoiceBallState.SPEAK -> {
+                val p = (f * SPEAK_WAVES) % 1f
+                val bounce = sin(PI * p).toFloat()
+                val scale = 1f + 0.05f * bounce
+                icon.scaleX = scale
+                icon.scaleY = scale
+                icon.alpha = 1f
+                r.mode = RingMode.WAVE
+                r.phase = p
+            }
+        }
+        r.invalidate()
+    }
+
+    private fun stopAnimation() {
+        animator?.cancel()
+        animator = null
+        staticFrame = false
+        cycleFraction = 0f
     }
 
     private fun attach() {
@@ -211,8 +339,11 @@ class VoiceStatusOverlay(private val context: Context) {
             elevation = dp(8).toFloat()
         }
 
+        // The frame is larger than the ball so the ripples have room to
+        // travel: a ring clipped to the 40dp ball was barely visible.
         val ballFrame = FrameLayout(context)
         val ballSize = dp(BALL_SIZE_DP)
+        val frameSize = dp(BALL_FRAME_DP)
         ballFrame.addView(
             View(context).apply {
                 background = GradientDrawable().apply {
@@ -224,17 +355,21 @@ class VoiceStatusOverlay(private val context: Context) {
         )
         ball = ballFrame.getChildAt(0)
 
-        val ring = PulseRingView(context)
-        ballFrame.addView(ring, FrameLayout.LayoutParams(ballSize, ballSize, Gravity.CENTER))
+        val ring = PulseRingView(context, ballSize.toFloat())
+        ballFrame.addView(
+            ring,
+            FrameLayout.LayoutParams(frameSize, frameSize, Gravity.CENTER),
+        )
         this.ring = ring
 
         val icon = ImageView(context).apply {
-            setImageResource(android.R.drawable.ic_btn_speak_now)
+            setImageResource(R.drawable.ic_voice_mic)
             setColorFilter(Color.WHITE)
         }
         ballFrame.addView(icon, FrameLayout.LayoutParams(dp(ICON_SIZE_DP), dp(ICON_SIZE_DP), Gravity.CENTER))
         this.icon = icon
-        container.addView(ballFrame, LinearLayout.LayoutParams(ballSize, ballSize))
+
+        container.addView(ballFrame, LinearLayout.LayoutParams(frameSize, frameSize))
         return container
     }
 
@@ -306,14 +441,15 @@ class VoiceStatusOverlay(private val context: Context) {
     }
 
     private fun hideInternal() {
+        stopAnimation()
         val view = root ?: return
         runCatching { windowManager.removeView(view) }
-        ring?.stop()
         root = null
         ring = null
         ball = null
         icon = null
         params = null
+        drawnState = null
         isShown = false
     }
 
@@ -334,73 +470,50 @@ class VoiceStatusOverlay(private val context: Context) {
     private fun dp(value: Int): Int =
         (value * context.resources.displayMetrics.density).toInt()
 
-    private class PulseRingView(context: Context) : View(context) {
+    /**
+     * Rings around the ball. It owns no animator: [VoiceStatusOverlay] pushes
+     * the shared [phase] every frame, so icon and ring stay in step.
+     */
+    private class PulseRingView(context: Context, ballDiameterPx: Float) : View(context) {
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.STROKE
             strokeWidth = 2f * resources.displayMetrics.density
         }
-        private var animator: ValueAnimator? = null
-        private var fraction = 0f
-        private var color = COLOR_ACTIVE
-        private var mode = RingMode.NONE
+        private val ballRadius = ballDiameterPx / 2f
 
-        fun setMode(mode: RingMode, color: Int) {
-            this.color = color
-            this.mode = mode
-            if (mode != RingMode.NONE) {
-                if (animator?.isRunning == true) {
-                    invalidate()
-                    return
-                }
-                animator?.cancel()
-                animator = ValueAnimator.ofFloat(0f, 1f).apply {
-                    duration = if (mode == RingMode.WAVE) 1200L else 1600L
-                    repeatCount = ValueAnimator.INFINITE
-                    addUpdateListener {
-                        fraction = it.animatedFraction
-                        invalidate()
-                    }
-                    start()
-                }
-            } else {
-                animator?.cancel()
-                animator = null
-                fraction = 0f
-                invalidate()
-            }
-        }
-
-        fun stop() {
-            animator?.cancel()
-            animator = null
-        }
+        var color: Int = COLOR_ACTIVE
+        var mode: RingMode = RingMode.NONE
+        var phase: Float = 0f
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
             val cx = width / 2f
             val cy = height / 2f
-            val base = minOf(width, height) / 2f - paint.strokeWidth
+            // Start at the hoop's own edge so the pulse looks like it
+            // leaves the ball rather than appearing inside it.
+            val base = ballRadius - paint.strokeWidth / 2f
             paint.color = color
-            paint.alpha = 210
             when (mode) {
                 RingMode.NONE -> {
                     // Idle: the plain outline, nothing moving.
+                    paint.alpha = 210
                     canvas.drawCircle(cx, cy, base, paint)
                 }
                 RingMode.PULSE -> {
+                    paint.alpha = 210
                     canvas.drawCircle(cx, cy, base, paint)
-                    if (fraction > 0f) {
-                        paint.alpha = ((1f - fraction) * 140).toInt()
-                        canvas.drawCircle(cx, cy, base + fraction * base * 0.34f, paint)
+                    if (phase > 0f) {
+                        paint.alpha = ((1f - phase) * 150).toInt()
+                        canvas.drawCircle(cx, cy, base + phase * base * 0.34f, paint)
                     }
                 }
                 RingMode.WAVE -> {
                     // Answering: sound waves going out of the ball.
                     val waves = 3
                     for (i in 0 until waves) {
-                        val phase = (fraction + i.toFloat() / waves) % 1f
-                        paint.alpha = ((1f - phase) * 130).toInt()
-                        canvas.drawCircle(cx, cy, base + phase * base * 0.55f, paint)
+                        val p = (phase + i.toFloat() / waves) % 1f
+                        paint.alpha = ((1f - p) * 150).toInt()
+                        canvas.drawCircle(cx, cy, base + p * base * 0.55f, paint)
                     }
                 }
             }
@@ -417,6 +530,22 @@ class VoiceStatusOverlay(private val context: Context) {
          */
         const val BALL_SIZE_DP = 40
         const val ICON_SIZE_DP = 28
+
+        /** Transparent frame around the ball; gives the ripples room to move. */
+        const val BALL_FRAME_DP = 64
+
+        /** One shared cycle; the per-state periods are integer fractions of it. */
+        const val CYCLE_MS = 4800L
+
+        /** Pulse every 1600ms, wave every 1200ms; both divide [CYCLE_MS]. */
+        const val LISTEN_BEATS = 3f
+        const val SPEAK_WAVES = 4f
+
+        /** A representative still when system animations are turned off. */
+        const val STATIC_FRAME_FRACTION = 0.25f
+
+        /** 20fps is plenty for the slow sleep breath; see [applyFrame]. */
+        const val SLEEP_FRAME_INTERVAL_MS = 50L
 
         /** Green at 96% opacity (0xF5 = 245/255). */
         const val COLOR_ACTIVE = 0xF534C759.toInt()
