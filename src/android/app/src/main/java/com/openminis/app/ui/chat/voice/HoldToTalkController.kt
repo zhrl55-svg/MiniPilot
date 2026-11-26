@@ -179,8 +179,9 @@ class HoldToTalkController(private val context: Context) {
             // silence window split every natural pause into a segment (each
             // re-checked against the voiceprint, so a rejected segment
             // silently lost a chunk), and the 15 s cap chopped continuous
-            // speech in half. End a segment only after 1.2 s of quiet, and
-            // keep the 60 s cap as a safety valve, not as endpointing.
+            // speech in half. End a segment after 1 s of quiet — the owner
+            // asked for the same 1 s rule as the wake request — and keep the
+            // 60 s cap as a safety valve, not as endpointing.
             minSilenceMs = { HOLD_SILENCE_MS },
             maxSegmentMs = { HOLD_MAX_SEGMENT_MS },
         )
@@ -448,8 +449,8 @@ class HoldToTalkController(private val context: Context) {
     private companion object {
         const val TAG = "HoldToTalk"
 
-        /** 句中自然停顿：超过这个静音才认为这一句说完了。 */
-        const val HOLD_SILENCE_MS = 1_200
+        /** 句中自然停顿：超过这个静音就认为这一句说完了（与唤醒对话一致，1 秒）。 */
+        const val HOLD_SILENCE_MS = 1_000
 
         /** 安全阀：一直不停顿的长语音最多 60 秒切一段。 */
         const val HOLD_MAX_SEGMENT_MS = 60_000

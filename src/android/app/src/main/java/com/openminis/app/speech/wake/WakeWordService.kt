@@ -101,6 +101,16 @@ class WakeWordService : Service() {
          */
         private const val REQUEST_SILENCE_MS = 1_000
 
+        /**
+         * [T-voice-wake-owner-pause] The request ends when the owner's
+         * voiceprint has not passed for this long — the owner's definition of
+         * "中途静音超过 1 秒". An energy-silence test cannot fire in a car.
+         */
+        private const val OWNER_PAUSE_MS = 1_000L
+
+        /** One in-window voiceprint probe per this interval. */
+        private const val OWNER_PROBE_INTERVAL_MS = 500L
+
         /** Safety valve only: a request that never pauses is cut here. */
         private const val REQUEST_MAX_SEGMENT_MS = 60_000
 
@@ -380,6 +390,17 @@ class WakeWordService : Service() {
      */
     @Volatile
     private var ownerVerifiedInWindow = false
+
+    /**
+     * [T-voice-wake-owner-pause] When the owner's voiceprint last passed in
+     * this listening phase (elapsedRealtime), 0 before the first pass.
+     */
+    @Volatile
+    private var ownerVerifiedAt = 0L
+
+    /** Throttles the in-window voiceprint probe to one every 500 ms. */
+    @Volatile
+    private var lastOwnerProbeAt = 0L
 
     /**
      * One segment that may skip the per-utterance voiceprint.
@@ -1007,6 +1028,8 @@ class WakeWordService : Service() {
         // deadline exemption carries over.
         ownerVerifiedInWindow = false
         voiceprintExemptSegment = false
+        ownerVerifiedAt = 0L
+        lastOwnerProbeAt = 0L
         // [T-music-pause-on-voice] 音乐会被麦克风录进去，也会盖住「我在」和
         // 用户的请求：整段语音对话期间暂停，回到待命时再恢复。
         suspendPlaybackForConversation()
@@ -1341,6 +1364,59 @@ class WakeWordService : Service() {
             AppLogger.info(TAG, line)
             VoiceWakeState.trace(this, line)
         }
+        // [T-voice-wake-owner-pause] The request ends when the OWNER's
+        // voiceprint has not passed for a full second — not when the room is
+        // acoustically quiet. The owner defined it this way: in a car the
+        // background never satisfies an energy-silence test, so the energy
+        // VAD could only end the request on its 60 s safety valve (device log
+        // 2026-11-26 15:39 / 15:41 / 15:46: `VAD 切句 60000ms 原因=上限`),
+        // while the same sentences transcribe fine with the voiceprint off.
+        //
+        // Only runs once this phase has verified the owner at least once: the
+        // first utterance still has the normal window to start ("我在" and
+        // the beginning of the request are not a pause).
+        if (conversationState == ConversationState.LISTENING &&
+            WakeWordSettings.voiceprintEnabled.value &&
+            ownerVerifiedInWindow &&
+            now - lastOwnerProbeAt >= OWNER_PROBE_INTERVAL_MS
+        ) {
+            val detector = vad
+            val tail = detector?.currentSegmentTailPcm(WakeListenWindowPolicy.RENEW_TAIL_MS)
+            if (tail != null) {
+                lastOwnerProbeAt = now
+                val score = withContext(Dispatchers.IO) {
+                    synchronized(voiceprintLock) { voiceprint.verify(tail) }
+                }
+                if (conversationState != ConversationState.LISTENING) return
+                val threshold = WakeWordSettings.voiceprintThreshold.value
+                if (score != null && score >= threshold) {
+                    ownerVerifiedAt = now
+                } else if (score != null &&
+                    ownerVerifiedAt > 0L &&
+                    now - ownerVerifiedAt >= OWNER_PAUSE_MS
+                ) {
+                    // A full second without a passing verdict: the request is
+                    // over. Hand the whole buffered segment over — it starts
+                    // with the audio that did verify earlier.
+                    if (detector?.flush() == true) {
+                        voiceprintExemptSegment = true
+                        conversationDeadline = now + FLUSH_GRACE_MS
+                        AppLogger.info(
+                            TAG,
+                            "声纹 %.2f 超过 %dms 未再通过，结束请求并交付缓冲".format(
+                                score,
+                                now - ownerVerifiedAt,
+                            ),
+                        )
+                        VoiceWakeState.trace(
+                            this,
+                            "声纹停顿 ${now - ownerVerifiedAt}ms，交付请求",
+                        )
+                        return
+                    }
+                }
+            }
+        }
         when {
             !enabled -> {
                 abortConversation("功能已关闭")
@@ -1422,6 +1498,7 @@ class WakeWordService : Service() {
                         // cut, and the next deadline may only see the room
                         // in its tail (see [ownerVerifiedInWindow]).
                         ownerVerifiedInWindow = true
+                        ownerVerifiedAt = now
                         AppLogger.info(
                             TAG,
                             "声纹续期 score=%.2f 阈值=%.2f，再听 ${conversationWindowMs / 1000}s".format(
@@ -1832,6 +1909,8 @@ class WakeWordService : Service() {
         // evidence and any unused exemption do not apply to the next one.
         ownerVerifiedInWindow = false
         voiceprintExemptSegment = false
+        ownerVerifiedAt = 0L
+        lastOwnerProbeAt = 0L
         if (renewWindow) {
             conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         }
