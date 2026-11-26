@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * The ball has exactly three looks. Every pipeline phase must land in one of
+ * The ball has exactly four looks. Every pipeline phase must land in one of
  * them — an unmapped phase would leave the ball frozen in whatever state it
  * had, which is how "waiting" used to look dead.
  */
@@ -21,6 +21,7 @@ class VoiceBallStateTest {
             VoiceWakePhase.ERROR to VoiceBallState.SLEEP,
             VoiceWakePhase.WAKING to VoiceBallState.LISTEN,
             VoiceWakePhase.LISTENING to VoiceBallState.LISTEN,
+            VoiceWakePhase.THINKING to VoiceBallState.THINK,
             VoiceWakePhase.REPLYING to VoiceBallState.SPEAK,
         )
         assertEquals(VoiceWakePhase.entries.toSet(), expected.keys)
@@ -33,6 +34,7 @@ class VoiceBallStateTest {
     fun `waiting for the wake word sleeps while a wake listens`() {
         assertEquals(VoiceBallState.SLEEP, VoiceWakePhase.WAITING.toBallState())
         assertEquals(VoiceBallState.LISTEN, VoiceWakePhase.LISTENING.toBallState())
+        assertEquals(VoiceBallState.THINK, VoiceWakePhase.THINKING.toBallState())
         assertEquals(VoiceBallState.SPEAK, VoiceWakePhase.REPLYING.toBallState())
     }
 }

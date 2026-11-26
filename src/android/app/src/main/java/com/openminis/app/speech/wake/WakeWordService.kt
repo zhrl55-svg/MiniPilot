@@ -1768,7 +1768,7 @@ class WakeWordService : Service() {
         // listening phase and must not be answered after this turn.
         pendingUtterances.clear()
         removeVad()
-        publish(VoiceWakePhase.REPLYING, "识别中")
+        publish(VoiceWakePhase.THINKING, "识别中")
 
         val text = WakeEcho.strip(raw, WakeWordSettings.wakeWordList(), ack = ackText)
         // The app may have come to the foreground (or the feature was
@@ -1819,7 +1819,7 @@ class WakeWordService : Service() {
             return
         }
 
-        publish(VoiceWakePhase.REPLYING, "思考中")
+        publish(VoiceWakePhase.THINKING, "思考中")
         // [T-voice-single-speak] 一轮语音只播一次。快路径命中时端侧 announce
         // 会播真实结果，这时模型返回的文本（快路径写进聊天的气泡标题）就
         // 不该再念一遍。标记的粒度是「这一轮 ask()」。
@@ -2112,6 +2112,7 @@ class WakeWordService : Service() {
             VoiceWakePhase.WAITING -> getString(R.string.voice_wake_notification_waiting, WakeWordSettings.wakeWord.value)
             VoiceWakePhase.WAKING -> getString(R.string.voice_wake_notification_waking)
             VoiceWakePhase.LISTENING -> getString(R.string.voice_wake_notification_listening)
+            VoiceWakePhase.THINKING -> getString(R.string.voice_wake_notification_thinking)
             VoiceWakePhase.REPLYING -> getString(R.string.voice_wake_notification_replying)
             VoiceWakePhase.PAUSED -> snapshot.detail.ifBlank { getString(R.string.voice_wake_notification_paused) }
             VoiceWakePhase.ERROR -> snapshot.detail.ifBlank { getString(R.string.voice_wake_state_error) }
@@ -2160,6 +2161,7 @@ class WakeWordService : Service() {
             VoiceWakePhase.WAITING -> getString(R.string.voice_wake_notification_waiting, WakeWordSettings.wakeWord.value)
             VoiceWakePhase.WAKING -> getString(R.string.voice_wake_notification_waking)
             VoiceWakePhase.LISTENING -> getString(R.string.voice_wake_notification_listening)
+            VoiceWakePhase.THINKING -> getString(R.string.voice_wake_notification_thinking)
             VoiceWakePhase.REPLYING -> getString(R.string.voice_wake_notification_replying)
             VoiceWakePhase.PAUSED -> snapshot.detail.ifBlank { getString(R.string.voice_wake_notification_paused) }
             VoiceWakePhase.ERROR -> snapshot.detail.ifBlank { getString(R.string.voice_wake_state_error) }

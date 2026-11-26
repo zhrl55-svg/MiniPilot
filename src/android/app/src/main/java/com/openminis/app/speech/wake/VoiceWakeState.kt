@@ -27,6 +27,9 @@ enum class VoiceWakePhase {
      */
     LISTENING,
 
+    /** The request is being transcribed and the agent is working on a reply. */
+    THINKING,
+
     /** The agent's reply is being spoken. */
     REPLYING,
 

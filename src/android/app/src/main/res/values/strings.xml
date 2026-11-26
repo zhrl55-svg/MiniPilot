@@ -1628,6 +1628,7 @@
     <string name="voice_wake_notification_waiting">Waiting for “%1$s”</string>
     <string name="voice_wake_notification_waking">Woken up, getting ready to listen…</string>
     <string name="voice_wake_notification_listening">Listening — go ahead…</string>
+    <string name="voice_wake_notification_thinking">Working on it…</string>
     <string name="voice_wake_notification_replying">Replying…</string>
     <string name="voice_wake_notification_paused">Listening pauses in the foreground or while speaking</string>
     <string name="voice_wake_notification_stop">Stop</string>
@@ -1638,6 +1639,7 @@
     <string name="voice_wake_state_waiting">Waiting</string>
     <string name="voice_wake_state_waking">Waking</string>
     <string name="voice_wake_state_listening">Listening</string>
+    <string name="voice_wake_state_thinking">Thinking</string>
     <string name="voice_wake_state_replying">Replying</string>
     <string name="voice_wake_state_paused">Paused</string>
     <string name="voice_wake_state_error">Error</string>

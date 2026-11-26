@@ -138,6 +138,7 @@ class VoiceStatusOverlay(private val context: Context) {
         val color = when (snapshot.phase) {
             VoiceWakePhase.WAITING,
             VoiceWakePhase.LISTENING,
+            VoiceWakePhase.THINKING,
             VoiceWakePhase.REPLYING,
             VoiceWakePhase.WAKING,
             -> COLOR_ACTIVE
@@ -145,8 +146,11 @@ class VoiceStatusOverlay(private val context: Context) {
             VoiceWakePhase.ERROR -> COLOR_ERROR
             VoiceWakePhase.OFF -> COLOR_OFF
         }
-        (b.background as? GradientDrawable)?.setColor(color)
+        // Hollow ball: the outline drawn by PulseRingView is the state colour,
+        // while the disc itself stays transparent. The icon follows the same
+        // colour so it remains visible on light wallpapers.
         r.color = color
+        icon.setColorFilter(color)
 
         // The icon is the state: a microphone while the assistant sleeps or
         // listens, a loudspeaker while it answers.
@@ -174,6 +178,7 @@ class VoiceStatusOverlay(private val context: Context) {
                     VoiceWakePhase.WAITING -> R.string.voice_wake_state_waiting
                     VoiceWakePhase.WAKING -> R.string.voice_wake_state_waking
                     VoiceWakePhase.LISTENING -> R.string.voice_wake_state_listening
+                    VoiceWakePhase.THINKING -> R.string.voice_wake_state_thinking
                     VoiceWakePhase.REPLYING -> R.string.voice_wake_state_replying
                     VoiceWakePhase.PAUSED -> R.string.voice_wake_state_paused
                     VoiceWakePhase.ERROR -> R.string.voice_wake_state_error
@@ -210,11 +215,12 @@ class VoiceStatusOverlay(private val context: Context) {
     private fun applyFrame() {
         val icon = icon ?: return
         val r = ring ?: return
-        // Sleep is the long-running state — the ball can sit there for hours.
-        // Its breath has a 4.8s period, so 20fps looks identical and costs a
-        // third of the redraws. Listening and replying keep the full rate.
+        // Sleep can sit for hours and thinking can wait on a model for tens of
+        // seconds; both run fine at 20fps and save the redraws. Listening and
+        // replying keep the full rate.
         val now = SystemClock.elapsedRealtime()
-        if (ballState == VoiceBallState.SLEEP &&
+        val slow = ballState == VoiceBallState.SLEEP || ballState == VoiceBallState.THINK
+        if (slow &&
             lastFrameState == ballState &&
             now - lastFrameAt < SLEEP_FRAME_INTERVAL_MS
         ) {
@@ -246,6 +252,15 @@ class VoiceStatusOverlay(private val context: Context) {
                 icon.alpha = 1f
                 r.mode = RingMode.PULSE
                 r.phase = p
+            }
+            // Working: an arc runs around the hollow ball. This is the only
+            // rotational look, so it reads apart from the radial pulse/waves.
+            VoiceBallState.THINK -> {
+                icon.scaleX = 1f
+                icon.scaleY = 1f
+                icon.alpha = 0.85f + 0.15f * sin(PI * f).toFloat()
+                r.mode = RingMode.SPIN
+                r.phase = f
             }
             // Replying: the speaker bounces in step with the outgoing waves.
             VoiceBallState.SPEAK -> {
@@ -348,7 +363,8 @@ class VoiceStatusOverlay(private val context: Context) {
             View(context).apply {
                 background = GradientDrawable().apply {
                     shape = GradientDrawable.OVAL
-                    setColor(COLOR_ACTIVE)
+                    // Hollow: PulseRingView supplies the coloured outline.
+                    setColor(Color.TRANSPARENT)
                 }
             },
             FrameLayout.LayoutParams(ballSize, ballSize, Gravity.CENTER),
@@ -364,7 +380,7 @@ class VoiceStatusOverlay(private val context: Context) {
 
         val icon = ImageView(context).apply {
             setImageResource(R.drawable.ic_voice_mic)
-            setColorFilter(Color.WHITE)
+            setColorFilter(COLOR_ACTIVE)
         }
         ballFrame.addView(icon, FrameLayout.LayoutParams(dp(ICON_SIZE_DP), dp(ICON_SIZE_DP), Gravity.CENTER))
         this.icon = icon
@@ -484,6 +500,7 @@ class VoiceStatusOverlay(private val context: Context) {
         var color: Int = COLOR_ACTIVE
         var mode: RingMode = RingMode.NONE
         var phase: Float = 0f
+        private val spinRect = android.graphics.RectF()
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
@@ -503,7 +520,7 @@ class VoiceStatusOverlay(private val context: Context) {
                     paint.alpha = 210
                     canvas.drawCircle(cx, cy, base, paint)
                     if (phase > 0f) {
-                        paint.alpha = ((1f - phase) * 150).toInt()
+                        paint.alpha = ((1f - phase) * 180).toInt()
                         canvas.drawCircle(cx, cy, base + phase * base * 0.34f, paint)
                     }
                 }
@@ -512,15 +529,23 @@ class VoiceStatusOverlay(private val context: Context) {
                     val waves = 3
                     for (i in 0 until waves) {
                         val p = (phase + i.toFloat() / waves) % 1f
-                        paint.alpha = ((1f - p) * 150).toInt()
+                        paint.alpha = ((1f - p) * 180).toInt()
                         canvas.drawCircle(cx, cy, base + p * base * 0.55f, paint)
                     }
+                }
+                RingMode.SPIN -> {
+                    // Working: a 90° arc runs around the hollow ball. Its
+                    // rotation is the only directional cue in the four looks.
+                    paint.alpha = 220
+                    spinRect.set(cx - base, cy - base, cx + base, cy + base)
+                    val start = -90f + (phase * 360f * THINK_TURNS) % 360f
+                    canvas.drawArc(spinRect, start, 90f, false, paint)
                 }
             }
         }
     }
 
-    private enum class RingMode { NONE, PULSE, WAVE }
+    private enum class RingMode { NONE, PULSE, WAVE, SPIN }
 
     private companion object {
         const val TAG = "VoiceWake"
@@ -540,6 +565,9 @@ class VoiceStatusOverlay(private val context: Context) {
         /** Pulse every 1600ms, wave every 1200ms; both divide [CYCLE_MS]. */
         const val LISTEN_BEATS = 3f
         const val SPEAK_WAVES = 4f
+
+        /** Working arc turns twice per shared cycle (one turn every 2400ms). */
+        const val THINK_TURNS = 2f
 
         /** A representative still when system animations are turned off. */
         const val STATIC_FRAME_FRACTION = 0.25f
