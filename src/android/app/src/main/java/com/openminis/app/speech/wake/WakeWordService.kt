@@ -361,6 +361,37 @@ class WakeWordService : Service() {
     private var voiceprintGraceUsed = 0
 
     /**
+     * The owner's voiceprint has already passed once inside this listening
+     * phase.
+     *
+     * The energy VAD cannot end a sentence in a noisy car: road noise keeps
+     * the level above the end threshold, so the request stays in one segment
+     * for 10–30 s and the window only ever closes on the deadline. That
+     * deadline used to judge the last 2 s of the segment — by then the room,
+     * not the speaker — and throw the whole request away (device log
+     * 2026-11-26 13:01: 续期 0.81 at 13:01:41, 到点 0.18 at 13:01:46,
+     * 丢弃 10340ms; five times in a row, while the very same sentences went
+     * through with the voiceprint switch off).
+     *
+     * A renewal that already passed is proof that the owner is the one
+     * talking in this phase. When the deadline arrives with that proof and
+     * the segment's tail is the room instead of the voice, the buffered
+     * request is handed to the recogniser instead of being dropped.
+     */
+    @Volatile
+    private var ownerVerifiedInWindow = false
+
+    /**
+     * One segment that may skip the per-utterance voiceprint.
+     *
+     * Set when [ownerVerifiedInWindow] lets an over-long noisy segment out at
+     * the deadline; consumed by the next [handleUtterance] so that a later
+     * stranger's sentence in the same phase still goes through the gate.
+     */
+    @Volatile
+    private var voiceprintExemptSegment = false
+
+    /**
      * Serialises [WakeVoiceprintGate.verify].
      *
      * sherpa's `SpeakerEmbeddingExtractor` is not safe for concurrent calls:
@@ -972,6 +1003,10 @@ class WakeWordService : Service() {
         conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         conversationListeningSince = SystemClock.elapsedRealtime()
         voiceprintGraceUsed = 0
+        // A fresh wake starts a fresh listening phase: no earlier renewal or
+        // deadline exemption carries over.
+        ownerVerifiedInWindow = false
+        voiceprintExemptSegment = false
         // [T-music-pause-on-voice] 音乐会被麦克风录进去，也会盖住「我在」和
         // 用户的请求：整段语音对话期间暂停，回到待命时再恢复。
         suspendPlaybackForConversation()
@@ -1382,6 +1417,11 @@ class WakeWordService : Service() {
                     is WakeListenWindowPolicy.Decision.Renew -> {
                         conversationDeadline = now + conversationWindowMs
                         voiceprintGraceUsed = 0
+                        // The owner is talking in this phase. Remember it: a
+                        // noisy room can keep the sentence from ever being
+                        // cut, and the next deadline may only see the room
+                        // in its tail (see [ownerVerifiedInWindow]).
+                        ownerVerifiedInWindow = true
                         AppLogger.info(
                             TAG,
                             "声纹续期 score=%.2f 阈值=%.2f，再听 ${conversationWindowMs / 1000}s".format(
@@ -1418,6 +1458,32 @@ class WakeWordService : Service() {
                                 VoiceWakeState.trace(this, "窗口到点，声纹无法校验，丢弃 ${bufferedMs}ms")
                             }
                             else -> {
+                                // The tail failed, but this phase already
+                                // verified the owner earlier. In a noisy car
+                                // the VAD never ends the sentence, so the
+                                // tail at the deadline is road noise while
+                                // the real request sits earlier in the same
+                                // buffer (device log 2026-11-26 13:01–13:16:
+                                // renew 0.81 → deadline 0.18, five times).
+                                // Hand the buffered request over instead of
+                                // discarding it; the same sentences transcribe
+                                // fine with the voiceprint switch off.
+                                if (ownerVerifiedInWindow && detector?.flush() == true) {
+                                    voiceprintExemptSegment = true
+                                    conversationDeadline = now + FLUSH_GRACE_MS
+                                    AppLogger.info(
+                                        TAG,
+                                        "窗口到点，尾部声纹 %.2f 未通过但本窗口已确认本人，交付缓冲 %dms".format(
+                                            score,
+                                            bufferedMs,
+                                        ),
+                                    )
+                                    VoiceWakeState.trace(
+                                        this,
+                                        "窗口到点，本人已确认，交付 ${bufferedMs}ms",
+                                    )
+                                    return
+                                }
                                 AppLogger.info(
                                     TAG,
                                     "窗口到点，声纹未通过 score=%.2f/阈值=%.2f，丢弃缓冲 %dms，回到待命".format(
@@ -1556,7 +1622,13 @@ class WakeWordService : Service() {
             VoiceWakeState.trace(this, "只有助手自己的回应")
             return
         }
-        if (!passesVoiceprint(pcm)) {
+        // A segment released by the deadline after this phase already
+        // verified the owner (see [voiceprintExemptSegment]): its edges are
+        // room noise, so a whole-segment re-check here would drop exactly the
+        // request the deadline path just saved.
+        val voiceprintExempt = voiceprintExemptSegment
+        voiceprintExemptSegment = false
+        if (!voiceprintExempt && !passesVoiceprint(pcm)) {
             AppLogger.info(TAG, "声纹不通过，忽略这句话")
             VoiceWakeState.trace(this, "声纹不通过，忽略")
             publish(VoiceWakePhase.LISTENING, "等待本人说话")
@@ -1756,6 +1828,10 @@ class WakeWordService : Service() {
         // voiceprint grace budget start over for the next one.
         conversationListeningSince = SystemClock.elapsedRealtime()
         voiceprintGraceUsed = 0
+        // The reply closed the previous listening phase; its voiceprint
+        // evidence and any unused exemption do not apply to the next one.
+        ownerVerifiedInWindow = false
+        voiceprintExemptSegment = false
         if (renewWindow) {
             conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         }
