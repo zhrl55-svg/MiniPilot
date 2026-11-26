@@ -1471,7 +1471,6 @@
     <string name="settings_bg_overlay_footer">MiniPilot 处于后台时，显示一个小型悬浮胶囊展示当前工具。需要"显示在其他应用上层"权限。点击悬浮窗回到 MiniPilot；拖拽可移动位置。</string>
     <string name="settings_bg_overlay_permission_needed">需先授予"显示在其他应用上层"权限</string>
     <!-- [T-android-voice-wake] 后台语音唤醒 + 语音状态悬浮球 -->
-    <string name="settings_voice_wake_section">语音唤醒</string>
     <string name="settings_voice_wake">后台语音唤醒</string>
     <string name="settings_voice_wake_footer">MiniPilot 在后台时持续监听唤醒词。需要麦克风权限；多数手机还需要把 MiniPilot 加入电池优化白名单。唤醒后会打开新的语音对话。</string>
     <string name="settings_voice_wake_degraded">后台录音被系统暂停，打开 MiniPilot 后会自动恢复</string>

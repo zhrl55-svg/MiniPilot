@@ -44,9 +44,9 @@
   `onActivityStarted` 从后台回前台时 `WakeWordController.onAppForegrounded(this)`。
 - `AlarmReceiver.kt`：`BOOT_COMPLETED` / `MY_PACKAGE_REPLACED` 时重新 `WakeWordController.init`，
   让开机/升级后唤醒词自动恢复。
-- `BackgroundSettingsScreen.kt`：设置页新增「语音唤醒」分区（唤醒开关 / 唤醒词 / 悬浮球 / 唤醒回应 / 声纹开关 / 声纹阈值滑杆）。
-- `SettingsScreen.kt`：主设置页新增顶层「语音唤醒」入口，直接跳到后台设置页的语音唤醒分区
-  （`Routes.background(voiceWake = true)` → `?voice=1` → 滚动定位）。
+- `VoiceWakeSettingsScreen.kt`：独立的「语音唤醒」设置页（唤醒开关 / 唤醒词 / 悬浮球 / 唤醒回应 / 声纹开关 / 声纹阈值滑杆 / 语音休眠时长），从后台设置页拆出。
+- `BackgroundSettingsScreen.kt`：仅保留后台与通知设置（通知、悬浮窗、灵动岛、倒计时、电池优化、厂商自启动），不再包含语音唤醒分区。
+- `SettingsScreen.kt`：主设置页两个入口分别跳到不同页面——「后台与通知」→ `Routes.background()`；「后台语音唤醒」→ `Routes.background(voiceWake = true)`（`?voice=1` → 语音唤醒独立页）。
 - `scripts/deploy_voiceprint.sh`：把声纹模型（28MB）推到 `models/voiceprint/`。
 - `ConfigBuiltins.kt`：`voice.wake` / `voice.wakeWord` / `voice.wakeOverlay` 三个配置项。
 - `strings.xml`（`values` + `values-zh`）：文案中英双语。

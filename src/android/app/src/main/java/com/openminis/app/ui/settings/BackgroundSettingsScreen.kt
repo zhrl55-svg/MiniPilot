@@ -1,14 +1,10 @@
 package com.openminis.app.ui.settings
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -23,44 +19,32 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.positionInParent
 import androidx.compose.material.icons.Icons
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material.icons.filled.Check
 import com.openminis.app.icons.outlined.Timer
-import com.openminis.app.icons.outlined.Tune
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import com.openminis.app.icons.outlined.BatteryFull
 import com.openminis.app.icons.outlined.Bolt
-import com.openminis.app.icons.outlined.Fingerprint
 import com.openminis.app.icons.outlined.Layers
 import com.openminis.app.icons.outlined.NotificationsActive
 import com.openminis.app.icons.outlined.PhoneAndroid
-import com.openminis.app.icons.outlined.Mic
-import com.openminis.app.icons.outlined.RecordVoiceOver
-import com.openminis.app.icons.outlined.VolumeUp
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -76,13 +60,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
-import androidx.core.content.ContextCompat
 import com.openminis.app.MinisApp
 import com.openminis.app.R
 import com.openminis.app.power.PowerOptimizationManager
 import com.openminis.app.i18n.uppercaseForDisplay
-import com.openminis.app.speech.wake.WakeWordController
-import com.openminis.app.speech.wake.WakeWordSettings
 
 /**
  * T50 settings screen — surfaces the two pieces of background-keep-alive
@@ -105,14 +86,6 @@ import com.openminis.app.speech.wake.WakeWordSettings
 @Composable
 fun BackgroundSettingsScreen(
     onBack: () -> Unit,
-    /**
-     * Scroll straight to the voice-wake section.
-     *
-     * The wake word is the one setting people come here for, and it used
-     * to sit below the battery/notification rows where nobody found it.
-     * The main settings screen links straight to it.
-     */
-    scrollToVoiceWake: Boolean = false,
 ) {
     val context = LocalContext.current
     val activity = context as? Activity
@@ -128,17 +101,6 @@ fun BackgroundSettingsScreen(
     // [T-android-dynamic-island] Live-Updates toggle + device capability.
     val dynamicIslandEnabled by backgroundRepo.dynamicIslandEnabled.collectAsState()
     val scheduledCountdownLead by backgroundRepo.scheduledCountdownLead.collectAsState()
-    WakeWordSettings.init(context)
-    val voiceWakeEnabled by WakeWordSettings.enabled.collectAsState()
-    // The preference stays on; this only reflects whether the live service
-    // is actually able to hear. A degraded service is rebuilt on foreground.
-    val voiceWakeDegraded by WakeWordController.degraded.collectAsState()
-    val voiceWakeWord by WakeWordSettings.wakeWord.collectAsState()
-    val voiceWakeOverlay by WakeWordSettings.showOverlay.collectAsState()
-    val voiceWakeTone by WakeWordSettings.toneEnabled.collectAsState()
-    val voiceWakeVoiceprint by WakeWordSettings.voiceprintEnabled.collectAsState()
-        val voiceWakeThreshold by WakeWordSettings.voiceprintThreshold.collectAsState()
-    val voiceSleepWindowMs by WakeWordSettings.voiceSleepWindowMs.collectAsState()
 
     var ignoringOptimizations by remember {
         mutableStateOf(PowerOptimizationManager.isIgnoringBatteryOptimizations(context))
@@ -157,70 +119,8 @@ fun BackgroundSettingsScreen(
             com.openminis.app.service.DynamicIslandSupport.isDynamicIslandCapable(context),
         )
     }
-    var micGranted by remember {
-        mutableStateOf(
-            ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                PackageManager.PERMISSION_GRANTED,
-        )
-    }
-    var showWakeWordDialog by remember { mutableStateOf(false) }
-    var wakeWordDraft by remember { mutableStateOf(voiceWakeWord) }
-
-    // Scroll-to-anchor for the voice-wake section. The offset is captured
-    // once, while the list is still at scroll position 0 — after that the
-    // same callback would report a position that already includes the
-    // scroll delta.
-    val scrollState = rememberScrollState()
-    var voiceWakeAnchor by remember { mutableIntStateOf(-1) }
-    LaunchedEffect(scrollToVoiceWake, voiceWakeAnchor) {
-        if (scrollToVoiceWake && voiceWakeAnchor >= 0) {
-            scrollState.animateScrollTo(voiceWakeAnchor)
-        }
-    }
-
-    val notificationPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) {
-        // The service is allowed to run without notification permission; it
-        // simply cannot show its ongoing row. Enable either way.
-        WakeWordController.setEnabled(context, true)
-    }
-    val micPermissionLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        micGranted = granted
-        if (granted) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-                PackageManager.PERMISSION_GRANTED
-            ) {
-                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                WakeWordController.setEnabled(context, true)
-            }
-        }
-    }
-
-    fun enableVoiceWake() {
-        if (ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            micPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
-            return
-        }
-        micGranted = true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-        } else {
-            WakeWordController.setEnabled(context, true)
-        }
-    }
-
     val lifecycleOwner = LocalLifecycleOwner.current
-    LaunchedEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 ignoringOptimizations =
@@ -228,9 +128,6 @@ fun BackgroundSettingsScreen(
                 canDrawOverlays =
                     Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
                         Settings.canDrawOverlays(context)
-                micGranted =
-                    ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
-                        PackageManager.PERMISSION_GRANTED
                 // [T-android-island-capability-ttl] The user may have just
                 // flipped Live Updates in system settings: drop the cached
                 // answer so this re-probe really asks the platform.
@@ -240,6 +137,9 @@ fun BackgroundSettingsScreen(
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     val vendor = remember { PowerOptimizationManager.Vendor.current() }
@@ -262,7 +162,7 @@ fun BackgroundSettingsScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .padding(horizontal = 16.dp)
-                .verticalScroll(scrollState),
+                .verticalScroll(rememberScrollState()),
         ) {
             Spacer(Modifier.size(8.dp))
             // T180-bg-notif: Task Notifications toggle. Mirrors iOS
@@ -319,7 +219,7 @@ fun BackgroundSettingsScreen(
                         // Persist the user's intent so when they return
                         // with the grant in place, the overlay turns on
                         // immediately (canDrawOverlays re-polls on
-                        // ON_RESUME — see LaunchedEffect above).
+                        // ON_RESUME — see DisposableEffect above).
                         backgroundRepo.setBackgroundOverlayEnabled(true)
                     } else {
                         backgroundRepo.setBackgroundOverlayEnabled(wanted)
@@ -333,165 +233,6 @@ fun BackgroundSettingsScreen(
                     stringResource(R.string.settings_bg_overlay_footer)
                 },
             )
-
-            // [T-android-voice-wake] Background wake word + its own floating
-            // status ball. Voice wake is intentionally separate from the tool
-            // capsule: it must stay visible with no agent turn running.
-            Spacer(Modifier.size(16.dp))
-            BgSectionTitle(
-                text = stringResource(R.string.settings_voice_wake_section),
-                modifier = Modifier.onGloballyPositioned { coords ->
-                    if (voiceWakeAnchor < 0) {
-                        voiceWakeAnchor = coords.positionInParent().y.toInt()
-                    }
-                },
-            )
-            BgToggleRow(
-                icon = Icons.Outlined.Mic,
-                iconColor = Color(0xFFFF9500),
-                title = stringResource(R.string.settings_voice_wake),
-                checked = voiceWakeEnabled && !voiceWakeDegraded,
-                onCheckedChange = { wanted ->
-                    if (wanted) {
-                        enableVoiceWake()
-                    } else {
-                        WakeWordController.setEnabled(context, false)
-                    }
-                },
-            )
-            BgFooter(
-                when {
-                    voiceWakeDegraded ->
-                        stringResource(R.string.settings_voice_wake_degraded)
-                    voiceWakeEnabled && !micGranted ->
-                        stringResource(R.string.settings_voice_wake_permission_needed)
-                    else ->
-                        stringResource(R.string.settings_voice_wake_footer)
-                },
-            )
-
-            Spacer(Modifier.size(8.dp))
-            BgRow(
-                icon = Icons.Outlined.RecordVoiceOver,
-                iconColor = Color(0xFF34C759),
-                title = stringResource(R.string.settings_voice_wake_word),
-                subtitle = voiceWakeWord,
-                onClick = {
-                    wakeWordDraft = voiceWakeWord
-                    showWakeWordDialog = true
-                },
-            )
-            BgFooter(stringResource(R.string.settings_voice_wake_word_footer))
-
-            Spacer(Modifier.size(8.dp))
-            BgToggleRow(
-                icon = Icons.Outlined.Layers,
-                iconColor = Color(0xFF5856D6),
-                title = stringResource(R.string.settings_voice_wake_overlay),
-                checked = voiceWakeOverlay,
-                onCheckedChange = { wanted ->
-                    if (wanted && !canDrawOverlays) {
-                        try {
-                            val intent = Intent(
-                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                                Uri.parse("package:" + context.packageName),
-                            ).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) }
-                            context.startActivity(intent)
-                        } catch (_: Throwable) {
-                            runCatching {
-                                context.startActivity(
-                                    Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION)
-                                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                                )
-                            }
-                        }
-                        WakeWordSettings.setShowOverlay(context, true)
-                    } else {
-                        WakeWordSettings.setShowOverlay(context, wanted)
-                    }
-                },
-            )
-            BgFooter(
-                if (!canDrawOverlays && voiceWakeOverlay) {
-                    stringResource(R.string.settings_voice_wake_overlay_permission_needed)
-                } else {
-                    stringResource(R.string.settings_voice_wake_overlay_footer)
-                },
-            )
-
-            Spacer(Modifier.size(8.dp))
-            BgToggleRow(
-                icon = Icons.Outlined.VolumeUp,
-                iconColor = Color(0xFFAF52DE),
-                title = stringResource(R.string.settings_voice_wake_tone),
-                checked = voiceWakeTone,
-                onCheckedChange = { WakeWordSettings.setToneEnabled(context, it) },
-            )
-            BgFooter(stringResource(R.string.settings_voice_wake_tone_footer))
-
-            Spacer(Modifier.size(8.dp))
-            BgToggleRow(
-                icon = Icons.Outlined.Fingerprint,
-                iconColor = Color(0xFF30B0C7),
-                title = stringResource(R.string.settings_voice_wake_voiceprint),
-                checked = voiceWakeVoiceprint,
-                onCheckedChange = { wanted ->
-                    WakeWordSettings.setVoiceprintEnabled(context, wanted)
-                    if (!wanted) {
-                        // Forgetting the template is what "off" has to mean:
-                        // a stale template would still be compared against
-                        // the next time the gate is switched back on.
-                        WakeWordSettings.clearVoiceprintTemplate(context)
-                    }
-                },
-            )
-            BgFooter(stringResource(R.string.settings_voice_wake_voiceprint_footer))
-
-            if (voiceWakeVoiceprint) {
-                Spacer(Modifier.size(8.dp))
-                BgRow(
-                    icon = Icons.Outlined.Tune,
-                    iconColor = Color(0xFF30B0C7),
-                    title = stringResource(R.string.settings_voice_wake_threshold),
-                    subtitle = "%.2f".format(voiceWakeThreshold),
-                    onClick = null,
-                )
-                Slider(
-                    value = voiceWakeThreshold,
-                    onValueChange = { WakeWordSettings.setVoiceprintThreshold(context, it) },
-                    valueRange = WakeWordSettings.MIN_VOICEPRINT_THRESHOLD..
-                        WakeWordSettings.MAX_VOICEPRINT_THRESHOLD,
-                    modifier = Modifier.padding(horizontal = 4.dp),
-                )
-                BgFooter(stringResource(R.string.settings_voice_wake_threshold_footer))
-            }
-
-            // How long a voice dialogue waits for speech before going back
-            // to standby. One setting drives both background wake listening
-            // and hold-to-talk; applied live via the StateFlow.
-            Spacer(Modifier.size(8.dp))
-            BgRow(
-                icon = Icons.Outlined.Timer,
-                iconColor = Color(0xFF30B0C7),
-                title = stringResource(R.string.settings_voice_sleep_window),
-                subtitle = stringResource(
-                    R.string.settings_voice_sleep_window_value,
-                    (voiceSleepWindowMs / 1000).toInt(),
-                ),
-                onClick = null,
-            )
-            Slider(
-                value = voiceSleepWindowMs / 1000f,
-                onValueChange = {
-                    WakeWordSettings.setVoiceSleepWindowMs(context, (it * 1000).toLong())
-                },
-                valueRange = (WakeWordSettings.MIN_VOICE_SLEEP_WINDOW_MS / 1000f)..
-                    (WakeWordSettings.MAX_VOICE_SLEEP_WINDOW_MS / 1000f),
-                steps = ((WakeWordSettings.MAX_VOICE_SLEEP_WINDOW_MS -
-                    WakeWordSettings.MIN_VOICE_SLEEP_WINDOW_MS) / 1000).toInt() - 1,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-            BgFooter(stringResource(R.string.settings_voice_sleep_window_footer))
 
             // [T-android-dynamic-island] Live Updates / "dynamic island" toggle.
             // Only interactive when the device is capable (Android 16+ with the
@@ -598,55 +339,11 @@ fun BackgroundSettingsScreen(
             Spacer(Modifier.size(16.dp))
         }
 
-        if (showWakeWordDialog) {
-            val valid = WakeWordSettings.parseWords(wakeWordDraft).isNotEmpty()
-            AlertDialog(
-                onDismissRequest = { showWakeWordDialog = false },
-                title = { Text(stringResource(R.string.settings_voice_wake_word_dialog_title)) },
-                text = {
-                    Column {
-                        OutlinedTextField(
-                            value = wakeWordDraft,
-                            onValueChange = { wakeWordDraft = it },
-                            singleLine = true,
-                            isError = !valid,
-                            label = { Text(stringResource(R.string.settings_voice_wake_word)) },
-                            placeholder = { Text(stringResource(R.string.settings_voice_wake_word_hint)) },
-                        )
-                        if (!valid) {
-                            Text(
-                                text = stringResource(R.string.settings_voice_wake_word_invalid),
-                                color = MaterialTheme.colorScheme.error,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(top = 6.dp),
-                            )
-                        }
-                    }
-                },
-                confirmButton = {
-                    TextButton(
-                        enabled = valid,
-                        onClick = {
-                            if (WakeWordSettings.setWakeWord(context, wakeWordDraft)) {
-                                showWakeWordDialog = false
-                            }
-                        },
-                    ) {
-                        Text(stringResource(R.string.settings_voice_wake_word_save))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { showWakeWordDialog = false }) {
-                        Text(stringResource(R.string.settings_voice_wake_word_cancel))
-                    }
-                },
-            )
-        }
     }
 }
 
 @Composable
-private fun BgSectionTitle(text: String, modifier: Modifier = Modifier) {
+internal fun BgSectionTitle(text: String, modifier: Modifier = Modifier) {
     Text(
         text = text.uppercaseForDisplay(),
         fontSize = 12.sp,
@@ -656,7 +353,7 @@ private fun BgSectionTitle(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun BgFooter(text: String) {
+internal fun BgFooter(text: String) {
     Text(
         text = text,
         fontSize = 12.sp,
@@ -666,7 +363,7 @@ private fun BgFooter(text: String) {
 }
 
 @Composable
-private fun BgToggleRow(
+internal fun BgToggleRow(
     icon: ImageVector,
     iconColor: Color,
     title: String,
@@ -719,7 +416,7 @@ private fun BgToggleRow(
 }
 
 @Composable
-private fun BgRow(
+internal fun BgRow(
     icon: ImageVector,
     iconColor: Color,
     title: String,

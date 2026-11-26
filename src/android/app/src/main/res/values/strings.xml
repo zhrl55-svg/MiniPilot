@@ -1595,7 +1595,6 @@
     <string name="settings_bg_overlay_footer">Show a small floating capsule with the current tool while MiniPilot is in the background. Requires permission to display over other apps. Tap the capsule to bring MiniPilot to the foreground; drag to move it.</string>
     <string name="settings_bg_overlay_permission_needed">Allow drawing over other apps to enable</string>
     <!-- [T-android-voice-wake] Background wake word + voice status ball -->
-    <string name="settings_voice_wake_section">Voice wake</string>
     <string name="settings_voice_wake">Background voice wake</string>
     <string name="settings_voice_wake_footer">Keep listening for the wake word while MiniPilot is in the background. Requires microphone permission; most phones also need MiniPilot exempted from battery optimisation. A wake-up opens a new voice chat.</string>
     <string name="settings_voice_wake_degraded">Background recording is paused by the system. Open MiniPilot to recover automatically.</string>

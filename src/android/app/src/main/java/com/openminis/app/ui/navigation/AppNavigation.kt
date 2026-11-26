@@ -36,6 +36,7 @@ import com.openminis.app.ui.settings.AddAgentLoopGroupsScreen
 import com.openminis.app.ui.settings.AddAgentLoopModelsScreen
 import com.openminis.app.ui.settings.AddCustomModelScreen
 import com.openminis.app.ui.settings.BackgroundSettingsScreen
+import com.openminis.app.ui.settings.VoiceWakeSettingsScreen
 import com.openminis.app.ui.settings.AddModelsToGroupScreen
 import com.openminis.app.ui.settings.ShadowVoiceDetailScreen
 import com.openminis.app.ui.settings.AddProviderScreen
@@ -220,13 +221,14 @@ object Routes {
     /**
      * Background & notifications settings.
      *
-     * `voice=1` scrolls straight to the voice-wake section — the main
-     * settings screen links there directly, because the wake word used to
-     * be buried under the battery rows.
+     * `voice=1` opens the standalone [VoiceWakeSettingsScreen] instead —
+     * the main settings screen links there directly so the two entries
+     * ("Background & notifications" / "Background voice wake") lead to
+     * distinct pages rather than the same screen scrolled to a section.
      */
     const val BACKGROUND = "background?voice={voice}"
 
-    /** [Routes.BACKGROUND], optionally scrolled to the voice-wake section. */
+    /** [Routes.BACKGROUND], or the standalone voice-wake page when [voiceWake]. */
     fun background(voiceWake: Boolean = false): String =
         if (voiceWake) "background?voice=1" else "background"
     const val ABOUT = "about"
@@ -1570,10 +1572,19 @@ fun AppNavigation(
             ),
         ) {
             val voice = it.arguments?.getInt("voice") ?: 0
-            BackgroundSettingsScreen(
-                onBack = { navController.safePopBackStack() },
-                scrollToVoiceWake = voice == 1,
-            )
+            // Two settings rows used to open this same screen with only a
+            // scroll-to-anchor difference. They are now distinct pages:
+            // voice=1 opens the standalone voice-wake screen, everything
+            // else opens background & notifications.
+            if (voice == 1) {
+                VoiceWakeSettingsScreen(
+                    onBack = { navController.safePopBackStack() },
+                )
+            } else {
+                BackgroundSettingsScreen(
+                    onBack = { navController.safePopBackStack() },
+                )
+            }
         }
 
         // [T-android-subagent-page-parity] AGENTS resolves to the roster page
