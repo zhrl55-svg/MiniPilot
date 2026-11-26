@@ -1111,13 +1111,15 @@ class WakeWordService : Service() {
         )
         vad = detector
         engine?.onFrame = { frame, len ->
-            // The microphone stays open for the whole conversation, but
+            // The microphone stays open for the whole conversation, but the
             // frames carrying the assistant's own "我在" are not the user's
-            // request. Feeding them made the request segment start with TTS
+            // request: feeding them made the request segment start with TTS
             // and fail the voiceprint (device log 2026-11-26: wake 0.55,
-            // request 0.10). The VAD's pre-roll state survives the pause.
-            val echoTail = SystemClock.elapsedRealtime() < echoDeadline
-            if (!ackPlaying && !echoTail) detector.feed(frame, len)
+            // request 0.10). Feeding resumes the moment the acknowledgement
+            // stops — NOT at echoDeadline, whose extra 700 ms silence ate
+            // the first syllables of a user who answers immediately
+            // (device log 11:15:52 wake → 11:15:54 first VAD frame).
+            if (!ackPlaying) detector.feed(frame, len)
         }
     }
 
