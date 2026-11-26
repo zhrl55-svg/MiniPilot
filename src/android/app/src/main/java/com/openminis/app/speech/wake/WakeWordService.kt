@@ -1503,8 +1503,9 @@ class WakeWordService : Service() {
                     voiceprintExemptSegment = true
                     if (detector?.flush() == true) {
                         conversationDeadline = now + FLUSH_GRACE_MS
-                        ownerMissCount = 0
-                        ownerVerifiedAt = 0L
+                        // Log the pause BEFORE resetting the anchor: resetting
+                        // first makes `now - ownerVerifiedAt` print device
+                        // uptime instead of how long the owner had stopped.
                         AppLogger.info(
                             TAG,
                             "声纹 %.2f 超过 %dms 未再通过，结束请求并交付缓冲".format(
@@ -1516,6 +1517,8 @@ class WakeWordService : Service() {
                             this,
                             "声纹停顿 ${now - ownerVerifiedAt}ms，交付请求",
                         )
+                        ownerMissCount = 0
+                        ownerVerifiedAt = 0L
                         return
                     }
                     voiceprintExemptSegment = false
