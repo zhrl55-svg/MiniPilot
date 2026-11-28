@@ -282,12 +282,54 @@ object AmapSearchTool {
             return ToolExecutionResult("请求高德接口失败（$reason）", false)
         }
         val ranked = responses.mapNotNull { (kw, outcome) -> outcome.pois?.let { kw to it } }
-        val merged = AmapPlaceQuery.merge(ranked, plan.foodMode, MAX_SANE_DISTANCE_M)
+        var merged = AmapPlaceQuery.merge(ranked, plan.foodMode, MAX_SANE_DISTANCE_M)
 
         // 显示真正搜过的关键词：泛指问句会显示成「餐厅·饭店·小吃」，
         // 普通查询显示归一化后的地点名。
-        val label = keywords.joinToString("·")
+        var label = keywords.joinToString("·")
+
+        // [T-amap-query-ladder] 一条结果都没有时，不马上宣布「附近没有」：
+        // 先按结构把可能的指令残渣剥掉再打一次（最多两个候选）。
+        //
+        // 为什么要有这一层：词表永远追不上中文的说法（「查询药店」曾经就
+        // 被当成关键词发出去，回 0 条，然后告诉用户「附近没有药店」）。
+        // 有了这一层，词表漏一个词只意味着多一次请求，而不是一句假结论。
+        // 只在「真的 0 条」时触发 —— 正常查询零额外开销；接口报错也不重试
+        // （那下面有明确的失败分支）。
+        val rawCount = ranked.sumOf { it.second.length() }
+        if (rawCount == 0 && keywords.size == 1) {
+            for (candidate in AmapPlaceQuery.retryQueries(keywords.first())) {
+                val outcome = searchPois(key, candidate, loc, radius, city)
+                val pois = outcome.pois ?: break
+                com.openminis.app.llm.mnn.AssistantFastPath.trace(
+                    context,
+                    "amap-retry: from=${keywords.first()} to=$candidate hits=${pois.length()}",
+                )
+                if (pois.length() == 0) continue
+                val retried = AmapPlaceQuery.merge(
+                    listOf(candidate to pois),
+                    plan.foodMode,
+                    MAX_SANE_DISTANCE_M,
+                )
+                if (retried.pois.isNotEmpty()) {
+                    merged = retried
+                    label = candidate
+                    break
+                }
+            }
+        }
+
         if (merged.pois.isEmpty()) {
+            // [T-amap-query-ladder] 剥过还是 0 条，而且原来的词就是以指令字
+            // 开头的 —— 大概率是外壳没剥干净。这时候给一句「没找到」是在
+            // 骗人：返回失败，让上层回退云端（云端模型能读整句话换关键词）。
+            if (keywords.size == 1 && AmapPlaceQuery.startsWithCommandWord(keywords.first())) {
+                return ToolExecutionResult(
+                    "用「$label」搜索没有结果，关键词里可能还带着指令词。" +
+                        "请换一个更短的地点或品类词重试，例如「药店」「附近的加油站」。",
+                    false,
+                )
+            }
             return if (merged.droppedTooFar > 0) {
                 ToolExecutionResult(
                     "找到的「$label」都在 ${MAX_SANE_DISTANCE_M / 1000}km 之外，已全部丢弃。",

@@ -220,6 +220,52 @@ object AmapPlaceQuery {
             normalized.none { it in CLAUSE_PUNCTUATION }
 
     /**
+     * [T-amap-query-ladder] 指令字：出现在查询词开头时，多半是句子外壳没剥干净。
+     *
+     * 这份表**不求完整**——它只用来给「0 结果」时的重试找候选、给「可疑」
+     * 做判断。真正的保证来自重试阶梯：漏了哪个字，最坏也只是多打一两次
+     * 接口或回退云端，不会把一句错关键词冒充成「附近真的没有」。
+     */
+    private val LEADING_COMMAND_CHARS: Set<Char> = setOf(
+        '查', '询', '搜', '找', '看', '问', '寻', '瞅', '瞄', '瞧',
+        '帮', '给', '我', '想', '要', '求', '请', '麻', '烦', '能', '可', '以',
+        '一', '下', '上', '个', '点', '些', '的', '来', '去', '得',
+        '有', '哪', '这', '那',
+    )
+
+    fun startsWithCommandWord(normalized: String): Boolean =
+        normalized.firstOrNull() in LEADING_COMMAND_CHARS
+
+    /**
+     * [T-amap-query-ladder] 0 结果时的重试候选（不含原词，最多两个）。
+     *
+     * 两条结构规则，不依赖枚举：
+     *  1. 剥掉开头的指令字（最多 4 个）——「查询药店」「瞅瞅药店」→「药店」；
+     *  2. 取末尾 3 字 / 2 字 —— 地名主体通常在句子尾部（「这附近哪有药店」）。
+     *
+     * 候选如果仍然以指令字开头就丢掉（剥不动说明没剥对），宁可少试。
+     * 调用方只在「原关键词一条结果都没有」时才用它，正常查询零开销。
+     */
+    fun retryQueries(normalized: String): List<String> {
+        val base = normalized.trim()
+        if (base.length < 3) return emptyList()
+        val out = LinkedHashSet<String>()
+        var stripped = base
+        var removed = 0
+        while (removed < 4 && stripped.length > 2 && stripped.first() in LEADING_COMMAND_CHARS) {
+            stripped = stripped.substring(1)
+            removed++
+        }
+        if (removed > 0) out += stripped
+        if (base.length >= 4) out += base.takeLast(3)
+        if (base.length >= 3) out += base.takeLast(2)
+        return out
+            .filter { it != base && it.length >= 2 && isPlaceKeyword(it) }
+            .filterNot { it.first() in LEADING_COMMAND_CHARS }
+            .take(2)
+    }
+
+    /**
      * 一次查询的展开方案。
      *
      * - 「附近有什么好吃的」→ 餐厅 / 饭店 / 小吃（三个词并行搜）
