@@ -183,6 +183,34 @@ object WeatherFastAnswer {
         return best
     }
 
+    /**
+     * 快速路径要用的位置：先拿最近一次已知位置；没有的话**只给一次 2 秒
+     * 的短定位机会**（旧实现是 8 秒）。2 秒还没结果就放弃、交回云端 ——
+     * 用户能接受「这一次走云端」，不能接受端侧把 8 秒拖满再失败。
+     */
+    private fun locationForFastPath(context: Context): Location? {
+        lastKnownLocation(context)?.let { return it }
+        val result = runCatching {
+            com.openminis.app.sandbox.offload.LocationOffloadHandler(context).handle(
+                com.openminis.app.sandbox.NativeOffloadRequest(
+                    pid = android.os.Process.myPid(),
+                    argv = listOf("android-location", "current", "--timeout", "2"),
+                    env = emptyMap(),
+                    cwd = "/",
+                ),
+            )
+        }.getOrNull() ?: return null
+        if (result.exitCode != 0) return null
+        val obj = runCatching { JSONObject(result.output.trim()) }.getOrNull() ?: return null
+        val latitude = obj.optDouble("latitude")
+        val longitude = obj.optDouble("longitude")
+        if (latitude.isNaN() || longitude.isNaN()) return null
+        return Location("fastpath").apply {
+            this.latitude = latitude
+            this.longitude = longitude
+        }
+    }
+
     // ── 主入口 ──────────────────────────────────────────────────────────
 
     /**
@@ -193,7 +221,7 @@ object WeatherFastAnswer {
      */
     fun refreshBlocking(context: Context, now: Long = System.currentTimeMillis()): Outcome {
         loadDisk(context)
-        val location = lastKnownLocation(context)
+        val location = locationForFastPath(context)
         cachedLine(now)?.let { line ->
             if (location == null || !movedFar(location)) {
                 return Outcome(line = line, source = "cache")
