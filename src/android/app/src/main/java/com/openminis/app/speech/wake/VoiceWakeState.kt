@@ -43,6 +43,13 @@ enum class VoiceWakePhase {
 data class VoiceWakeSnapshot(
     val phase: VoiceWakePhase = VoiceWakePhase.OFF,
     val detail: String = "",
+    /**
+     * [T-android-voice-live-preview] 实时识别预览。
+     *
+     * 唤醒对话聆听期间，端侧识别对最近几秒音频的最新结果。只做界面
+     * 展示，不参与提交；相位一变就清空。
+     */
+    val preview: String = "",
 )
 
 /**
@@ -59,11 +66,27 @@ object VoiceWakeState {
     val state: StateFlow<VoiceWakeSnapshot> = _state.asStateFlow()
 
     fun update(context: Context, phase: VoiceWakePhase, detail: String = "") {
-        val next = VoiceWakeSnapshot(phase, detail)
-        if (_state.value == next) return
+        val previous = _state.value
+        // 同一相位内的 detail 刷新必须保留预览文本；相位切换（聆听 → 思考 /
+        // 待命）则清空，旧预览不能挂在新阶段上。
+        val preview = if (previous.phase == phase) previous.preview else ""
+        val next = VoiceWakeSnapshot(phase, detail, preview)
+        if (previous == next) return
         _state.value = next
         AppLogger.info(TAG, "${phase.name} $detail")
         trace(context, "${phase.name} $detail")
+    }
+
+    /**
+     * [T-android-voice-live-preview] 更新实时预览文本。
+     *
+     * 只改 [VoiceWakeSnapshot.preview]，不动相位与 detail，也不写日志——
+     * 预览每 ~700 ms 刷新一次，写日志会把诊断文件刷爆。
+     */
+    fun updatePreview(text: String) {
+        val previous = _state.value
+        if (previous.preview == text) return
+        _state.value = previous.copy(preview = text)
     }
 
     /** Diagnostics at `getExternalFilesDir(null)/voice_wake.log` (adb-readable). */

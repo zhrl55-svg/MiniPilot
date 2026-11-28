@@ -524,13 +524,14 @@ class HoldToTalkController(private val context: Context) {
         /**
          * [T-android-voice-live-preview] 预览识别间隔。
          *
-         * 700 ms 是实时感与 CPU 的折中：端侧识别一段 2~3 s 音频约
-         * 300~700 ms，间隔再短就会连续占满两个解码线程，和正式转写抢资源。
+         * 300 ms 触发一次，实际刷新的节奏由解码耗时决定（2 s 音频约
+         * 250~450 ms），循环顺序执行，天然不会堆积。窗口缩到 2 s，
+         * 单次解码更短，出字间隔更接近流式。
          */
-        const val PREVIEW_INTERVAL_MS = 700L
+        const val PREVIEW_INTERVAL_MS = 200L
 
         /** 预览只识别最近这段音频，完整历史由 VAD 切句后的正式识别负责。 */
-        const val PREVIEW_WINDOW_MS = 3_000
+        const val PREVIEW_WINDOW_MS = 1_500
 
         /** 少于 300 ms 的片段识别不出内容。 */
         const val PREVIEW_MIN_SAMPLES = WakeAudioCapture.SAMPLE_RATE * 3 / 10

@@ -140,7 +140,10 @@ class LocalSenseVoiceEngine(private val context: Context) : SpeechRecognitionEng
                         useInverseTextNormalization = false,
                     ),
                     tokens = File(dir, TOKENS_FILE).absolutePath,
-                    numThreads = 2,
+                    // 实时预览每 ~200 ms 解码一段 1.5 s 音频；4 线程把单次
+                    // 解码压到 ~150-250 ms，出字才有流式感。正式识别同样受
+                    // 益（整句转写更快）。
+                    numThreads = 4,
                     debug = false,
                     provider = "cpu",
                 ),

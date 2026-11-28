@@ -102,6 +102,17 @@ class WakeWordService : Service() {
         private const val REQUEST_SILENCE_MS = 1_000
 
         /**
+         * [T-android-voice-live-preview] 预览识别间隔与窗口。
+         *
+         * 与按住说话保持一致：每 300 ms 触发一次，实际刷新节奏受解码耗时
+         * 限制（2 s 音频约 250~450 ms）；循环顺序执行，不会堆积。正式结果
+         * 仍由 VAD 切句后的 onUtterance 决定。
+         */
+        private const val PREVIEW_INTERVAL_MS = 200L
+        private const val PREVIEW_WINDOW_MS = 1_500
+        private const val PREVIEW_MIN_SAMPLES = 16_000 * 3 / 10
+
+        /**
          * [T-voice-wake-owner-pause] The request ends when the owner's
          * voiceprint has not passed for this long — the owner's definition of
          * "中途静音超过 1 秒". An energy-silence test cannot fire in a car.
@@ -510,6 +521,9 @@ class WakeWordService : Service() {
     @Volatile
     private var utteranceBusy = false
 
+    /** [T-android-voice-live-preview] 聆听期间的实时识别预览协程。 */
+    private var previewJob: Job? = null
+
     /**
      * Segments cut while [utteranceBusy].
      *
@@ -709,6 +723,9 @@ class WakeWordService : Service() {
         }
         WakeWordController.setDegraded(false)
         intentionalStop = false
+        // The preview belongs to the listening phase; a dead service must not
+        // leave a stale transcript on the composer placeholder.
+        VoiceWakeState.updatePreview("")
         scope.cancel()
         super.onDestroy()
     }
@@ -1146,6 +1163,7 @@ class WakeWordService : Service() {
         // The assistant's own voice is filtered out by the echo window
         // instead (see [acknowledge] / [onUtterance]).
         installVad()
+        startPreviewLoop()
         // Set the acknowledgement markers BEFORE arming the VAD and before
         // launching the coroutine: on a busy scheduler acknowledge() can be
         // delayed, and any TTS frame arriving in that gap would otherwise
@@ -1289,6 +1307,52 @@ class WakeWordService : Service() {
         vad?.reset()
         vad = null
     }
+
+    /**
+     * [T-android-voice-live-preview] 聆听期间的实时识别预览。
+     *
+     * 只读：对最近 [PREVIEW_WINDOW_MS] 的音频做一次端侧识别，把结果写进
+     * [VoiceWakeState] 供界面显示。不参与提交、不做声纹校验，也不改变
+     * VAD 的切句与正式转写；识别失败或模型未就绪时保持上一帧。
+     */
+    private fun startPreviewLoop() {
+        previewJob?.cancel()
+        previewJob = scope.launch {
+            while (isActive && conversationState == ConversationState.LISTENING) {
+                delay(PREVIEW_INTERVAL_MS)
+                if (conversationState != ConversationState.LISTENING) break
+                // 预览是给界面看的：App 在后台时没人能看到，不值得每 700 ms
+                // 跑一次端侧识别。
+                if (!isAppForegroundNow()) continue
+                // 「我在」播报期间麦克风里是助手自己的声音；回声尾巴也还没
+                // 散尽。正式转写进行中也别抢同一个解码器。
+                if (ackPlaying || utteranceBusy ||
+                    SystemClock.elapsedRealtime() < echoDeadline
+                ) {
+                    continue
+                }
+                val recent = engine?.recentAudio(PREVIEW_WINDOW_MS) ?: continue
+                if (recent.size < PREVIEW_MIN_SAMPLES) continue
+                val text = withContext(Dispatchers.Default) {
+                    SpeechRecognitionManager.previewTranscribe(recent)
+                }
+                if (conversationState == ConversationState.LISTENING &&
+                    !text.isNullOrBlank()
+                ) {
+                    VoiceWakeState.updatePreview(text)
+                }
+            }
+        }
+    }
+
+    private fun stopPreviewLoop() {
+        previewJob?.cancel()
+        previewJob = null
+        VoiceWakeState.updatePreview("")
+    }
+
+    private fun isAppForegroundNow(): Boolean =
+        (applicationContext as? MinisApp)?.isAppForeground() == true
 
     /**
      * Listen for "停一下 / 别说了" while a reply is playing.
@@ -2048,6 +2112,7 @@ class WakeWordService : Service() {
             conversationDeadline = SystemClock.elapsedRealtime() + conversationWindowMs
         }
         installVad()
+        startPreviewLoop()
         publish(VoiceWakePhase.LISTENING, "正在聆听")
         AppLogger.info(TAG, "回到聆听 窗口=${conversationWindowMs / 1000}s 续期=$renewWindow")
     }
@@ -2136,6 +2201,7 @@ class WakeWordService : Service() {
     private fun sleepConversation() {
         if (conversationState == ConversationState.IDLE) return
         conversationState = ConversationState.IDLE
+        stopPreviewLoop()
         removeVad()
         removeBargeInVad()
         resumePlaybackAfterConversation()
@@ -2149,6 +2215,7 @@ class WakeWordService : Service() {
         if (conversationState == ConversationState.IDLE) return
         val wasReplying = conversationState == ConversationState.REPLYING
         conversationState = ConversationState.IDLE
+        stopPreviewLoop()
         removeVad()
         removeBargeInVad()
         resumePlaybackAfterConversation()

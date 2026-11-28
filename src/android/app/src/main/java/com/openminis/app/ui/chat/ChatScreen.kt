@@ -7487,14 +7487,17 @@ fun ChatScreen(
                                     visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
                                     interactionSource = interactionSource,
                                     placeholder = {
-                                        // [T-android-voice-live-preview] 按住说话期间
-                                        // 用识别预览接管占位文本，让用户看到「边说边
-                                        // 出字」。预览只走这里，不写进输入框、不参与
-                                        // 提交；松手后以正式转写结果发送。
+                                        // [T-android-voice-live-preview] 按住说话或语音唤醒
+                                        // 聆听期间，用识别预览接管占位文本，让用户看到「边说边
+                                        // 出字」。预览只走这里，不写进输入框、不参与提交；
+                                        // 松手/切句后以正式转写结果为准。
                                         val livePreview = holdToTalk.previewText
+                                            .ifEmpty { wakeSnapshot.preview }
                                         if (livePreview.isNotEmpty()) {
+                                            // 末尾省略号表示「仍在识别中」，视觉上把
+                                            // 每次刷新连成一条连续的流。
                                             Text(
-                                                livePreview,
+                                                "$livePreview…",
                                                 color = MaterialTheme.colorScheme.onSurface
                                                     .copy(alpha = 0.45f),
                                                 fontSize = 16.5.sp * chatInputFontScale,
