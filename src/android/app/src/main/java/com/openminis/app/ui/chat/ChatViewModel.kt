@@ -26,6 +26,7 @@ import com.openminis.app.data.ContextOffload
 import com.openminis.app.data.ContextOverflowGuard
 import com.openminis.app.data.ContextPolicy
 import com.openminis.app.data.ContextSizeMeter
+import com.openminis.app.data.ChatModeStore
 import com.openminis.app.data.PayloadSizeAudit
 import com.openminis.app.logging.AppLogger
 import com.openminis.app.data.FileMentionIndex
@@ -40,6 +41,7 @@ import com.openminis.app.data.model.LLMUsage
 import com.openminis.app.data.model.ModelGroup
 import com.openminis.app.data.model.RoutingStrategy
 import com.openminis.app.data.model.hasImageInput
+import com.openminis.app.data.model.ChatMode
 import com.openminis.app.data.model.ThinkingLevel
 import com.openminis.app.R
 import com.openminis.app.data.repository.ChatRepository
@@ -136,6 +138,31 @@ class ChatViewModel(
             com.openminis.app.agent.jobs.HelperRunner.TOOL_NAME,
             com.openminis.app.agent.userask.UserAskPromptText.TOOL_NAME,
         )
+
+        /**
+         * [T-android-chat-mode] 闲聊模式的回复上限。
+         *
+         * 闲聊要的是快和自然：短回复、低延迟。这个上限只缩小输出预算，
+         * 仍受模型自身与上下文窗口的约束（dynamicMaxTokens 先算一层）。
+         */
+        private const val CHAT_MODE_MAX_TOKENS = 800
+
+        /** [T-android-chat-mode] 闲聊只带最近 6 条消息（约三轮问答）。 */
+        private const val CHAT_MODE_HISTORY_MESSAGES = 6
+
+        /**
+         * [T-android-chat-mode] 闲聊模式追加到系统提示末尾的规则。
+         *
+         * 追加而不是替换：Soul/工具目录/环境信息都保留，只在最后补上
+         * 这一轮的说话方式与工具边界。追加在尾部不会破坏已有的前缀
+         * 缓存（Anthropic/OpenAI 都按前缀匹配）。
+         */
+        private const val CHAT_MODE_PROMPT_SUFFIX = """
+
+[闲聊模式]
+这一轮是闲聊。语气轻松随和，像朋友聊天：口语短句，不用标题、列表或长篇解释，不要主动推销功能。
+你只有本地生活能力（闹钟、提醒、日历、笔记、媒体、系统设置等）和记忆查询；需要文件、shell、浏览器、跨设备或深度搜索的请求，直接告诉用户「这个要切回助手模式」，不要假装已经完成，也不要自己拼 shell 命令。
+"""
 
         /**
          * [T-fallback-respects-user-switch] Whether a mid-turn group fallback may
@@ -2585,6 +2612,19 @@ class ChatViewModel(
         )
 
     /**
+     * [T-android-chat-mode] 闲聊模式保留的工具：本地生活能力与只读记忆。
+     *
+     * shell / 文件 / 浏览器 / 网页搜索 / 子代理 / hub / user_ask 都不进入
+     * schema——模型看不到它们，也就不会误触发。按名字从 [agentTools] 过滤
+     * 而不是另建列表，开关（local_capability 的总开关等）仍然生效。
+     */
+    private val chatModeTools: List<AgentToolDefinition>
+        get() = agentTools.filter {
+            it.name == com.openminis.app.assistant.routing.LocalCapabilityInvocation.TOOL_NAME ||
+                it.name == "memory_get"
+        }
+
+    /**
      * [T-sub-agents-resume] Restart sub agent runs the app lost when it was
      * killed.
      *
@@ -3343,6 +3383,30 @@ class ChatViewModel(
 
     internal val _thinkingLevel = MutableStateFlow(ThinkingLevel.OFF)
     val thinkingLevel: StateFlow<ThinkingLevel> = _thinkingLevel.asStateFlow()
+
+    /**
+     * [T-android-chat-mode] 会话级对话模式。
+     *
+     * 闲聊模式只保留本地轻能力工具、思考强制 OFF、回复长度收紧，并在
+     * 系统提示末尾追加口语化规则。随会话持久化（`sessions.chat_mode`），
+     * UI chip 与语音口令都能切换；语音切换经 [ChatModeStore.changes]
+     * 回流到这里，界面无需轮询。
+     */
+    internal val _chatMode = MutableStateFlow(ChatMode.ASSISTANT)
+    val chatMode: StateFlow<ChatMode> = _chatMode.asStateFlow()
+
+    fun setChatMode(mode: ChatMode) {
+        if (_chatMode.value == mode) return
+        _chatMode.value = mode
+        val sid = realSessionId
+        if (sid.isNotEmpty()) {
+            ChatModeStore.remember(sid, mode)
+            viewModelScope.launch {
+                runCatching { chatRepository.dao.updateChatMode(sid, mode.wireValue) }
+            }
+        }
+        AppLogger.info(TAG, "[ChatMode] ${mode.wireValue}")
+    }
 
     /**
      * [T-android-enhanced-cache] Enhanced Cache (1-hour Anthropic cache TTL)
@@ -5045,7 +5109,14 @@ class ChatViewModel(
      */
     private fun requestContextInput(): RequestContextBuilder.Input =
         RequestContextBuilder.Input(
-            history = agentHistory,
+            history = if (_chatMode.value == ChatMode.CHAT) {
+                // [T-android-chat-mode] 闲聊不背整段历史：只保留最后几轮。
+                // 裁剪只作用于发给模型的副本；agentHistory 与数据库不动，
+                // 切回助手模式后完整上下文自然恢复。
+                agentHistory.takeLast(CHAT_MODE_HISTORY_MESSAGES)
+            } else {
+                agentHistory
+            },
             compaction = currentCompaction(),
             keepRecentUserTurns = COMPACT_KEEP_RECENT_USER_TURNS,
             sessionId = { activeSessionId },
@@ -6010,6 +6081,13 @@ class ChatViewModel(
 
     init {
         loadSession()
+        // [T-android-chat-mode] 语音口令在服务里切换后，正在显示该会话的
+        // 界面立刻跟上——chip 与后续请求都读同一个状态。
+        viewModelScope.launch {
+            ChatModeStore.changes.collect { (sid, mode) ->
+                if (sid == realSessionId) _chatMode.value = mode
+            }
+        }
         // [T-android-context-usage-hint] Loop-END path for the usage line.
         //
         // Driven off the isStreaming EDGE rather than hooked into each
@@ -6359,6 +6437,9 @@ class ChatViewModel(
         // re-entry — the regression that would otherwise come with not writing
         // eagerly above.
         chatRepository.dao.updateThinkingOverride(realSessionId, _thinkingLevel.value.name)
+        // [T-android-chat-mode] 同一条规则：草稿上选过的模式在主键落地时
+        // 补写一次，否则首次发送后模式丢失。
+        chatRepository.dao.updateChatMode(realSessionId, _chatMode.value.wireValue)
         return realSessionId
     }
 
@@ -6498,6 +6579,11 @@ class ChatViewModel(
             _sessionCategory.value = session.category
             followStoredTitle(sessionId)
             _memoryEnabled.value = session.memoryEnabled != 0
+            // [T-android-chat-mode] 会话模式随会话恢复；null（老会话）按
+            // 助手处理，升级后行为不变。同步进 ChatModeStore，语音层随后
+            // 就能读到这个会话的模式。
+            _chatMode.value = ChatMode.parseOrNull(session.chatMode) ?: ChatMode.ASSISTANT
+            ChatModeStore.remember(sessionId, _chatMode.value)
             // T239: hydrate persisted thinking-mode override. null = unset
             // (use OFF as the legacy default); non-null = explicit user
             // choice persisted across cold-start. runCatching guards against
@@ -12978,16 +13064,41 @@ class ChatViewModel(
                                 requestMessages = withReminder
                             }
                         }
+                        // [T-android-chat-mode] 闲聊模式：只保留本地轻能力工具、
+                        // 强制关闭思考、收紧回复长度，并把口语化规则追加到系统
+                        // 提示末尾（追加在尾部，已有前缀缓存不受影响）。
+                        val chatModeNow = _chatMode.value
+                        val chatIsOn = chatModeNow == ChatMode.CHAT
+                        val toolsNow = if (chatIsOn) chatModeTools else agentTools
+                        val systemNow = if (chatIsOn) {
+                            (loopSystemPrompt ?: "") + CHAT_MODE_PROMPT_SUFFIX
+                        } else {
+                            loopSystemPrompt
+                        }
+                        val maxTokensNow = if (chatIsOn) {
+                            minOf(
+                                dynamicMaxTokens(currentProvider, dispatchInputTokens),
+                                CHAT_MODE_MAX_TOKENS,
+                            )
+                        } else {
+                            dynamicMaxTokens(currentProvider, dispatchInputTokens)
+                        }
                         currentProvider.streamMessage(
                             requestMessages,
-                            loopSystemPrompt, dynamicMaxTokens(currentProvider, dispatchInputTokens),
-                            tools = if (helperWrapUpInjected) emptyList() else agentTools,
+                            systemNow, maxTokensNow,
+                            tools = if (helperWrapUpInjected) emptyList() else toolsNow,
                             // [T-switch-model-thinking-gate] Gate on the provider that
                             // serves THIS turn. selectEntry swaps the class-level
                             // currentModel mid-turn while the turn keeps its local
                             // provider, so reading the class-level model would send the
                             // NEW model's reasoning decision to the OLD model.
-                            thinkingLevel = if (currentProvider.model.supportsReasoning == true) _thinkingLevel.value else ThinkingLevel.OFF,
+                            thinkingLevel = if (chatIsOn) {
+                                ThinkingLevel.OFF
+                            } else if (currentProvider.model.supportsReasoning == true) {
+                                _thinkingLevel.value
+                            } else {
+                                ThinkingLevel.OFF
+                            },
                         )
                     }
                     attemptUsage = null

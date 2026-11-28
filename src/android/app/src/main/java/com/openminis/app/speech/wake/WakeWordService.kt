@@ -1972,6 +1972,36 @@ class WakeWordService : Service() {
             return
         }
 
+        // [T-android-chat-mode] 语音模式口令：命中就不进模型，直接切换这个
+        // 语音会话的模式，回一句短提示后继续聆听。这是语音场景的主通道，
+        // 确定性、零延迟；模型自己的 switch_mode 只做兜底。
+        com.openminis.app.assistant.routing.ChatModeCommand.parse(text)?.let { target ->
+            val current = com.openminis.app.data.ChatModeStore.modeFor(sessionId)
+            val changed = current != target
+            if (changed) {
+                com.openminis.app.data.ChatModeStore.apply(this, sessionId, target)
+            }
+            AppLogger.info(TAG, "模式口令：${target.wireValue} changed=$changed")
+            VoiceWakeState.trace(this, "模式切换 ${target.wireValue} changed=$changed")
+            publish(VoiceWakePhase.REPLYING, "切换模式")
+            val phrase = when {
+                !changed ->
+                    "已经是" + if (target == com.openminis.app.data.model.ChatMode.CHAT) "闲聊" else "助手" + "模式了"
+                target == com.openminis.app.data.model.ChatMode.CHAT -> "好，进入闲聊"
+                else -> "好，切回助手"
+            }
+            val speaker = tts ?: com.openminis.app.speech.TextToSpeechManager().also {
+                it.init(applicationContext)
+                tts = it
+            }
+            WakeConversation.speakQuietly(speaker, phrase)
+            if (conversationState == ConversationState.REPLYING) {
+                delay(ECHO_GUARD_MS)
+                resumeListening()
+            }
+            return
+        }
+
         publish(VoiceWakePhase.THINKING, "思考中")
         // [T-voice-single-speak] 一轮语音只播一次。快路径命中时端侧 announce
         // 会播真实结果，这时模型返回的文本（快路径写进聊天的气泡标题）就

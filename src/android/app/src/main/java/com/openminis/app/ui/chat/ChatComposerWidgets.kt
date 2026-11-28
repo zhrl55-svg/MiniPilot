@@ -391,6 +391,44 @@ internal fun InputCircleButton(
     }
 }
 
+// ─── Chat mode chip ([T-android-chat-mode]) ────────────────────────────────
+
+/**
+ * 会话模式 chip：助手 / 闲聊。
+ *
+ * 放在输入框按钮行 + 与 / 之间。助手是默认状态，用低调的背景色；
+ * 闲聊用 primary 淡底 + primary 文字，一眼能看出当前模式。点击即切换，
+ * 语音口令切换时由 ChatViewModel.chatMode 同步刷新。
+ */
+@Composable
+internal fun ChatModeChip(
+    mode: com.openminis.app.data.model.ChatMode,
+    onClick: () -> Unit,
+) {
+    val chatting = mode == com.openminis.app.data.model.ChatMode.CHAT
+    Text(
+        text = if (chatting) "闲聊" else "助手",
+        fontSize = 12.sp,
+        fontWeight = FontWeight.Medium,
+        color = if (chatting) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier
+            .clip(RoundedCornerShape(10.dp))
+            .background(
+                if (chatting) MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                else ChatColors.inputIconBg,
+            )
+            .border(
+                0.5.dp,
+                if (chatting) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                else ChatColors.inputIconBorder,
+                RoundedCornerShape(10.dp),
+            )
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+    )
+}
+
 // ─── Tool Preview Thumbnail (iOS: ToolPreviewThumbnail — tool-specific preview) ──
 
 /**

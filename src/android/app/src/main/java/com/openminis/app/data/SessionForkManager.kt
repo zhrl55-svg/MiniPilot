@@ -88,6 +88,12 @@ class SessionForkManager(
         source.thinkingOverride?.let { override ->
             chatRepository.dao.updateThinkingOverride(new.id, override)
         }
+        // [T-android-chat-mode] Same rule for the conversation mode: a
+        // duplicate of a 闲聊 session opens in 闲聊, not back in the default
+        // assistant mode.
+        source.chatMode?.let { mode ->
+            chatRepository.dao.updateChatMode(new.id, mode)
+        }
         // [T-session-duplicate-compact-marker-android] Track old→new message id
         // and old→new sort_order so copied compact markers (which reference DB
         // message ids + legacy sort_orders) can be remapped onto the freshly

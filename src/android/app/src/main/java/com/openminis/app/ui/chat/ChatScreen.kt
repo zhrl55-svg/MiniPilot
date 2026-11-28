@@ -2119,6 +2119,24 @@ fun ChatScreen(
     }
 
     val performSendOrEnqueueNow: (String) -> Unit = handler@{ rawText ->
+        // [T-android-chat-mode] 语音/文字模式口令：整句命中就不发送、不进
+        // 模型，直接在客户端切换并给一句提示。语音场景这是主通道，
+        // 零延迟、零 token；模型自己的 switch_mode 只做兜底。
+        com.openminis.app.assistant.routing.ChatModeCommand.parse(rawText)?.let { target ->
+            viewModel.setChatMode(target)
+            viewModel.setInputText("")
+            releaseComposerAfterSend()
+            android.widget.Toast.makeText(
+                context,
+                if (target == com.openminis.app.data.model.ChatMode.CHAT) {
+                    "已切换到闲聊"
+                } else {
+                    "已切换到助手"
+                },
+                android.widget.Toast.LENGTH_SHORT,
+            ).show()
+            return@handler
+        }
         if (viewModel.tryExecuteInputAsSlashCommand(rawText)) {
             viewModel.setInputText("")
             releaseComposerAfterSend()
@@ -7675,6 +7693,23 @@ fun ChatScreen(
                                 )
                             }
                         }
+
+                        // [T-android-chat-mode] 会话模式 chip：助手 / 闲聊。
+                        // 常驻但很轻，点击即切换；语音口令切换时同步变化。
+                        val chatModeNow by viewModel.chatMode.collectAsState()
+                        Spacer(modifier = Modifier.width(8.dp))
+                        ChatModeChip(
+                            mode = chatModeNow,
+                            onClick = {
+                                viewModel.setChatMode(
+                                    if (chatModeNow == com.openminis.app.data.model.ChatMode.CHAT) {
+                                        com.openminis.app.data.model.ChatMode.ASSISTANT
+                                    } else {
+                                        com.openminis.app.data.model.ChatMode.CHAT
+                                    },
+                                )
+                            },
+                        )
 
                         Spacer(modifier = Modifier.width(8.dp))
 

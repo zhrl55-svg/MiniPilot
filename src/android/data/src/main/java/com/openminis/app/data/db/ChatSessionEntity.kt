@@ -52,6 +52,13 @@ data class ChatSessionEntity(
     // choice that survives cold-start.
     @ColumnInfo(name = "thinking_override") val thinkingOverride: String? = null,
     /**
+     * [T-android-chat-mode] 会话级对话模式，`"chat"` / `"assistant"`。
+     *
+     * NULL = 老会话未选过，按助手模式处理（升级后行为不变）。与
+     * [thinkingOverride] 一样，是用户的显式选择，跨冷启动保留。
+     */
+    @ColumnInfo(name = "chat_mode") val chatMode: String? = null,
+    /**
      * [T-android-session-grouping] Group membership. NULL = ungrouped.
      *
      * Deliberately NOT a declared @ForeignKey. A folder_id pointing at a group

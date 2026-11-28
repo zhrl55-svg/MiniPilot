@@ -436,6 +436,13 @@ interface ChatDao {
     @Query("UPDATE sessions SET thinking_override = :value, updated_at = :updatedAt WHERE id = :id")
     suspend fun updateThinkingOverride(id: String, value: String?, updatedAt: Long = System.currentTimeMillis())
 
+    // Session: chat_mode ([T-android-chat-mode]) — "chat" / "assistant", or
+    // NULL for a session that never chose one. Deliberately does NOT touch
+    // updated_at: switching modes is not new activity, and bumping it would
+    // reorder the home list for a preference change.
+    @Query("UPDATE sessions SET chat_mode = :value WHERE id = :id")
+    suspend fun updateChatMode(id: String, value: String?)
+
     // Session: pinned_at
     @Query("UPDATE sessions SET pinned_at = :pinnedAt, updated_at = :updatedAt WHERE id = :id")
     suspend fun updatePinnedAt(id: String, pinnedAt: Long?, updatedAt: Long = System.currentTimeMillis())

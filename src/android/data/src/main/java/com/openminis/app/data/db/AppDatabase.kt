@@ -15,7 +15,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         WebAppShortcutEntity::class,
         FolderEntity::class,
     ],
-    version = 14,
+    version = 15,
     // [T-android-downgrade-compat] Kept ON so MigrationTestHelper and CI can
     // validate every migration (and its downgrade counterpart) against the
     // committed schema json. Without it the upgrade/downgrade chain has no
@@ -376,6 +376,31 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * [T-android-chat-mode] Per-session conversation mode.
+         *
+         * Nullable with no DEFAULT, matching [ChatSessionEntity.chatMode]:
+         * existing rows read NULL and are treated as ASSISTANT, so an upgrade
+         * does not change any conversation's behaviour.
+         */
+        val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN chat_mode TEXT")
+            }
+        }
+
+        /**
+         * [T-android-chat-mode] Downgrade counterpart of [MIGRATION_14_15] —
+         * the same no-op contract as [MIGRATION_12_11]/[MIGRATION_13_12]: an
+         * older build's entity does not declare the column, Room binds by
+         * name, and the unknown column is simply ignored.
+         */
+        val MIGRATION_15_14 = object : Migration(15, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                // Intentionally empty — see above.
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -391,6 +416,7 @@ abstract class AppDatabase : RoomDatabase() {
                         MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11,
                         MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_12, MIGRATION_12_11,
                         MIGRATION_13_14, MIGRATION_14_13,
+                        MIGRATION_14_15, MIGRATION_15_14,
                     )
                     .build()
                     .also { INSTANCE = it }
