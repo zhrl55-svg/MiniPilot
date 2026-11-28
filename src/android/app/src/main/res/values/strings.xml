@@ -1634,6 +1634,9 @@
     <string name="voice_wake_notification_paused">Listening pauses in the foreground or while speaking</string>
     <string name="voice_wake_notification_stop">Stop</string>
     <string name="voice_wake_alert_channel">Voice wake alert</string>
+    <string name="local_action_notif_title">Needs your confirmation</string>
+    <string name="local_action_notif_channel">Action confirmation</string>
+    <string name="local_action_notif_channel_desc">A local action is waiting for your confirmation in the background. Tap to return to the chat.</string>
     <string name="voice_wake_alert_title">MiniPilot was woken</string>
     <string name="voice_wake_alert_body">Tap to continue with voice input.</string>
     <string name="voice_wake_overlay_title">MINIPILOT VOICE</string>

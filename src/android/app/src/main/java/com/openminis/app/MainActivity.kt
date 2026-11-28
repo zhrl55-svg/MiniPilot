@@ -639,6 +639,10 @@ class MainActivity : ComponentActivity() {
                 com.openminis.app.ui.settings.NetworkAlertBannerHost(navController) {
                     com.openminis.app.ui.chat.HubApprovalBanner()
                 }
+
+                // [T-android-approval-overlay] 本地写操作的审批卡：根级渲染，
+                // 用户在任何页面都能看到并回答，而不是只在发起它的那个聊天里。
+                com.openminis.app.ui.chat.LocalActionApprovalHost()
             }
         }
     }

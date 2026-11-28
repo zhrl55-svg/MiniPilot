@@ -858,7 +858,6 @@ fun ChatScreen(
     val memoryToolRecords by viewModel.memoryToolRecords.collectAsState()
     val selectedGroupName by viewModel.selectedGroupName.collectAsState()
     val providerName by viewModel.providerName.collectAsState()
-    val pendingLocalAction by viewModel.pendingLocalAction.collectAsState()
     val localVoicePhase by viewModel.localVoiceConfirmPhase.collectAsState()
     // [T-music-player-top] The music player is a process-wide singleton, so
     // the mini bar keeps showing the same track while the user moves
@@ -8031,20 +8030,8 @@ fun ChatScreen(
                     },
                 )
             }
-            pendingLocalAction?.let { action ->
-                LocalActionConfirmDialog(
-                    action = action,
-                    voiceStatus = when (localVoicePhase) {
-                        com.openminis.app.ui.chat.voice.VoiceConfirmPhase.LISTENING ->
-                            stringResource(R.string.assistant_voice_status_listening)
-                        com.openminis.app.ui.chat.voice.VoiceConfirmPhase.SPEAKING ->
-                            stringResource(R.string.assistant_voice_status_speaking)
-                        else -> null
-                    },
-                    onConfirm = { choiceId -> viewModel.confirmLocalAction(choiceId) },
-                    onDismiss = { viewModel.cancelLocalAction() },
-                )
-            }
+            // [T-android-approval-overlay] 审批卡已提升到 MainActivity 根布局
+            // （LocalActionApprovalHost），这里不再渲染，否则两个对话框会重影。
             // [T-android-delete-from-here] Confirm before truncating. The cut
             // removes the tapped message AND everything after it with no undo,
             // so the body states how many messages that actually is — "delete

@@ -29,6 +29,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -226,4 +227,26 @@ fun LocalActionConfirmDialog(
             }
         }
     }
+}
+
+/**
+ * [T-android-approval-overlay] 根布局里的审批宿主。
+ *
+ * 挂在 MainActivity 的根 Box 上（与 HubApprovalBanner 同层），读的是
+ * [LocalActionApprovalCenter]，而不是某个 ChatScreen 的局部状态——所以
+ * 用户在任何页面（设置、会话列表、别的聊天）都能看到这张卡。
+ *
+ * 语音状态（「正在聆听/播报」）只属于发起会话的 ChatScreen，这里不显示；
+ * 卡的确认/取消语义与卡内按钮完全一致。
+ */
+@Composable
+fun LocalActionApprovalHost() {
+    val pending by LocalActionApprovalCenter.pending.collectAsState()
+    val current = pending ?: return
+    LocalActionConfirmDialog(
+        action = current.action,
+        voiceStatus = null,
+        onConfirm = { choiceId -> current.confirm(choiceId) },
+        onDismiss = { current.cancel() },
+    )
 }

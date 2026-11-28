@@ -1018,6 +1018,8 @@ class MinisApp : Application(), ImageLoaderFactory {
         // [T-android-user-ask-notify] A user_ask question asked while the app is
         // away is posted as a notification, answerable from it (iOS parity).
         com.openminis.app.notification.UserAskNotifier.install(this)
+        // [T-android-approval-overlay] 后台等待确认的本地写操作也要能提醒到人。
+        com.openminis.app.notification.LocalActionNotifier.install(this)
 
         // Track foreground state via ActivityLifecycleCallbacks. Counting
         // started/stopped balances out around configuration changes (the

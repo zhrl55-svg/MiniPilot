@@ -111,7 +111,22 @@ object UserAskNotifier {
                 isActiveSession = a.sessionId == activeSessionId,
                 enabled = enabled,
                 nowMs = now,
-            ) ?: continue
+            )
+            if (i == null) {
+                // [T-approval-notify-diag] Why a pending ask did not notify.
+                // Cheap and only on PENDING asks, which are rare; without it
+                // the failure is invisible (the post path logs only success).
+                if (a.state == UserAskState.PENDING) {
+                    AppLogger.info(
+                        TAG,
+                        "[UserAsk] skip-notify req=${a.requestId.take(8)} " +
+                            "fg=$appInForeground active=${a.sessionId == activeSessionId} " +
+                            "enabled=$enabled expired=${a.isExpired(now)} " +
+                            "notified=${a.notifiedIndex} submitted=${a.submitted}",
+                    )
+                }
+                continue
+            }
             post(a, sound = UserAskNotificationPlan.alertsWithSound(a))
             // Marked even when nothing could be posted (permission off), so the
             // question is not retried on every change of the ask.

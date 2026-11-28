@@ -1510,6 +1510,9 @@
     <string name="voice_wake_notification_paused">前台或播报时会暂停聆听</string>
     <string name="voice_wake_notification_stop">关闭</string>
     <string name="voice_wake_alert_channel">语音唤醒提醒</string>
+    <string name="local_action_notif_title">需要你的确认</string>
+    <string name="local_action_notif_channel">操作确认</string>
+    <string name="local_action_notif_channel_desc">后台等待你确认的本地操作，点击回到会话。</string>
     <string name="voice_wake_alert_title">MiniPilot 被唤醒了</string>
     <string name="voice_wake_alert_body">点击继续语音输入。</string>
     <string name="voice_wake_overlay_title">MINIPILOT 语音</string>

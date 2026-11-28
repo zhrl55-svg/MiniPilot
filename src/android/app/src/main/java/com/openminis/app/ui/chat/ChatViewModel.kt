@@ -11842,6 +11842,16 @@ class ChatViewModel(
         withContext(Dispatchers.Main) {
             _pendingLocalAction.value = pending
         }
+        // [T-android-approval-overlay] 同一张卡也注册到进程级出口：用户离开
+        // 会话、停在设置页或退到后台时，根布局与系统通知仍能看到它。
+        LocalActionApprovalCenter.register(
+            LocalActionApprovalCenter.Pending(
+                sessionId = sessionId,
+                action = pending,
+                confirm = { choiceId -> confirmLocalAction(choiceId = choiceId, source = "overlay") },
+                cancel = { cancelLocalAction(source = "overlay") },
+            ),
+        )
         // 语音唤醒跑在另一条会话里：注册一个桥，让唤醒转写出的「确认」
         // 落回这张卡片，而不是在新会话里重新发一条消息。
         localConfirmBridgeId = pending.id
@@ -11879,6 +11889,9 @@ class ChatViewModel(
             com.openminis.app.assistant.execution.LocalConfirmationBridge
                 .unregister(pending.id)
             if (localConfirmBridgeId == pending.id) localConfirmBridgeId = null
+            // [T-android-approval-overlay] 卡已经回答/超时/取消：根层与通知
+            // 必须一起撤掉，否则会留下一个点不动的对话框。
+            LocalActionApprovalCenter.clear(pending.id)
             withContext(Dispatchers.Main) {
                 if (_pendingLocalAction.value?.id == pending.id) {
                     _pendingLocalAction.value = null
@@ -19637,8 +19650,15 @@ Scheduled tasks: crontab / at / nohup loops will stop when the app is suspended,
         localActionVoice.release()
         localConfirmBridgeId?.let {
             com.openminis.app.assistant.execution.LocalConfirmationBridge.unregister(it)
+            // [T-android-approval-overlay] A cleared view model can no longer
+            // answer: do not leave an inert root-level dialog (or its
+            // notification) behind.
+            LocalActionApprovalCenter.clear(it)
         }
         localConfirmBridgeId = null
+        // The root host keys on the ACTION id, not the bridge id, so clear the
+        // current card as well.
+        _pendingLocalAction.value?.let { LocalActionApprovalCenter.clear(it.id) }
         super.onCleared()
         // Tear down whichever shell was actually serving this VM. Terminate
         // both ids when the rename happened, since a draft shell may still
