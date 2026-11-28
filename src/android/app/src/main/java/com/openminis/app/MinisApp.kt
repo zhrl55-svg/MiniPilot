@@ -410,6 +410,17 @@ class MinisApp : Application(), ImageLoaderFactory {
             }.onFailure {
                 Log.w("MinisApp", "context weather warm failed: ${it.message}")
             }
+            // [T-fastpath-weather-ms] 助手端侧路径开启时，顺手把「一句话查
+            // 天气」的缓存预热好：第一句「今天天气怎么样」就不用等网络。
+            // 只是后台预热，失败静默；开关关着就什么都不做。
+            runCatching {
+                if (com.openminis.app.llm.mnn.AssistantFastPath.isEnabled(this@MinisApp)) {
+                    com.openminis.app.assistant.execution.WeatherFastAnswer
+                        .warmAsync(this@MinisApp)
+                }
+            }.onFailure {
+                Log.w("MinisApp", "fast-path weather warm failed: ${it.message}")
+            }
         }
 
         // T-android-fgs-timeout-crash: chain an UncaughtExceptionHandler

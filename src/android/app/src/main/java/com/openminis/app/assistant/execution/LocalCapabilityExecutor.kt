@@ -804,11 +804,20 @@ class LocalCapabilityExecutor(private val context: Context) {
         }
     }
 
+    /**
+     * [T-fastpath-weather-ms] 「当前天气」走亚秒路径（见 [WeatherFastAnswer]）：
+     * 最近一次已知位置 + 高德/Open-Meteo 精简报文 + 15 分钟缓存，不再等
+     * 全新 GPS 定位，也不再拉 48h/10d 全量报文。
+     *
+     * 只有 current 走这条路；hourly / daily / report 仍用原来的
+     * android-weather 子命令（它们由云端按需调用，不是一句话直达场景）。
+     */
     private fun weather(
         action: String,
         args: JSONObject,
         sessionId: String,
     ): NativeOffloadResult {
+        if (action == "current") return weatherCurrentFast()
         val loc = offload(
             "android-location",
             LocationOffloadHandler(context),
@@ -829,6 +838,29 @@ class LocalCapabilityExecutor(private val context: Context) {
                 "--lon", lon.toString(),
             ),
         )
+    }
+
+    private fun weatherCurrentFast(): NativeOffloadResult {
+        val started = System.currentTimeMillis()
+        val cached = runCatching { WeatherFastAnswer.cachedLine() }.getOrNull()
+        if (cached != null) {
+            com.openminis.app.llm.mnn.AssistantFastPath.trace(
+                context,
+                "weather-fast: source=cache elapsed=${System.currentTimeMillis() - started}ms",
+            )
+            return NativeOffloadResult(0, cached)
+        }
+        val outcome = runCatching { WeatherFastAnswer.refreshBlocking(context) }
+            .getOrElse { WeatherFastAnswer.Outcome(error = "天气查询失败：${it.message ?: it.javaClass.simpleName}") }
+        com.openminis.app.llm.mnn.AssistantFastPath.trace(
+            context,
+            "weather-fast: source=${outcome.source.ifBlank { "none" }} " +
+                "elapsed=${System.currentTimeMillis() - started}ms" +
+                (outcome.error?.let { " error=${it.take(80)}" } ?: ""),
+        )
+        val line = outcome.line
+            ?: return NativeOffloadResult(1, outcome.error ?: "天气查询失败。")
+        return NativeOffloadResult(0, line)
     }
 
     private fun device(action: String, args: JSONObject): NativeOffloadResult {
