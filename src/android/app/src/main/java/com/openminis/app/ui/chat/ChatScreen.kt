@@ -7694,25 +7694,6 @@ fun ChatScreen(
                             }
                         }
 
-                        // [T-android-chat-mode] 会话模式 chip：助手 / 闲聊。
-                        // 常驻但很轻，点击即切换；语音口令切换时同步变化。
-                        val chatModeNow by viewModel.chatMode.collectAsState()
-                        Spacer(modifier = Modifier.width(8.dp))
-                        ChatModeChip(
-                            mode = chatModeNow,
-                            onClick = {
-                                viewModel.setChatMode(
-                                    if (chatModeNow == com.openminis.app.data.model.ChatMode.CHAT) {
-                                        com.openminis.app.data.model.ChatMode.ASSISTANT
-                                    } else {
-                                        com.openminis.app.data.model.ChatMode.CHAT
-                                    },
-                                )
-                            },
-                        )
-
-                        Spacer(modifier = Modifier.width(8.dp))
-
                         // Left: "/" slash command button (iOS: italic /, bold)
                         InputCircleButton(onClick = {
                             if (viewModel.showSlashMenu.value) {
@@ -7729,6 +7710,23 @@ fun ChatScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+
+                        // [T-android-chat-mode] 会话模式 chip：助手 / 闲聊。
+                        // 紧跟 / 按钮之后，点击即切换；语音口令切换时同步变化。
+                        val chatModeNow by viewModel.chatMode.collectAsState()
+                        Spacer(modifier = Modifier.width(8.dp))
+                        ChatModeChip(
+                            mode = chatModeNow,
+                            onClick = {
+                                viewModel.setChatMode(
+                                    if (chatModeNow == com.openminis.app.data.model.ChatMode.CHAT) {
+                                        com.openminis.app.data.model.ChatMode.ASSISTANT
+                                    } else {
+                                        com.openminis.app.data.model.ChatMode.CHAT
+                                    },
+                                )
+                            },
+                        )
 
                         // T187: Exit Edit Mode pill, only while editingMessageId
                         // is non-null. Tap clears the edit flag + composer text
