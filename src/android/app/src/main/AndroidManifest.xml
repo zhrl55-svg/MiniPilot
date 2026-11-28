@@ -197,6 +197,16 @@
         <intent>
             <action android:name="android.intent.action.TTS_SERVICE" />
         </intent>
+        <!-- [T-app-launch-visibility] 「打开微信」「启动支付宝」这类按包名 /
+             标签启动的指令，需要能看到其他应用的启动 Activity。targetSdk 35
+             下没有这条声明时 getLaunchIntentForPackage 对未声明包一律返回
+             null —— 2026-11-28 真机实测：「打开微信」路由命中端侧却回
+             「没有找到应用：微信」(com.tencent.mm 已安装)。LAUNCHER intent
+             查询就是让所有带启动图标的应用可见的标准做法。 -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <!-- [T-android-tablet-split] enableOnBackInvokedCallback (on <application>):
