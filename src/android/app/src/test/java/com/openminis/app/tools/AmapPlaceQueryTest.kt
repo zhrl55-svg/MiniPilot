@@ -39,6 +39,19 @@ class AmapPlaceQueryTest {
         assertEquals("好吃面馆", AmapPlaceQuery.normalize("好吃的面馆"))
     }
 
+    /**
+     * [T-amap-colloquial] 2026-11-28 真机回归：「查询」不在填充词表里时，
+     * 归一化会留下「查询药店 / 查询加油站」，高德按这个词搜只能回 0 条，
+     * 用户看到「附近 3000m 内没有找到『查询药店』」。
+     */
+    @Test
+    fun `leading 查询 is stripped like 查一下`() {
+        assertEquals("药店", AmapPlaceQuery.normalize("查询附近的药店"))
+        assertEquals("加油站", AmapPlaceQuery.normalize("查询周边加油站"))
+        assertEquals("药店", AmapPlaceQuery.plan("查询附近的药店").keywords.single())
+        assertEquals("加油站", AmapPlaceQuery.plan("查询周边加油站").keywords.single())
+    }
+
     @Test
     fun `有什么 is stripped as a whole and leaves the generic behind`() {
         assertEquals("好吃", AmapPlaceQuery.normalize("附近有什么好吃的"))
