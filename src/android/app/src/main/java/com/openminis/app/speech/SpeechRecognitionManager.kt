@@ -549,6 +549,20 @@ object SpeechRecognitionManager {
         return true
     }
 
+    /**
+     * [T-android-voice-live-preview] 实时预览识别。
+     *
+     * 识别一段尚未定稿的 PCM，仅用于界面展示（输入框里的「正在识别」灰字），
+     * 不参与提交、不改变 [state]、也不触发任何 onFinal。按住说话期间 UI
+     * 周期性调用它；端侧模型不可用时返回 null。
+     */
+    fun previewTranscribe(pcm: ShortArray): String? {
+        val local = engines.firstOrNull {
+            it.id == LocalSenseVoiceEngine.ENGINE_ID && it.isAvailable
+        } as? LocalSenseVoiceEngine ?: return null
+        return local.preview(pcm)
+    }
+
     private fun makeListener(
         engineId: String,
         onPartialOrFinal: (text: String, isFinal: Boolean) -> Unit,

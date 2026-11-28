@@ -406,7 +406,7 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Outlined.Mic,
                     iconColor = Color(0xFF34C759),
-                    title = stringResource(R.string.settings_voice_wake),
+                    title = stringResource(R.string.settings_voice_wake_master),
                     subtitle = stringResource(R.string.settings_voice_wake_entry_subtitle),
                     onClick = onVoiceWakeClick,
                     showDivider = false,

@@ -18,6 +18,19 @@ object WakeWordSettings {
 
     const val PREFS_NAME = "voice_wake"
     const val KEY_ENABLED = "enabled"
+
+    /**
+     * Whether listening continues after the app leaves the foreground.
+     *
+     * [KEY_ENABLED] is the master switch for the whole voice-wake stack
+     * (foreground and background). This second switch only decides what
+     * happens in the background: off means the microphone service stops
+     * when the app is backgrounded and starts again on the next foreground
+     * transition, so the wake word and the voice dialogue stay available
+     * while the user can actually see the app. The row is still labelled
+     * "后台语音唤醒" in the settings screen, which is exactly what it does.
+     */
+    const val KEY_BACKGROUND_ENABLED = "backgroundEnabled"
     const val KEY_WAKE_WORD = "wakeWord"
     const val KEY_OVERLAY_ENABLED = "showOverlay"
     const val KEY_TONE_ENABLED = "wakeTone"
@@ -66,6 +79,10 @@ object WakeWordSettings {
 
     private val _enabled = MutableStateFlow(false)
     val enabled: StateFlow<Boolean> = _enabled.asStateFlow()
+
+    /** See [KEY_BACKGROUND_ENABLED]. */
+    private val _backgroundEnabled = MutableStateFlow(true)
+    val backgroundEnabled: StateFlow<Boolean> = _backgroundEnabled.asStateFlow()
 
     private val _wakeWord = MutableStateFlow(DEFAULT_WAKE_WORD)
     val wakeWord: StateFlow<String> = _wakeWord.asStateFlow()
@@ -124,6 +141,7 @@ object WakeWordSettings {
                 .getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             prefs = p
             _enabled.value = p.getBoolean(KEY_ENABLED, false)
+            _backgroundEnabled.value = p.getBoolean(KEY_BACKGROUND_ENABLED, true)
             _wakeWord.value = p.getString(KEY_WAKE_WORD, DEFAULT_WAKE_WORD)
                 ?.takeIf { parseWords(it).isNotEmpty() }
                 ?: DEFAULT_WAKE_WORD
@@ -142,6 +160,8 @@ object WakeWordSettings {
             p.registerOnSharedPreferenceChangeListener { sp, key ->
                 when (key) {
                     KEY_ENABLED -> _enabled.value = sp.getBoolean(key, false)
+                    KEY_BACKGROUND_ENABLED ->
+                        _backgroundEnabled.value = sp.getBoolean(key, true)
                     KEY_WAKE_WORD -> _wakeWord.value =
                         sp.getString(key, DEFAULT_WAKE_WORD)
                             ?.takeIf { parseWords(it).isNotEmpty() }
@@ -167,6 +187,12 @@ object WakeWordSettings {
         init(context)
         prefs?.edit()?.putBoolean(KEY_ENABLED, value)?.apply()
         _enabled.value = value
+    }
+
+    fun setBackgroundEnabled(context: Context, value: Boolean) {
+        init(context)
+        prefs?.edit()?.putBoolean(KEY_BACKGROUND_ENABLED, value)?.apply()
+        _backgroundEnabled.value = value
     }
 
     /** See [KEY_PENDING_START]. Not exposed as a StateFlow: only the

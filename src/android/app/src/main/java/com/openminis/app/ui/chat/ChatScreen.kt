@@ -7487,6 +7487,21 @@ fun ChatScreen(
                                     visualTransformation = androidx.compose.ui.text.input.VisualTransformation.None,
                                     interactionSource = interactionSource,
                                     placeholder = {
+                                        // [T-android-voice-live-preview] 按住说话期间
+                                        // 用识别预览接管占位文本，让用户看到「边说边
+                                        // 出字」。预览只走这里，不写进输入框、不参与
+                                        // 提交；松手后以正式转写结果发送。
+                                        val livePreview = holdToTalk.previewText
+                                        if (livePreview.isNotEmpty()) {
+                                            Text(
+                                                livePreview,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                                    .copy(alpha = 0.45f),
+                                                fontSize = 16.5.sp * chatInputFontScale,
+                                                maxLines = 2,
+                                                overflow = TextOverflow.Ellipsis,
+                                            )
+                                        } else {
                                         // [T-android-placeholder-single-line, port iOS 19e1d61f]
                                         // Single-line composer placeholder. The
                                         // parenthetical "(@ to mention files)"
@@ -7556,6 +7571,7 @@ fun ChatScreen(
                                                     overflow = TextOverflow.Ellipsis,
                                                 )
                                             }
+                                        }
                                         }
                                     },
                                     colors = OutlinedTextFieldDefaults.colors(

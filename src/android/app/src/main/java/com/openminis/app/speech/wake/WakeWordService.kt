@@ -325,6 +325,11 @@ class WakeWordService : Service() {
          * retry when the app comes back to the foreground.
          */
         fun start(context: Context): Boolean {
+            // A previous requestStop() may never have reached a live
+            // instance (the service was already down), leaving this flag
+            // set. A fresh start is a fresh life: a later system kill must
+            // be reported as a refusal again.
+            intentionalStop = false
             val intent = Intent(context, WakeWordService::class.java)
             return try {
                 ContextCompat.startForegroundService(context, intent)
@@ -600,8 +605,12 @@ class WakeWordService : Service() {
         // the recording is fed silence. Remember to rebuild on the next
         // foreground transition instead of listening to silence forever.
         if ((application as? MinisApp)?.isAppForeground() != true) {
-            WakeWordSettings.setPendingStart(this, true)
-            AppLogger.info(TAG, "唤醒服务在后台启动，已标记待前台重建")
+            // With background listening off the service has no job behind
+            // the user's back: [onStartCommand] stops it again right away.
+            if (WakeWordSettings.backgroundEnabled.value) {
+                WakeWordSettings.setPendingStart(this, true)
+                AppLogger.info(TAG, "唤醒服务在后台启动，已标记待前台重建")
+            }
         }
         isAlive = true
         instance = this
@@ -636,6 +645,15 @@ class WakeWordService : Service() {
             return START_NOT_STICKY
         }
         if (!WakeWordSettings.enabled.value) {
+            stopSelf()
+            return START_NOT_STICKY
+        }
+        // A sticky/boot restart while the app is in the background: the
+        // background switch is off, so do not keep a microphone service
+        // alive — the next foreground transition starts a fresh one.
+        if (!WakeWordSettings.backgroundEnabled.value &&
+            (application as? MinisApp)?.isAppForeground() != true
+        ) {
             stopSelf()
             return START_NOT_STICKY
         }
@@ -703,6 +721,7 @@ class WakeWordService : Service() {
             val app = applicationContext as? MinisApp
             val foreground = app?.isAppForeground() == true
             val enabled = WakeWordSettings.enabled.value
+            val backgroundEnabled = WakeWordSettings.backgroundEnabled.value
             val overlayEnabled = WakeWordSettings.showOverlay.value
             val permission = ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
@@ -722,7 +741,7 @@ class WakeWordService : Service() {
             // not apply.
             if (conversationState != ConversationState.IDLE) {
                 handleConversationTick(now, enabled, permission)
-                val showBall = enabled && overlayEnabled && !foreground
+                val showBall = enabled && backgroundEnabled && overlayEnabled && !foreground
                 overlay?.setVisible(showBall)
                 delay(GATE_INTERVAL_MS)
                 continue
@@ -730,6 +749,7 @@ class WakeWordService : Service() {
 
             val reason = when {
                 !enabled -> "语音唤醒已关闭"
+                !backgroundEnabled && !foreground -> "后台语音唤醒已关闭"
                 !permission -> "需要麦克风权限"
                 waking -> "正在唤醒"
                 inGrace -> "正在初始化，稍后开始聆听"
@@ -793,6 +813,10 @@ class WakeWordService : Service() {
                 if (engine != null || engineStarting) stopEngine()
                 val phase = when {
                     !enabled -> VoiceWakePhase.OFF
+                    // The controller tears the service down on the next
+                    // background transition; until then this is a pause, not
+                    // an error.
+                    !backgroundEnabled && !foreground -> VoiceWakePhase.PAUSED
                     !permission -> VoiceWakePhase.ERROR
                     // The wake hit opens the voice chat; keep saying
                     // "waking" for the suppression window instead of
@@ -803,7 +827,7 @@ class WakeWordService : Service() {
                 publish(phase, reason.orEmpty())
             }
 
-            val showBall = enabled && overlayEnabled && !foreground
+            val showBall = enabled && backgroundEnabled && overlayEnabled && !foreground
             overlay?.setVisible(showBall)
 
             delay(GATE_INTERVAL_MS)

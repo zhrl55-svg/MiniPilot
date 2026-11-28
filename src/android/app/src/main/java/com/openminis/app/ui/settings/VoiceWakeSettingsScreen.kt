@@ -72,6 +72,7 @@ fun VoiceWakeSettingsScreen(
     val context = LocalContext.current
     WakeWordSettings.init(context)
     val voiceWakeEnabled by WakeWordSettings.enabled.collectAsState()
+    val voiceWakeBackground by WakeWordSettings.backgroundEnabled.collectAsState()
     // The preference stays on; this only reflects whether the live service
     // is actually able to hear. A degraded service is rebuilt on foreground.
     val voiceWakeDegraded by WakeWordController.degraded.collectAsState()
@@ -162,7 +163,7 @@ fun VoiceWakeSettingsScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.settings_voice_wake)) },
+                title = { Text(stringResource(R.string.settings_voice_wake_master)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
@@ -180,11 +181,13 @@ fun VoiceWakeSettingsScreen(
         ) {
             Spacer(Modifier.size(8.dp))
 
-            // Wake-word master switch.
+            // Voice-wake master switch. Off means the whole stack is off;
+            // the row below only decides whether it keeps listening once the
+            // app leaves the foreground.
             BgToggleRow(
                 icon = Icons.Outlined.Mic,
                 iconColor = Color(0xFFFF9500),
-                title = stringResource(R.string.settings_voice_wake),
+                title = stringResource(R.string.settings_voice_wake_master),
                 checked = voiceWakeEnabled && !voiceWakeDegraded,
                 onCheckedChange = { wanted ->
                     if (wanted) {
@@ -204,6 +207,18 @@ fun VoiceWakeSettingsScreen(
                         stringResource(R.string.settings_voice_wake_footer)
                 },
             )
+
+            if (voiceWakeEnabled) {
+                Spacer(Modifier.size(8.dp))
+                BgToggleRow(
+                    icon = Icons.Outlined.Layers,
+                    iconColor = Color(0xFF5856D6),
+                    title = stringResource(R.string.settings_voice_wake),
+                    checked = voiceWakeBackground,
+                    onCheckedChange = { WakeWordController.setBackgroundEnabled(context, it) },
+                )
+                BgFooter(stringResource(R.string.settings_voice_wake_background_footer))
+            }
 
             Spacer(Modifier.size(8.dp))
             BgRow(

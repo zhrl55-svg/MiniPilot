@@ -72,6 +72,17 @@ class LocalSenseVoiceEngine(private val context: Context) : SpeechRecognitionEng
     override val supportedLocales: List<Locale> = SUPPORTED_LOCALES
 
     private val lock = Any()
+
+    /**
+     * Serialises [OfflineRecognizer.decode].
+     *
+     * The live-preview path ([preview]) decodes the same recognizer instance
+     * as [transcribe]. sherpa's decoder holds per-recognizer native state, so
+     * two concurrent decodes would race; preview runs while a hold is open
+     * and the final transcription runs after the finger lifts, but the
+     * hand-off can overlap by a frame.
+     */
+    private val decodeLock = Any()
     private val pcm = ByteArrayOutputStream()
 
     @Volatile
@@ -394,11 +405,16 @@ class LocalSenseVoiceEngine(private val context: Context) : SpeechRecognitionEng
         }
         val started = System.currentTimeMillis()
         try {
-            val stream = engine.createStream()
-            stream.acceptWaveform(samples, SAMPLE_RATE)
-            engine.decode(stream)
-            val text = engine.getResult(stream).text.trim()
-            runCatching { stream.release() }
+            val text = synchronized(decodeLock) {
+                val stream = engine.createStream()
+                try {
+                    stream.acceptWaveform(samples, SAMPLE_RATE)
+                    engine.decode(stream)
+                    engine.getResult(stream).text.trim()
+                } finally {
+                    runCatching { stream.release() }
+                }
+            }
             AppLogger.info(
                 TAG,
                 "端侧识别 ${System.currentTimeMillis() - started}ms, ${(bytes.size / 2)} samples, ${text.length} 字",
@@ -407,6 +423,36 @@ class LocalSenseVoiceEngine(private val context: Context) : SpeechRecognitionEng
         } catch (t: Throwable) {
             AppLogger.info(TAG, "端侧识别失败: ${t.javaClass.simpleName}: ${t.message}")
             listener.onError(RecognitionError.TRANSCRIPTION_FAILED, t.message ?: "端侧识别失败")
+        }
+    }
+
+    /**
+     * 实时预览识别：识别一段尚未定稿的音频，只做界面展示。
+     *
+     * 与 [transcribeRetained] 的区别：不经过 [SpeechRecognitionManager]
+     * 的单飞状态、不产生 onFinal、不参与提交。模型未就绪或识别失败时
+     * 返回 null，调用方保留上一帧预览即可，不能影响正式识别。
+     */
+    fun preview(samples: ShortArray): String? {
+        // 短于 200 ms 的片段识别不出东西，白白占用解码器。
+        if (samples.size < SAMPLE_RATE / 5) return null
+        val dir = resolveModelDir() ?: return null
+        val engine = ensureRecognizer(dir) ?: return null
+        val floats = FloatArray(samples.size) { samples[it] / 32768.0f }
+        return try {
+            synchronized(decodeLock) {
+                val stream = engine.createStream()
+                try {
+                    stream.acceptWaveform(floats, SAMPLE_RATE)
+                    engine.decode(stream)
+                    engine.getResult(stream).text.trim()
+                } finally {
+                    runCatching { stream.release() }
+                }
+            }
+        } catch (t: Throwable) {
+            AppLogger.info(TAG, "预览识别失败: ${t.javaClass.simpleName}: ${t.message}")
+            null
         }
     }
 

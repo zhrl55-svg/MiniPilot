@@ -1092,6 +1092,10 @@ class MinisApp : Application(), ImageLoaderFactory {
                 foregroundActivityCount = (foregroundActivityCount - 1).coerceAtLeast(0)
                 if (foregroundActivityCount == 0) {
                     _isAppForegroundFlow.value = false
+                    // [T-android-voice-wake] With background listening off,
+                    // the microphone service must stop here and come back on
+                    // the next foreground transition.
+                    com.openminis.app.speech.wake.WakeWordController.onAppBackgrounded(this@MinisApp)
                     // [T-android-config-confirm-timeout] The user switched away
                     // while a config-confirm dialog may still be showing — nudge
                     // them so they can come back before the 120s timeout.

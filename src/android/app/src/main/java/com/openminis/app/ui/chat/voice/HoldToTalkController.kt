@@ -67,6 +67,17 @@ class HoldToTalkController(private val context: Context) {
     var transcript by mutableStateOf("")
         private set
 
+    /**
+     * [T-android-voice-live-preview] 实时预览文本。
+     *
+     * 按住说话期间，每 [PREVIEW_INTERVAL_MS] 对最近几秒的音频做一次端侧
+     * 识别，把最新结果交给界面显示。**只做展示**：不参与提交、不做声纹
+     * 校验、不改变 [onSegment] 的切句与正式转写结果。松手后保留到最后一次
+     * 提交完成，避免文字突然消失。
+     */
+    var previewText by mutableStateOf("")
+        private set
+
     /** Called with the final text once the finger has been released. */
     var onSend: ((String) -> Unit)? = null
 
@@ -85,6 +96,9 @@ class HoldToTalkController(private val context: Context) {
     private var capture: WakeAudioCapture? = null
     private var vad: WakeEnergyVad? = null
     private var watchdog: Job? = null
+
+    /** [T-android-voice-live-preview] Drives [previewText]. */
+    private var previewJob: Job? = null
     private val gate by lazy { WakeVoiceprintGate(context) }
 
     /** Serialises segment handling; the VAD can cut a second sentence while
@@ -152,6 +166,7 @@ class HoldToTalkController(private val context: Context) {
         }
         state = State.LISTENING
         transcript = ""
+        previewText = ""
         released = false
         transcribing = false
         pendingSegments = 0
@@ -228,6 +243,7 @@ class HoldToTalkController(private val context: Context) {
         }
         capture = recorder
         AppLogger.info(TAG, "开始按住说话")
+        startPreviewLoop(currentSession)
         watchdog = scope.launch {
             while (isActive) {
                 delay(WATCHDOG_TICK_MS)
@@ -250,6 +266,36 @@ class HoldToTalkController(private val context: Context) {
         }
     }
 
+    /**
+     * [T-android-voice-live-preview] 实时预览循环。
+     *
+     * 纯展示：每 [PREVIEW_INTERVAL_MS] 取最近 [PREVIEW_WINDOW_MS] 的音频
+     * 做一次端侧识别，结果写进 [previewText]。VAD 判定「正在说话」时才
+     * 识别，静音时保持上一帧；正在做正式转写（[transcribing]）时跳过，
+     * 免得抢同一个解码器。识别失败或模型未就绪时保持不变。
+     */
+    private fun startPreviewLoop(currentSession: Int) {
+        previewJob?.cancel()
+        previewJob = scope.launch {
+            while (isActive && currentSession == session) {
+                delay(PREVIEW_INTERVAL_MS)
+                if (currentSession != session) break
+                if (state != State.LISTENING || transcribing) continue
+                if (vad?.isInSpeech != true) continue
+                val recent = capture?.recentAudio(PREVIEW_WINDOW_MS) ?: continue
+                if (recent.size < PREVIEW_MIN_SAMPLES) continue
+                val text = withContext(Dispatchers.Default) {
+                    SpeechRecognitionManager.previewTranscribe(recent)
+                }
+                if (currentSession == session && state == State.LISTENING &&
+                    !text.isNullOrBlank()
+                ) {
+                    previewText = text
+                }
+            }
+        }
+    }
+
     /** The finger was lifted: flush the tail, transcribe and hand the text over. */
     fun stop() {
         stopRequested = true
@@ -257,6 +303,9 @@ class HoldToTalkController(private val context: Context) {
         released = true
         watchdog?.cancel()
         watchdog = null
+        // The microphone is closing: no more frames for the preview loop.
+        previewJob?.cancel()
+        previewJob = null
         // The last words are still in the VAD — push them out before the
         // microphone goes away, otherwise the tail of the sentence is lost.
         vad?.flush()
@@ -269,6 +318,9 @@ class HoldToTalkController(private val context: Context) {
         session++
         watchdog?.cancel()
         watchdog = null
+        previewJob?.cancel()
+        previewJob = null
+        previewText = ""
         stopCapture()
         resumeWake()
         vad?.reset()
@@ -284,6 +336,9 @@ class HoldToTalkController(private val context: Context) {
         session++
         watchdog?.cancel()
         watchdog = null
+        previewJob?.cancel()
+        previewJob = null
+        previewText = ""
         stopCapture()
         resumeWake()
         vad?.reset()
@@ -363,6 +418,8 @@ class HoldToTalkController(private val context: Context) {
         if (state == State.IDLE || state == State.SLEEPING) return
         val text = transcript
         transcript = ""
+        // The hold is over (sent or dropped): the preview line goes with it.
+        previewText = ""
         if (text.isBlank()) {
             AppLogger.info(TAG, "没有可发送的语音")
             resumeWake()
@@ -378,6 +435,9 @@ class HoldToTalkController(private val context: Context) {
     private fun sleep() {
         watchdog?.cancel()
         watchdog = null
+        previewJob?.cancel()
+        previewJob = null
+        previewText = ""
         stopCapture()
         vad?.reset()
         vad = null
@@ -460,5 +520,19 @@ class HoldToTalkController(private val context: Context) {
 
         /** Minimum speech before the first sentence may enrol the owner. */
         const val ENROLL_MIN_SECONDS = 1.0f
+
+        /**
+         * [T-android-voice-live-preview] 预览识别间隔。
+         *
+         * 700 ms 是实时感与 CPU 的折中：端侧识别一段 2~3 s 音频约
+         * 300~700 ms，间隔再短就会连续占满两个解码线程，和正式转写抢资源。
+         */
+        const val PREVIEW_INTERVAL_MS = 700L
+
+        /** 预览只识别最近这段音频，完整历史由 VAD 切句后的正式识别负责。 */
+        const val PREVIEW_WINDOW_MS = 3_000
+
+        /** 少于 300 ms 的片段识别不出内容。 */
+        const val PREVIEW_MIN_SAMPLES = WakeAudioCapture.SAMPLE_RATE * 3 / 10
     }
 }

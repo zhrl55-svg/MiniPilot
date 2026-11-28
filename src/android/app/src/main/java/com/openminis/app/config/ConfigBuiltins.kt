@@ -973,12 +973,22 @@ internal object ConfigBuiltins {
         r.register(
             PrefsBoolField(
                 path = "voice.wake",
-                displayName = "Background voice wake",
-                description = "Listen for the wake word while the app is in the background (microphone foreground service).",
+                displayName = "Voice wake",
+                description = "Listen for the wake word (microphone service). This is the master switch; whether listening continues in the background is voice.wakeBackground.",
                 prefs = wakePrefs,
                 key = WakeWordSettings.KEY_ENABLED,
                 defaultValue = false,
                 risk = ConfigRisk.SENSITIVE,
+            )
+        )
+        r.register(
+            PrefsBoolField(
+                path = "voice.wakeBackground",
+                displayName = "Background voice wake",
+                description = "Keep listening while the app is in the background. Off keeps the wake word for the foreground only.",
+                prefs = wakePrefs,
+                key = WakeWordSettings.KEY_BACKGROUND_ENABLED,
+                defaultValue = true,
             )
         )
         r.register(

@@ -87,6 +87,7 @@ object WakeWordController {
             val listener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
                 when (key) {
                     WakeWordSettings.KEY_ENABLED,
+                    WakeWordSettings.KEY_BACKGROUND_ENABLED,
                     WakeWordSettings.KEY_WAKE_WORD,
                     WakeWordSettings.KEY_OVERLAY_ENABLED,
                     -> sync(app)
@@ -132,6 +133,16 @@ object WakeWordController {
         // start to the first foreground transition instead.
         if (!isAppForeground(app)) {
             startRefused = false
+            // Background listening switched off: the feature stays enabled
+            // for the foreground, but the microphone service must not keep
+            // running behind the user's back.
+            if (!WakeWordSettings.backgroundEnabled.value) {
+                WakeWordSettings.setPendingStart(app, false)
+                setDegraded(false)
+                WakeWordService.requestStop(app)
+                VoiceWakeState.update(app, VoiceWakePhase.OFF, "后台语音唤醒已关闭")
+                return
+            }
             WakeWordSettings.setPendingStart(app, true)
             AppLogger.info(TAG, "应用在后台，唤醒服务推迟到前台启动")
             return
@@ -184,6 +195,31 @@ object WakeWordController {
     fun setEnabled(context: Context, enabled: Boolean) {
         WakeWordSettings.setEnabled(context, enabled)
         sync(context)
+    }
+
+    fun setBackgroundEnabled(context: Context, enabled: Boolean) {
+        WakeWordSettings.setBackgroundEnabled(context, enabled)
+        sync(context)
+    }
+
+    /**
+     * The app moved to the background.
+     *
+     * With background listening off the feature stays enabled — the wake
+     * word and the voice dialogue keep working while the app is open — but
+     * holding the microphone behind the user's back is exactly what the
+     * switch promises not to do, so the service stops here and the next
+     * [onAppForegrounded] brings it back.
+     */
+    fun onAppBackgrounded(context: Context) {
+        WakeWordSettings.init(context)
+        if (!WakeWordSettings.enabled.value) return
+        if (WakeWordSettings.backgroundEnabled.value) return
+        startRefused = false
+        setDegraded(false)
+        WakeWordSettings.setPendingStart(context, false)
+        WakeWordService.requestStop(context)
+        VoiceWakeState.update(context, VoiceWakePhase.OFF, "后台语音唤醒已关闭")
     }
 
     /**
@@ -241,9 +277,10 @@ object WakeWordController {
 
     /** Boot/package events record the intent; the start waits for the foreground. */
     fun markPendingRestore(context: Context) {
-        if (WakeWordSettings.enabled.value) {
-            WakeWordSettings.setPendingStart(context, true)
-        }
+        if (!WakeWordSettings.enabled.value) return
+        // No background listening, nothing to restore away from the app.
+        if (!WakeWordSettings.backgroundEnabled.value) return
+        WakeWordSettings.setPendingStart(context, true)
     }
 
     private fun isDegraded(context: Context): Boolean {
